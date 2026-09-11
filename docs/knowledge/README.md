@@ -21,8 +21,9 @@
 
 ## docker
 
-- [directRouting.md](docker/directRouting.md) — Engine ≥ 28 не пускает трафик с интерфейсов хоста
-  на IP контейнеров bridge-сети; для gateway-контейнеров нужна опция `trusted_host_interfaces`
+- [directRouting.md](docker/directRouting.md) — транзит LAN в bridge-сеть режет цепочка DOCKER,
+  `trusted_host_interfaces` не спасает; нужен `gateway_mode_ipv4=nat-unprotected` плюс свой nft-drop
+  прямого доступа к адресам шлюзов (репродукция на colima)
 
 ## wireguard
 

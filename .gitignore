@@ -21,5 +21,7 @@ ui/dist/
 
 # Local tooling
 .claude/settings.local.json
+# Real tokens of the seeded .vibe HTTP client (the seed's own .gitignore misses it).
+.vibe/http-client.private.env.json
 .DS_Store
 .idea/

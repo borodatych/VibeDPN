@@ -27,7 +27,7 @@
 | `network` | обязательна | **запрещена** | обязательна |
 | `routing` | обязательна | **запрещена** | обязательна |
 | `devices` | можно | **запрещена** | можно |
-| `upstreams.vps` | **запрещено включать** | **запрещена** | обязательно `enabled: true` + `peer_config` |
+| `upstreams.vps` | **запрещено включать** | **запрещена** | обязательно `enabled: true` (peer-файл — `secrets/wg-client.conf`) |
 | `upstreams.dpn` | можно | **запрещена** | можно |
 | `provider` | можно (обычно включён) | обязательно `enabled: true` | **запрещено включать** |
 | `wg_server` | **запрещена** | обязательна | **запрещена** |
@@ -81,14 +81,15 @@
 ```yaml
 upstreams:
   vps:
-    enabled: true
-    peer_config: secrets/home.conf   # файл от `vibedpn peer export` на VPS; обязателен при enabled
+    enabled: true                    # peer-файл лежит в secrets/wg-client.conf, в конфиге его нет
   dpn:
     enabled: true
-    country: "DE"                    # ISO 3166-1 alpha-2; нет строки — любая страна
+    country: DE                      # ISO 3166-1 alpha-2; нет строки — любая страна
 ```
 
 - `vps` — приватный WireGuard-туннель к своей VPS (контейнер `wg-client`). Только роль `client`.
+  Peer-файл от `vibedpn peer export` на VPS `init --peer-config` кладёт в `secrets/wg-client.conf`;
+  путь фиксированный, поэтому в конфиге не упоминается.
 - `dpn` — consumer Mysterium: выход через ноду сети. `country` — двухбуквенный код, регистр не
   важен; кавычки не нужны (`NO` — Норвегия, файл читается как YAML 1.2, где это строка).
 
@@ -218,7 +219,6 @@ routing:
 upstreams:
   vps:
     enabled: true
-    peer_config: secrets/home.conf
   dpn:
     enabled: false
 dns:
@@ -231,7 +231,7 @@ ui:
 
 `vibedpn init` пишет `.env` для `compose.yaml`; всё в нём, кроме `VIBEDPN_TAG`, — производные
 от этого файла (`Config.env_vars()`), руками их не править: `COMPOSE_PROFILES`, `VIBEDPN_API_PORT`,
-`VIBEDPN_LAN_IFACE`, `VIBEDPN_LAN_IP` и `VIBEDPN_UI_PORT` (роли с LAN), `VIBEDPN_MYST_UDP_FROM/TO` и
+`VIBEDPN_LAN_IP` и `VIBEDPN_UI_PORT` (роли с LAN), `VIBEDPN_MYST_UDP_FROM/TO` и
 `VIBEDPN_MYST_TRAVERSAL` (если включён provider).
 
 | Роль | Профили |

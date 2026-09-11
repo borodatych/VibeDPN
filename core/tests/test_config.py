@@ -3,10 +3,12 @@
 from ipaddress import IPv4Address
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
 
+from vibedpn.api import server
 from vibedpn.config import (
     Config,
     ConfigError,
@@ -40,7 +42,7 @@ def test_vps_minimal_is_valid(vps: dict[str, Any]) -> None:
 
 def test_client_minimal_is_valid(client: dict[str, Any]) -> None:
     config = Config.model_validate(client)
-    assert config.upstreams.vps.peer_config == Path("secrets/home.conf")
+    assert config.upstreams.vps.enabled
 
 
 @pytest.mark.parametrize(
@@ -76,7 +78,7 @@ def test_schema_version_must_be_one(home: dict[str, Any]) -> None:
 
 
 def test_home_cannot_enable_vps_uplink(home: dict[str, Any]) -> None:
-    home["upstreams"]["vps"] = {"enabled": True, "peer_config": "x.conf"}
+    home["upstreams"]["vps"] = {"enabled": True}
     assert "role 'home' has no VPS uplink" in errors_of(home)
 
 
@@ -94,6 +96,13 @@ def test_vps_rejects_lan_sections(vps: dict[str, Any]) -> None:
     assert "devices: not part of role 'vps'" in message
 
 
+def test_vps_rejects_incomplete_lan_section_by_name(vps: dict[str, Any]) -> None:
+    vps["network"] = {"lan_subnet": "192.168.1.0/24"}
+    message = errors_of(vps)
+    assert "network: not part of role 'vps'" in message
+    assert "Field required" not in message
+
+
 def test_vps_requires_wg_server_and_provider() -> None:
     message = errors_of({"version": 1, "role": "vps"})
     assert "wg_server: required" in message
@@ -108,11 +117,6 @@ def test_client_requires_vps_uplink(client: dict[str, Any]) -> None:
 def test_client_runs_no_provider(client: dict[str, Any]) -> None:
     client["provider"] = {"enabled": True}
     assert "role 'client' runs no node" in errors_of(client)
-
-
-def test_vps_uplink_needs_peer_config(client: dict[str, Any]) -> None:
-    client["upstreams"]["vps"] = {"enabled": True}
-    assert "peer_config is required" in errors_of(client)
 
 
 def test_default_upstream_must_be_enabled_when_routing(home: dict[str, Any]) -> None:
@@ -234,13 +238,21 @@ def test_lan_address_must_be_a_host_of_the_subnet(home: dict[str, Any]) -> None:
     assert "is not a host address" in errors_of(home)
 
 
+def test_lan_address_check_handles_huge_and_tiny_subnets(home: dict[str, Any]) -> None:
+    home["network"] |= {"lan_subnet": "10.0.0.0/8", "lan_address": "10.255.255.255"}
+    assert "is not a host address" in errors_of(home)
+    home["network"] |= {"lan_subnet": "10.0.0.0/8", "lan_address": "10.200.1.7"}
+    assert Config.model_validate(home).network is not None
+    home["network"] |= {"lan_subnet": "192.168.1.0/31", "lan_address": "192.168.1.0"}
+    assert Config.model_validate(home).network is not None
+
+
 def test_env_vars_are_derived_from_config(
     home: dict[str, Any], vps: dict[str, Any], client: dict[str, Any]
 ) -> None:
     assert Config.model_validate(home).env_vars() == {
         "COMPOSE_PROFILES": "provider,consumer,router,dns,ui",
         "VIBEDPN_API_PORT": "4480",
-        "VIBEDPN_LAN_IFACE": "eth0",
         "VIBEDPN_LAN_IP": "192.168.1.50",
         "VIBEDPN_UI_PORT": "80",
         "VIBEDPN_MYST_UDP_FROM": "56000",
@@ -257,7 +269,6 @@ def test_env_vars_are_derived_from_config(
     assert Config.model_validate(client).env_vars() == {
         "COMPOSE_PROFILES": "wg-client,router,dns,ui",
         "VIBEDPN_API_PORT": "4480",
-        "VIBEDPN_LAN_IFACE": "eth0",
         "VIBEDPN_LAN_IP": "192.168.1.50",
         "VIBEDPN_UI_PORT": "80",
     }
@@ -276,6 +287,10 @@ def test_port_range_parses() -> None:
 def test_wg_server_endpoint_and_subnet(vps: dict[str, Any]) -> None:
     vps["wg_server"] = {"endpoint": "bad host!"}
     assert "is not a hostname" in errors_of(vps)
+    vps["wg_server"] = {"endpoint": "999.999.999.999"}
+    assert "is not a hostname or IPv4 address" in errors_of(vps)
+    vps["wg_server"] = {"endpoint": "vps.example.com"}
+    assert Config.model_validate(vps).wg_server is not None
     vps["wg_server"] = {"endpoint": "203.0.113.7", "subnet": "10.78.0.0/31"}
     assert "too small" in errors_of(vps)
     vps["wg_server"] = {"endpoint": "203.0.113.7", "listen_port": 70000}
@@ -316,3 +331,39 @@ def test_load_config_errors(tmp_path: Path) -> None:
     scalar.write_text("just a string", encoding="utf-8")
     with pytest.raises(ConfigError, match="must be a mapping"):
         load_config(scalar)
+    with pytest.raises(ConfigError, match="directory"):
+        load_config(tmp_path)
+
+
+def test_server_exits_cleanly_on_bad_config(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        patch.dict("os.environ", {server.CONFIG_PATH_ENV: str(tmp_path / "none.yaml")}),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        server.main()
+    assert excinfo.value.code == 78  # os.EX_CONFIG
+    assert "not found" in capsys.readouterr().err
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("version: 1\nrole: vps\n", encoding="utf-8")
+    with patch.dict("os.environ", {server.CONFIG_PATH_ENV: str(bad)}), pytest.raises(SystemExit):
+        server.main()
+    assert "wg_server: required" in capsys.readouterr().err
+
+
+def test_server_serves_on_loopback_and_config_port(tmp_path: Path) -> None:
+    good = tmp_path / "config.yaml"
+    good.write_text(
+        "version: 1\nrole: vps\nprovider: {enabled: true}\n"
+        "wg_server: {endpoint: 203.0.113.7}\napi: {port: 4499}\n",
+        encoding="utf-8",
+    )
+    with (
+        patch.dict("os.environ", {server.CONFIG_PATH_ENV: str(good)}),
+        patch("vibedpn.api.server.uvicorn.run") as run,
+    ):
+        server.main()
+    run.assert_called_once_with(
+        "vibedpn.api.app:app", host="127.0.0.1", port=4499, log_level="info"
+    )

@@ -7,7 +7,7 @@ import pytest
 
 from vibedpn.config import Config, Profile, load_config, parse_yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[2]  # tests/ -> core/ -> repository root
 EXAMPLE = REPO_ROOT / "config.example.yaml"
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 SPEC = REPO_ROOT / "docs" / "manuals" / "configSpec.md"

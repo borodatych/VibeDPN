@@ -12,7 +12,7 @@ docs/
 │   └── devSetup.md       # локальная среда разработки и все проверки
 └── knowledge/            # база знаний: грабли и проверенные факты с URL
     ├── README.md         # индекс — запись без строки здесь не существует
-    ├── myst/  adguard/  compose/  wireguard/  platform/  ci/  frontend/
+    ├── myst/  adguard/  compose/  docker/  wireguard/  platform/  ci/  frontend/
     ├── python/
     └── process/
 ```

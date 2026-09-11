@@ -19,7 +19,14 @@ services:
       - NET_ADMIN
     restart: unless-stopped
     volumes:
-      - ./config.yaml:/etc/vibedpn/config.yaml:ro
+      # Long form with create_host_path: false — a missing config.yaml must fail loudly, not be
+      # silently replaced by an empty directory that `vibedpn init` then cannot overwrite.
+      - type: bind
+        source: ./config.yaml
+        target: /etc/vibedpn/config.yaml
+        read_only: true
+        bind:
+          create_host_path: false
       - ./secrets:/etc/vibedpn/secrets
       - ./data/core:/var/lib/vibedpn
     healthcheck:
@@ -80,6 +87,10 @@ services:
 
   # Mysterium consumer = uplink `dpn`: a gateway container at 10.77.0.20 (roles home, client).
   # Runs the daemon with the kill switch; core connects it through TequilAPI (Stage 8).
+  # TequilAPI listens on 0.0.0.0 so core (host network) can reach 10.77.0.20:4050; once the
+  # router opens transit into this network (Stage 4) the same port would be reachable from the
+  # LAN, so Stage 4 drops LAN traffic addressed to 10.77.0.0/24 in nftables and Stage 8 replaces
+  # the default TequilAPI credentials (myst/mystberry) with a secret from `init`.
   myst-consumer:
     image: mysteriumnetwork/myst:${MYST_TAG:-1.39.5-alpine}
     profiles:
@@ -121,7 +132,13 @@ services:
       upstreams:
         ipv4_address: 10.77.0.10
     volumes:
-      - ./secrets/wg-client.conf:/etc/wireguard/wg0.conf:ro
+      # `vibedpn init --peer-config` stores the peer file exactly here; no directory fallback.
+      - type: bind
+        source: ./secrets/wg-client.conf
+        target: /etc/wireguard/wg0.conf
+        read_only: true
+        bind:
+          create_host_path: false
     command:
       - client
 
@@ -157,14 +174,17 @@ services:
 
 networks:
   # Gateway containers live here with static addresses; core steers marked LAN traffic to them.
-  # Docker Engine >= 28 drops traffic that reaches container IPs from other host interfaces
-  # ("direct routing") unless the interface is trusted, so the LAN interface is listed here.
-  # Network options are frozen at creation: a changed interface needs the network recreated.
+  # Docker's DOCKER chain drops every packet entering a bridge from another interface unless
+  # the network is `nat-unprotected` (Engine >= 28.0.0); `trusted_host_interfaces` does NOT help:
+  # it only admits packets addressed to a container's own published ports. The price of this
+  # mode is that Docker no longer filters container ports, so the router engine (Stage 4) must
+  # itself drop LAN traffic addressed to 10.77.0.0/24 and pass only transit.
+  # Network options are frozen at creation: changing them needs the network recreated.
   upstreams:
     name: vibedpn-upstreams
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.trusted_host_interfaces: ${VIBEDPN_LAN_IFACE:-}
+      com.docker.network.bridge.gateway_mode_ipv4: nat-unprotected
     ipam:
       config:
         - subnet: 10.77.0.0/24

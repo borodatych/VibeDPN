@@ -19,8 +19,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-CONFIG_SCHEMA_VERSION = 1
-
 # Protocol-level constants (not user settings): validation patterns and port bounds.
 MAC_PATTERN = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
 COUNTRY_PATTERN = re.compile(r"^[A-Z]{2}$")
@@ -36,6 +34,7 @@ INTERFACE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")  # IFNAMSIZ is 16 with
 PORT_MIN = 1
 PORT_MAX = 65535
 MIN_WG_SUBNET_ADDRESSES = 4  # network, server, at least one peer, broadcast
+LAST_PREFIX_WITH_BROADCAST = 30  # /31 and /32 have no reserved network/broadcast addresses
 
 Port = Annotated[int, Field(ge=PORT_MIN, le=PORT_MAX)]
 InterfaceName = Annotated[str, Field(pattern=INTERFACE_PATTERN.pattern)]
@@ -137,10 +136,16 @@ class NetworkConfig(StrictModel):
 
     @model_validator(mode="after")
     def check_lan_address(self) -> Self:
-        if self.lan_address not in self.lan_subnet.hosts():
+        subnet = self.lan_subnet
+        reserved = (
+            (subnet.network_address, subnet.broadcast_address)
+            if subnet.prefixlen <= LAST_PREFIX_WITH_BROADCAST
+            else ()
+        )
+        if self.lan_address not in subnet or self.lan_address in reserved:
             raise ValueError(
                 f"network.lan_address {self.lan_address} is not a host address of"
-                f" network.lan_subnet {self.lan_subnet}"
+                f" network.lan_subnet {subnet}"
             )
         return self
 
@@ -194,16 +199,13 @@ class DeviceConfig(StrictModel):
 
 
 class VpsUplink(StrictModel):
-    """Private WireGuard tunnel to the owner's VPS (``wg-client`` container)."""
+    """Private WireGuard tunnel to the owner's VPS (``wg-client`` container).
+
+    The peer configuration is not referenced here: ``vibedpn init --peer-config`` stores it as
+    ``secrets/wg-client.conf``, the fixed path ``compose.yaml`` mounts into ``wg-client``.
+    """
 
     enabled: bool = False
-    peer_config: Path | None = None
-
-    @model_validator(mode="after")
-    def check_peer_config(self) -> Self:
-        if self.enabled and self.peer_config is None:
-            raise ValueError("upstreams.vps.peer_config is required when the VPS uplink is enabled")
-        return self
 
 
 class DpnUplink(StrictModel):
@@ -266,8 +268,12 @@ class WgServerConfig(StrictModel):
     @field_validator("endpoint")
     @classmethod
     def check_endpoint(cls, value: str) -> str:
-        if HOSTNAME_PATTERN.fullmatch(value) is None:
-            raise ValueError(f"{value!r} is not a hostname or IPv4 address")
+        try:
+            IPv4Address(value)
+        except ValueError:
+            looks_numeric = value.replace(".", "").isdigit()
+            if looks_numeric or HOSTNAME_PATTERN.fullmatch(value) is None:
+                raise ValueError(f"{value!r} is not a hostname or IPv4 address") from None
         return value
 
     @field_validator("subnet")
@@ -328,6 +334,21 @@ class Config(StrictModel):
     ui: UiConfig = Field(default_factory=UiConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_lan_sections_on_vps(cls, data: object) -> object:
+        """Refuse LAN sections on a VPS before their fields are validated.
+
+        The real error is the section itself, not a missing ``lan_interface`` inside it.
+        """
+        if isinstance(data, dict) and data.get("role") == Role.VPS:
+            present = [section for section in LAN_SECTIONS if section in data]
+            if present:
+                raise ValueError(
+                    "; ".join(f"{section}: not part of role 'vps'" for section in present)
+                )
+        return data
+
     @model_validator(mode="after")
     def check_role_rules(self) -> Self:
         errors = self._role_errors()
@@ -354,11 +375,7 @@ class Config(StrictModel):
         return errors
 
     def _vps_errors(self) -> list[str]:
-        errors = [
-            f"{section}: not part of role 'vps'"
-            for section in LAN_SECTIONS
-            if section in self.model_fields_set
-        ]
+        errors: list[str] = []
         if self.wg_server is None:
             errors.append("wg_server: required for role 'vps'")
         if not self.provider.enabled:
@@ -430,7 +447,6 @@ class Config(StrictModel):
             "VIBEDPN_API_PORT": str(self.api.port),
         }
         if self.network is not None:
-            env["VIBEDPN_LAN_IFACE"] = self.network.lan_interface
             env["VIBEDPN_LAN_IP"] = str(self.network.lan_address)
             env["VIBEDPN_UI_PORT"] = str(self.ui.port)
         if self.provider.enabled:
@@ -465,6 +481,8 @@ def load_config(path: Path) -> Config:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise ConfigError(f"{path}: not found") from exc
+    except OSError as exc:
+        raise ConfigError(f"{path}: {exc.strerror or exc}") from exc
     try:
         data = parse_yaml(text)
     except YAMLError as exc:

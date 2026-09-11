@@ -9,11 +9,12 @@
 - [x] **Структура репо, `.vibe/` со стандартным набором + `vibedpn.mdc`** — ✅ (2026-09-11, `next`) дерево по §5 idea.md
       (пути доков — по соглашениям проекта, см. [README.md](README.md)), `.vibe/` из канона
       VibeBrains, правила §11 в `.vibe/rules/vibedpn.mdc` и `CLAUDE.md`
-- [x] **`compose.yaml` со всеми сервисами и профилями** — ✅ (2026-09-11, `next`) семь сервисов, сеть `vibedpn-upstreams` со статическими IP шлюзов, образы `core`/`wg`/`ui` собираются и проходят smoke (core `/health` через nginx-прокси ui); entrypoint `wg` — контракт режимов, реализация в Stage 3
+- [x] **`compose.yaml` со всеми сервисами и профилями** — ✅ (2026-09-11, `next`) семь сервисов, сеть `vibedpn-upstreams` (`nat-unprotected`, статические IP шлюзов), образы `core`/`wg`/`ui` собираются и проходят smoke (core `/health` через nginx-прокси ui); entrypoint `wg` — контракт режимов, реализация в Stage 3; живая техспека `docs/techSpec.md`, мануал среды `docs/manuals/devSetup.md`
 - [x] **`config.example.yaml` + Pydantic-модель `config.py`** — ✅ (2026-09-11, `next`) валидация ролей и профилей,
       спека формата [manuals/configSpec.md](manuals/configSpec.md)
 - [x] **CI** — ✅ (2026-09-11, `next`) lint (ruff, mypy strict, eslint через `npm run lint` когда появится `ui/package.json`), pytest, shellcheck, actionlint, `compose config`, buildx multi-arch (amd64+arm64) сборка `core`, `wg`, `ui` в GHCR; workflow проверен actionlint, прогон в GitHub — после первого push
 - [x] **README** — ✅ (2026-09-11, `next`) три сценария в одном абзаце каждый, статус и предупреждение об exit-ноде (заполняется по мере стадий)
+- [x] **Ревью Stage 0** — ✅ (2026-09-11, `next`) состязательное ревью шестью линзами: главная находка — `trusted_host_interfaces` не пропускает транзит в бридж, сеть переведена на `nat-unprotected` с обязательным nft-drop прямого доступа в Stage 4; `peer_config` убран из конфига (фиксированный `secrets/wg-client.conf`), bind-mount файлов без создания каталогов, чистые ошибки конфига у `vibedpn-core`, IPv4-валидация `endpoint`, проверка `lan_address` без перебора /8, пин ruff, `concurrency` и пиновый actionlint в CI, `latest` строго для `main`
 
 ## Stage 1 — CLI и install
 
@@ -25,7 +26,8 @@
 
 ## Stage 2 — Роль vps: нода
 
-- [ ] `myst-provider` контейнер с published-портами, volume, флагами из §10 idea.md
+- [ ] `myst-provider` контейнер с published-портами, volume, флагами из §10 idea.md (актуальные —
+      [knowledge/myst/node.md](knowledge/myst/node.md)); пароль TequilAPI из `secrets/`, не `myst/mystberry`
 - [ ] nftables baseline VPS (ssh, wg, myst UDP; остальное drop), применяется `core`
 - [ ] `GET /provider/stats` через TequilAPI; `vibedpn status` показывает состояние ноды
 - [ ] Проверка: нода видна и заклеймлена в mystnodes.com, инструкция клейма в README
@@ -42,6 +44,10 @@
 - [ ] `wg-client` как gateway-контейнер (10.77.0.10) с ip_forward + MASQUERADE + kill-switch
 - [ ] `engine/router.py`: nft-шаблоны, fwmark, `ip rule`, таблица `vps`; режимы `off` и `full`;
       идемпотентный apply
+- [ ] nft: LAN не достигает адресов `10.77.0.0/24` напрямую (только транзит через шлюзы) — обязательное
+      следствие режима `nat-unprotected` сети шлюзов ([knowledge/docker/directRouting.md](knowledge/docker/directRouting.md))
+- [ ] Авторизация `/api/` в `ui` (nginx `auth_basic`, пароль из `init`) — до появления `PUT /mode`;
+      перенесено из Stage 6, где остаётся экран входа
 - [ ] `vibedpn mode off|full`, `vibedpn upstream vps`
 - [ ] AdGuard Home на 53 LAN-интерфейса, DoH-апстрим; README: как указать шлюз/DNS на устройстве
       и на типовом роутере
@@ -57,7 +63,7 @@
 
 ## Stage 6 — UI v1
 
-- [ ] Каркас React по стеку §4 idea.md, авторизация паролем, слушает только LAN
+- [ ] Каркас React по стеку §4 idea.md, экран входа (пароль — тот же, что у `/api/` со Stage 4), слушает только LAN
 - [ ] Экран статуса: аплинки, kill-switch, режим, переключатели
 - [ ] Список устройств с политиками
 - [ ] Вкладка ноды: статистика provider (роль home/vps)
@@ -75,7 +81,7 @@
 - [ ] Ответы на вопросы §10 idea.md «Обязательно уточнить» зафиксированы в `docs/knowledge/myst/`
       с URL источников
 - [ ] `myst-consumer` gateway-контейнер (10.77.0.20): identity, регистрация, connect через
-      TequilAPI, kill-switch
+      TequilAPI, kill-switch; пароль TequilAPI из `secrets/` вместо `myst/mystberry`
 - [ ] `engine/myst.py`: proposals → список стран, `PUT /dpn/country`, `vibedpn upstream dpn`
 - [ ] Таблица `dpn` в router-engine, переключение аплинка без разрыва bypass-устройств
 - [ ] UI: выбор страны, баланс MYST consumer-identity

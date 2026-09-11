@@ -4,8 +4,6 @@ from typing import Any
 
 import pytest
 
-REPO_ROOT_PARTS = 2  # tests/ -> core/ -> repository root
-
 
 def home_config() -> dict[str, Any]:
     return {
@@ -41,7 +39,7 @@ def client_config() -> dict[str, Any]:
             "lan_address": "192.168.1.50",
         },
         "routing": {"mode": "full", "default_upstream": "vps"},
-        "upstreams": {"vps": {"enabled": True, "peer_config": "secrets/home.conf"}},
+        "upstreams": {"vps": {"enabled": True}},
     }
 
 

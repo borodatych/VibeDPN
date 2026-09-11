@@ -1,6 +1,6 @@
 # Роли коробки
 
-Роль — это пресет профилей Docker Compose: один `docker-compose.yml`, `vibedpn init --role X`
+Роль — это пресет профилей Docker Compose: один `compose.yaml`, `vibedpn init --role X`
 выставляет `COMPOSE_PROFILES` в `.env` и пишет `config.yaml`. Что обязательно и что запрещено в
 конфиге каждой роли — [manuals/configSpec.md](manuals/configSpec.md).
 
@@ -28,7 +28,8 @@
 У VPS два аплинка наружу: публичная myst-нода (зарабатывает) и приватный WireGuard-сервер для
 своих домашних коробок (бесплатный быстрый туннель). Один VPS обслуживает несколько домашних
 клиентов: `vibedpn peer add <name>` на VPS выдаёт `<name>.conf`, дома —
-`vibedpn init --role client --peer-config <name>.conf`. Через этот же туннель VPS отдаёт домой
+`vibedpn init --role client --peer-config <name>.conf` кладёт его в `secrets/wg-client.conf`,
+откуда его читает контейнер `wg-client`. Через этот же туннель VPS отдаёт домой
 свою панель ноды и API `core` — наружу они не торчат.
 
 ## Главный принцип: каждый аплинк — gateway-контейнер

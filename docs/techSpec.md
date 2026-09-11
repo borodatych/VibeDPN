@@ -38,16 +38,18 @@
 | Сервис | Профиль | Сеть | Порты и особенности |
 |---|---|---|---|
 | `core` | всегда | host, `NET_ADMIN` | API на `127.0.0.1:${VIBEDPN_API_PORT}` (4480); монтирует `config.yaml` (ro), `secrets/`, `data/core`; healthcheck `GET /health` |
-| `ui` | `ui` | host | nginx на `${VIBEDPN_LAN_IP}:${VIBEDPN_UI_PORT}` (80), `/api/` → core; зависит от здорового `core` |
+| `ui` | `ui` | host | nginx на `${VIBEDPN_LAN_IP}:${VIBEDPN_UI_PORT}` (80), `/api/` → core; зависит от здорового `core`. Авторизация `/api/` (auth_basic, пароль из `init`) — Stage 4, до первого изменяющего эндпоинта |
 | `myst-provider` | `provider` | bridge | `127.0.0.1:4449` NodeUI, `127.0.0.1:4050` TequilAPI, UDP `${VIBEDPN_MYST_UDP_FROM}-${VIBEDPN_MYST_UDP_TO}` (56000-56100); `myst --udp.ports=… --traversal=… --tequilapi.* service --agreed-terms-and-conditions` (глобальные флаги — до команды); том `data/myst-provider` |
 | `myst-consumer` | `consumer` | `vibedpn-upstreams` 10.77.0.20, `NET_ADMIN`, `ip_forward=1` | `myst --firewall.killSwitch.always --ui.enable=false --tequilapi.* daemon`; том `data/myst-consumer` |
-| `wg-client` | `wg-client` | `vibedpn-upstreams` 10.77.0.10, `NET_ADMIN`, `ip_forward=1`, `src_valid_mark=1` | `secrets/wg-client.conf` → `/etc/wireguard/wg0.conf`; entrypoint `client` (Stage 3) |
+| `wg-client` | `wg-client` | `vibedpn-upstreams` 10.77.0.10, `NET_ADMIN`, `ip_forward=1`, `src_valid_mark=1` | `secrets/wg-client.conf` (кладёт `init --peer-config`) → `/etc/wireguard/wg0.conf`; entrypoint `client` (Stage 3) |
 | `wg-server` | `wg-server` | host, `NET_ADMIN` | `secrets/wg-server/` → `/etc/wireguard`; UDP 51820 открывает nft-baseline core; entrypoint `server` (Stage 3) |
 | `adguard` | `dns` | host | тома `data/adguard/{work,conf}`; `AdGuardHome.yaml` рендерит core (Stage 4), веб-панель на `${VIBEDPN_LAN_IP}:3000` |
 
-Сеть `vibedpn-upstreams` — `10.77.0.0/24`, bridge со статическими адресами шлюзов и опцией
-`trusted_host_interfaces=${VIBEDPN_LAN_IFACE}`: без неё Docker Engine ≥ 28 не пропускает трафик
-LAN к IP контейнеров ([knowledge/docker/directRouting.md](knowledge/docker/directRouting.md)).
+Сеть `vibedpn-upstreams` — `10.77.0.0/24`, bridge со статическими адресами шлюзов в режиме
+`gateway_mode_ipv4=nat-unprotected`: иначе цепочка `DOCKER` режет любой транзит в бридж с других
+интерфейсов хоста. Плата за режим — Docker не фильтрует порты контейнеров, поэтому router-engine
+(Stage 4) сам запрещает LAN прямой доступ к `10.77.0.0/24`
+([knowledge/docker/directRouting.md](knowledge/docker/directRouting.md)).
 
 ## Файлы на коробке
 
