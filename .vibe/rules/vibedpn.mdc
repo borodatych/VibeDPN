@@ -1,0 +1,24 @@
+---
+description: Правила проекта VibeDPN — один чекбокс за итерацию, сеть хоста только через engine/router.py, default route хоста неприкосновенен, внешние факты только с URL источника.
+alwaysApply: true
+---
+
+# VibeDPN — правила проекта
+
+Концепт и архитектура: [idea.md](mdc:docs/idea.md). План: [roadmap.md](mdc:docs/roadmap.md).
+Роли коробки: [roles.md](mdc:docs/roles.md). Формат конфига: [configSpec.md](mdc:docs/manuals/configSpec.md).
+
+1. **Один чекбокс roadmap за итерацию.** Стадия закрыта только когда прошли её проверки
+   (`CLAUDE.md`, раздел «Проверки»).
+2. **Всё, что меняет сеть хоста (nft, ip rule, sysctl), — только через `core/vibedpn/engine/router.py`
+   из шаблонов `core/vibedpn/templates/`, идемпотентно, с `vibedpn doctor` до и после.** Никаких
+   `iptables`/`nft` руками в скриптах и entrypoint'ах хоста.
+3. **Никогда не трогать default route хоста.** Каждый аплинк — отдельный gateway-контейнер со своим
+   netns (паттерн gluetun). Если решение требует править default route хоста — стоп, возражение оператору.
+4. **Внешние факты о myst / AdGuard / WireGuard / Compose берутся из документации или исходников с URL
+   в сообщении коммита.** Память не источник. Проверенные факты — в `docs/knowledge/` с URL.
+5. **Секреты не коммитятся** (`.env`, `secrets/`, `data/`, `config.yaml`). `config.example.yaml` и
+   `.env.example` всегда соответствуют тому, что читает код.
+6. **Стадия, меняющая видимое пользователю, обновляет `README.md` и `docs/functional.md`** в той же
+   задаче.
+7. **Раздел «Предложения» в roadmap — off-limits без команды оператора.**

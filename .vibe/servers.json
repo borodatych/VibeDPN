@@ -1,0 +1,39 @@
+// ─────────────────────────────────────────────────────────────────────────────
+//  .vibe/servers.json — декларативный дев-стек (формат VibeIDE)
+//
+//  Это РАБОЧИЙ файл, а не пример: файла-двойника рядом больше нет. Комментарии писать
+//  МОЖНО — формат JSONC, как и у остальных конфигов .vibe.
+//  Все записи выключены ("active": false) — снимите поле у нужной. Пока активных нет,
+//  панель «Vibe Server» продолжает УГАДЫВАТЬ дев-сервер по вашему проекту, как и без файла.
+//  kind: "service" (живёт, есть readyCheck по порту/логу) или "task" (отработал и вышел).
+//  dependsOn строит волны запуска топосортом; skipIf пропускает уже готовое.
+//  Полная спека: docs/vibe/manuals/serversSpec.md.
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  "version": 1,
+  "servers": [
+    // Инфраструктура — это task (+readyCheck exit +skipIf), не service!
+    { "id": "colima", "active": false, "kind": "task", "command": "colima start",
+      "readyCheck": "exit", "skipIf": "docker info" },
+
+    { "id": "api", "active": false, "dir": "api", "command": "yarn dev", "port": 3000,
+      "readyTimeoutMs": 180000, "dependsOn": ["colima"],
+      "pathPrepend": ["/opt/homebrew/opt/node@20/bin"],
+      "stopCommand": "docker compose down" },
+
+    // autoStart поднимает запись при открытии проекта — но только в доверенном проекте и только
+    // после того, как вы один раз согласитесь в уведомлении: файл лежит в репозитории, и без
+    // спроса это означало бы запуск чужих команд на клонировании.
+    { "id": "web", "active": false, "dir": "web", "command": "npm run dev", "port": 5173, "autoStart": true,
+      "readyCheck": "log", "readyPattern": "Ready in", "readyTimeoutMs": 420000 },
+
+    // Внешний инструмент с веб-интерфейсом поднимается той же записью: сам он в IDE не встроен,
+    // ставится и обновляется вами. previewPath открывает его кнопкой «Превью» во встроенном
+    // браузере — иначе адрес приходится держать в голове.
+    { "id": "raytsystem", "active": false, "dir": "../raytsystem",
+      "command": "uv run raytsystem start", "port": 8765,
+      "readyCheck": "http", "readyPath": "/", "previewPath": "/",
+      "readyTimeoutMs": 180000,
+      "note": "агентная система знаний, ставится отдельно: github.com/romarayt/raytsystem-public-os" }
+  ]
+}

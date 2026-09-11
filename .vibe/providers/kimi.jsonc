@@ -1,0 +1,51 @@
+// Kimi (Moonshot) — OpenAI-совместимый API, «думающие» модели.
+// Ключ: MOONSHOT_API_KEY=<ключ> в .vibe/.env (взять: platform.moonshot.ai/console/api-keys).
+//
+// ЭКОНОМИКА K3: выключить размышление у kimi-k3 нельзя, и на простую задачу уходит
+// порядка 13 тысяч токенов рассуждений — для рутины модель невыгодна, берите её под
+// фронтенд-задачи (лидер Frontend Code arena). Тумблер thinking у Moonshot — отдельное
+// поле в теле запроса: кастомная запись с extraBody, образец закомментирован ниже.
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "kimi",
+      "name": "Kimi (Moonshot)",
+      "active": true, // тумблер: false — провайдер скрыт из списков (в слиянии и extends участвует)
+      "protocol": "openai",
+      "baseURL": "https://api.moonshot.ai/v1",
+      "auth": "bearer",
+      "apiKeyEnv": "MOONSHOT_API_KEY",
+      "order": 50,
+      "models": {
+        "fetch": true
+
+        // ── Кастомные записи (характеристики из каталога VibeIDE) ────────────────
+        // K2.7 Code: thinking включается вендоро-специфичным полем в extraBody —
+        // оно уходит в тело запроса как есть.
+        // "static": [
+        //   { "id": "kimi-k3", "name": "Kimi K3 (1M, фронтенд)", "pinned": true,
+        //     "contextWindow": 1048576, "maxOutputTokens": 32768 },
+        //   { "id": "kimi-k2.7-code", "name": "Kimi K2.7 Code", "default": true,
+        //     "contextWindow": 262144, "maxOutputTokens": 32768,
+        //     "extraBody": { "thinking": { "type": "enabled" } } }
+        // ]
+      }
+    }
+
+    // ── Kimi (Moonshot) по нативному протоколу Anthropic (кодинг-план) ──────────────────
+    // НЕ ПРОВЕРЕНО ПЕРВОИСТОЧНИКОМ: маршрут и имя модели взяты из сводной таблицы
+    // сообщества github.com/Alorse/cc-compatible-models (сверено 08.09.2026), доками
+    // вендора не подтверждены. Сверьтесь с его документацией, прежде чем полагаться.
+    // baseURL обязан заканчиваться на /v1: клиент дописывает РОВНО «/messages»
+    // (урок MiniMax 06.08.2026 — без /v1 вендор отвечает 404).
+    // Каталога моделей на этих эндпоинтах, как правило, нет — модель задаётся вручную.
+    // Раскомментируйте блок целиком — вместе с ведущей запятой и скобками.
+    // ,{
+    //   "id": "kimi-anthropic", "extends": "kimi", "name": "Kimi (Anthropic-протокол)",
+    //   "protocol": "anthropic", "baseURL": "https://api.moonshot.ai/anthropic/v1",
+    //   "auth": { "type": "header", "name": "x-api-key" }, "order": 51,
+    //   "models": { "fetch": false, "static": [ { "id": "kimi-k2.5", "name": "Kimi K2.5 (Anthropic)" } ] }
+    // }
+  ]
+}
