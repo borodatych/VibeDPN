@@ -13,7 +13,7 @@
 - [x] **`config.example.yaml` + Pydantic-модель `config.py`** — ✅ (2026-09-11, `next`) валидация ролей и профилей,
       спека формата [manuals/configSpec.md](manuals/configSpec.md)
 - [ ] **CI** — lint (ruff, mypy strict, eslint), pytest, buildx multi-arch сборка `core` и `wg` в GHCR
-- [ ] **README** — три сценария в одном абзаце каждый (заполняется по мере стадий)
+- [x] **README** — ✅ (2026-09-11, `next`) три сценария в одном абзаце каждый, статус и предупреждение об exit-ноде (заполняется по мере стадий)
 
 ## Stage 1 — CLI и install
 
