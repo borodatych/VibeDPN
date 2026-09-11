@@ -3,6 +3,47 @@
 Нетривиальные находки, грабли и проверенные факты (с URL источников — правило проекта §11.4).
 Запись без строки в этом индексе не существует: добавили файл — добавьте и строку.
 
+## myst
+
+- [node.md](myst/node.md) — образ и теги, каталог данных, актуальные флаги (`--udp.ports`,
+  `--traversal` вместо устаревших из kickoff), TequilAPI и NodeUI, что известно о consumer в
+  контейнере, открытый вопрос bridge vs host для provider
+
+## adguard
+
+- [docker.md](adguard/docker.md) — тома, `AdGuardHome.yaml` со `schema_version: 34` вместо мастера
+  на 3000, ключи привязки и апстримов, порт 53 против systemd-resolved
+
+## compose
+
+- [hostNetworkAndProfiles.md](compose/hostNetworkAndProfiles.md) — что нельзя с `network_mode: host`
+  (ports, networks, sysctl `net.*`), статические IP, профили, `compose.yaml` вместо `docker-compose.yml`
+
+## docker
+
+- [directRouting.md](docker/directRouting.md) — Engine ≥ 28 не пускает трафик с интерфейсов хоста
+  на IP контейнеров bridge-сети; для gateway-контейнеров нужна опция `trusted_host_interfaces`
+
+## wireguard
+
+- [container.md](wireguard/container.md) — модуль ядра хоста, `/dev/net/tun` только для
+  wireguard-go, `src_valid_mark`, пакеты Alpine (`wg` без wg-quick)
+
+## platform
+
+- [debianPi.md](platform/debianPi.md) — ядра Debian 12/13 и Raspberry Pi с `CONFIG_WIREGUARD=m`,
+  Raspberry Pi OS на trixie
+
+## ci
+
+- [githubActions.md](ci/githubActions.md) — мажоры actions, `setup-uv` без плавающего тега, arm64-раннеры,
+  права для GHCR, ruff 0.16
+
+## frontend
+
+- [toolchain.md](frontend/toolchain.md) — версии для Stage 6; TypeScript 7 против typescript-eslint,
+  шаблон Vite с oxlint вместо ESLint
+
 ## python
 
 - [yamlBooleans.md](python/yamlBooleans.md) — почему конфиг читается загрузчиком YAML 1.2
@@ -12,3 +53,5 @@
 
 - [vibeSeed.md](process/vibeSeed.md) — откуда взят `.vibe/` (канон VibeBrains через сабмодуль
   VibeIDE), что из набора не сеется и почему
+- [licensing.md](process/licensing.md) — MIT у обвязки, GPL у контейнеров: почему это агрегат,
+  а не производная работа, и чего из чужих репозиториев нельзя копировать

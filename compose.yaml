@@ -1,0 +1,170 @@
+# VibeDPN — all services of every role in one file; a role is a set of Compose profiles.
+# `vibedpn init` writes COMPOSE_PROFILES and the VIBEDPN_* values into .env from config.yaml
+# (see .env.example). Defaults below only make `docker compose config` work without .env;
+# they never open anything beyond loopback.
+#
+# Third-party images are pinned to versions verified on 2026-09-11 (docs/knowledge/).
+name: vibedpn
+
+services:
+  # Core: API, router engine (Stage 4) and CLI backend. Host network + NET_ADMIN because it is
+  # the only component allowed to program nftables / ip rule on the host. Never touches the
+  # host default route: every uplink is a gateway container on the `upstreams` network.
+  core:
+    image: ghcr.io/vibebrainsprojects/vibedpn-core:${VIBEDPN_TAG:-latest}
+    build:
+      context: ./core
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/etc/vibedpn/config.yaml:ro
+      - ./secrets:/etc/vibedpn/secrets
+      - ./data/core:/var/lib/vibedpn
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${VIBEDPN_API_PORT:-4480}/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Web UI: nginx serving the React build (Stage 6; a placeholder page until then) and proxying
+  # /api/ to core on loopback. Listens on the LAN address only.
+  ui:
+    image: ghcr.io/vibebrainsprojects/vibedpn-ui:${VIBEDPN_TAG:-latest}
+    build:
+      context: ./ui
+    profiles:
+      - ui
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      core:
+        condition: service_healthy
+    environment:
+      UI_LISTEN: ${VIBEDPN_LAN_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}
+      API_PORT: ${VIBEDPN_API_PORT:-4480}
+
+  # Mysterium provider node (roles home, vps). Bridge network with the UDP range published, as in
+  # the official Docker guide; NodeUI (4449) and TequilAPI (4050) only on host loopback.
+  # `--udp.ports`, `--traversal`, `--tequilapi.*`, `--ui.*` are GLOBAL options of `myst` and must
+  # precede the command; `--agreed-terms-and-conditions` belongs to `service`. The old
+  # --p2p.listen.ports / --wireguard.listen.ports / --experiment-natpunching are deprecated.
+  myst-provider:
+    image: mysteriumnetwork/myst:${MYST_TAG:-1.39.5-alpine}
+    profiles:
+      - provider
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - 127.0.0.1:4449:4449
+      - 127.0.0.1:4050:4050
+      - ${VIBEDPN_MYST_UDP_FROM:-56000}-${VIBEDPN_MYST_UDP_TO:-56100}:${VIBEDPN_MYST_UDP_FROM:-56000}-${VIBEDPN_MYST_UDP_TO:-56100}/udp
+    volumes:
+      - ./data/myst-provider:/var/lib/mysterium-node
+    command:
+      - --udp.ports=${VIBEDPN_MYST_UDP_FROM:-56000}:${VIBEDPN_MYST_UDP_TO:-56100}
+      - --traversal=${VIBEDPN_MYST_TRAVERSAL:-manual,upnp,holepunching}
+      - --tequilapi.address=0.0.0.0
+      - --tequilapi.allowed-hostnames=.
+      - service
+      - --agreed-terms-and-conditions
+
+  # Mysterium consumer = uplink `dpn`: a gateway container at 10.77.0.20 (roles home, client).
+  # Runs the daemon with the kill switch; core connects it through TequilAPI (Stage 8).
+  myst-consumer:
+    image: mysteriumnetwork/myst:${MYST_TAG:-1.39.5-alpine}
+    profiles:
+      - consumer
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      net.ipv4.ip_forward: 1
+    networks:
+      upstreams:
+        ipv4_address: 10.77.0.20
+    volumes:
+      - ./data/myst-consumer:/var/lib/mysterium-node
+    command:
+      - --firewall.killSwitch.always
+      - --ui.enable=false
+      - --tequilapi.address=0.0.0.0
+      - --tequilapi.allowed-hostnames=.
+      - daemon
+
+  # WireGuard client = uplink `vps`: a gateway container at 10.77.0.10 (role client). Uses the
+  # host kernel WireGuard module (no /dev/net/tun); kill switch in nftables (Stage 3).
+  wg-client:
+    image: ghcr.io/vibebrainsprojects/vibedpn-wg:${VIBEDPN_TAG:-latest}
+    build:
+      context: ./images/wg
+    profiles:
+      - wg-client
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      net.ipv4.ip_forward: 1
+      net.ipv4.conf.all.src_valid_mark: 1
+    networks:
+      upstreams:
+        ipv4_address: 10.77.0.10
+    volumes:
+      - ./secrets/wg-client.conf:/etc/wireguard/wg0.conf:ro
+    command:
+      - client
+
+  # WireGuard server of the VPS (wg0 10.78.0.1/24 by default). Host network: no port mapping,
+  # the UDP port is opened by the nftables baseline core applies (Stage 2/3).
+  wg-server:
+    image: ghcr.io/vibebrainsprojects/vibedpn-wg:${VIBEDPN_TAG:-latest}
+    build:
+      context: ./images/wg
+    profiles:
+      - wg-server
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./secrets/wg-server:/etc/wireguard:ro
+    command:
+      - server
+
+  # AdGuard Home on port 53 of the LAN address. Host network (needed for DHCP later and for real
+  # client IPs); core renders AdGuardHome.yaml into ./data/adguard/conf so the setup wizard on
+  # port 3000 never appears (Stage 4).
+  adguard:
+    image: adguard/adguardhome:${ADGUARD_TAG:-v0.107.79}
+    profiles:
+      - dns
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./data/adguard/work:/opt/adguardhome/work
+      - ./data/adguard/conf:/opt/adguardhome/conf
+
+networks:
+  # Gateway containers live here with static addresses; core steers marked LAN traffic to them.
+  # Docker Engine >= 28 drops traffic that reaches container IPs from other host interfaces
+  # ("direct routing") unless the interface is trusted, so the LAN interface is listed here.
+  # Network options are frozen at creation: a changed interface needs the network recreated.
+  upstreams:
+    name: vibedpn-upstreams
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.trusted_host_interfaces: ${VIBEDPN_LAN_IFACE:-}
+    ipam:
+      config:
+        - subnet: 10.77.0.0/24

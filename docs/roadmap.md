@@ -9,10 +9,10 @@
 - [x] **Структура репо, `.vibe/` со стандартным набором + `vibedpn.mdc`** — ✅ (2026-09-11, `next`) дерево по §5 idea.md
       (пути доков — по соглашениям проекта, см. [README.md](README.md)), `.vibe/` из канона
       VibeBrains, правила §11 в `.vibe/rules/vibedpn.mdc` и `CLAUDE.md`
-- [ ] **`docker-compose.yml` со всеми сервисами и профилями** — образы-заглушки, где своих ещё нет
+- [x] **`compose.yaml` со всеми сервисами и профилями** — ✅ (2026-09-11, `next`) семь сервисов, сеть `vibedpn-upstreams` со статическими IP шлюзов, образы `core`/`wg`/`ui` собираются и проходят smoke (core `/health` через nginx-прокси ui); entrypoint `wg` — контракт режимов, реализация в Stage 3
 - [x] **`config.example.yaml` + Pydantic-модель `config.py`** — ✅ (2026-09-11, `next`) валидация ролей и профилей,
       спека формата [manuals/configSpec.md](manuals/configSpec.md)
-- [ ] **CI** — lint (ruff, mypy strict, eslint), pytest, buildx multi-arch сборка `core` и `wg` в GHCR
+- [x] **CI** — ✅ (2026-09-11, `next`) lint (ruff, mypy strict, eslint через `npm run lint` когда появится `ui/package.json`), pytest, shellcheck, actionlint, `compose config`, buildx multi-arch (amd64+arm64) сборка `core`, `wg`, `ui` в GHCR; workflow проверен actionlint, прогон в GitHub — после первого push
 - [x] **README** — ✅ (2026-09-11, `next`) три сценария в одном абзаце каждый, статус и предупреждение об exit-ноде (заполняется по мере стадий)
 
 ## Stage 1 — CLI и install
