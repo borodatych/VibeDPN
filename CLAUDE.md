@@ -27,8 +27,9 @@ Open-source «DPN-коробка» на своём железе: Mysterium-но�
 ## Проверки перед завершением задачи
 
 ```bash
-cd core && uv sync --frozen && uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
+(cd core && uv sync --locked && uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest) && docker compose --profile '*' config -q && git ls-files -z '*.sh' | xargs -0 shellcheck && actionlint
 ```
 
-Python 3.12 и зависимости ставит `uv` (`brew install uv`). Тесты не запускать при ошибках типов —
-сначала чинить mypy. Проверки compose и CI добавляются по мере их появления в Stage 0.
+Плюс сборка образов, если менялись Dockerfile или зависимости: `docker compose --profile '*' build`.
+Инструменты и что они проверяют — [docs/manuals/devSetup.md](docs/manuals/devSetup.md). Тесты не
+запускать при ошибках типов — сначала чинить mypy.

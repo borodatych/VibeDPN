@@ -1,0 +1,134 @@
+# CI: lint and test the core, lint shell and workflows, validate compose, build multi-arch images
+# (pushed to GHCR on main / next / tags, build-only on pull requests).
+# Action majors verified 2026-09-11 (docs/knowledge/ci/githubActions.md); setup-uv has no floating
+# major tag, so it is pinned to an exact release.
+name: CI
+
+on:
+  push:
+    branches: [main, next]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.12.13"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  python:
+    name: core · ruff, mypy, pytest
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: core/uv.lock
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run pytest
+
+  ui:
+    name: ui · lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - id: present
+        name: Is the UI scaffolded yet (Stage 6)?
+        run: |
+          if [ -f ui/package.json ]; then echo "yes=true" >> "$GITHUB_OUTPUT"; else echo "yes=false" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.present.outputs.yes == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - if: steps.present.outputs.yes == 'true'
+        run: npm ci
+        working-directory: ui
+      - if: steps.present.outputs.yes == 'true'
+        run: npm run lint
+        working-directory: ui
+
+  shell:
+    name: shell · shellcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: git ls-files -z '*.sh' | xargs -0 shellcheck
+
+  workflows:
+    name: workflows · actionlint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - id: actionlint
+        run: bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.12
+      - run: ${{ steps.actionlint.outputs.executable }} -color
+
+  compose:
+    name: compose · config
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker compose --profile '*' config -q
+
+  images:
+    name: image · ${{ matrix.image.name }}
+    needs: [python, shell, compose]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: core
+            context: core
+          - name: wg
+            context: images/wg
+          - name: ui
+            context: ui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: image
+        name: Image name (GHCR namespaces are lower-case)
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/vibedpn-${{ matrix.image.name }}" >> "$GITHUB_OUTPUT"
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.image.context }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
