@@ -11,7 +11,11 @@ def home_config() -> dict[str, Any]:
     return {
         "version": 1,
         "role": "home",
-        "network": {"lan_interface": "eth0", "lan_subnet": "192.168.1.0/24"},
+        "network": {
+            "lan_interface": "eth0",
+            "lan_subnet": "192.168.1.0/24",
+            "lan_address": "192.168.1.50",
+        },
         "routing": {"mode": "off", "default_upstream": "dpn"},
         "upstreams": {"dpn": {"enabled": True}},
         "provider": {"enabled": True},
@@ -31,7 +35,11 @@ def client_config() -> dict[str, Any]:
     return {
         "version": 1,
         "role": "client",
-        "network": {"lan_interface": "eth0", "lan_subnet": "192.168.1.0/24"},
+        "network": {
+            "lan_interface": "eth0",
+            "lan_subnet": "192.168.1.0/24",
+            "lan_address": "192.168.1.50",
+        },
         "routing": {"mode": "full", "default_upstream": "vps"},
         "upstreams": {"vps": {"enabled": True, "peer_config": "secrets/home.conf"}},
     }

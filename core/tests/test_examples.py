@@ -27,8 +27,11 @@ def test_config_example_is_a_valid_home_box() -> None:
 
 
 def test_env_example_matches_config_example() -> None:
-    profiles = ",".join(p.value for p in load_config(EXAMPLE).compose_profiles())
-    assert f"COMPOSE_PROFILES={profiles}" in ENV_EXAMPLE.read_text(encoding="utf-8")
+    lines = ENV_EXAMPLE.read_text(encoding="utf-8").splitlines()
+    assignments = {line.split("=", 1)[0]: line.split("=", 1)[1] for line in lines if "=" in line}
+    derived = load_config(EXAMPLE).env_vars()
+    assert {k: assignments.get(k) for k in derived} == derived
+    assert set(assignments) - set(derived) == {"VIBEDPN_TAG"}
 
 
 def spec_examples() -> list[str]:

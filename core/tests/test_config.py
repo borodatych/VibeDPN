@@ -204,13 +204,63 @@ def test_country_must_be_two_letters(home: dict[str, Any]) -> None:
     assert "ISO 3166-1 alpha-2" in errors_of(home)
 
 
-def test_provider_port_ranges_must_not_overlap(home: dict[str, Any]) -> None:
-    home["provider"] = {
-        "enabled": True,
-        "p2p_ports": "41920-42075",
-        "wireguard_ports": "42000-42100",
+def test_provider_udp_ports_are_validated(home: dict[str, Any]) -> None:
+    home["provider"] = {"enabled": True, "udp_ports": "56100-56000"}
+    assert "start <= end" in errors_of(home)
+    home["provider"] = {"enabled": True, "udp_ports": "56000-56100"}
+    assert Config.model_validate(home).provider.udp_ports == "56000-56100"
+
+
+def test_provider_traversal_rules(home: dict[str, Any]) -> None:
+    home["provider"] = {"enabled": True, "traversal": []}
+    assert "at least one method" in errors_of(home)
+    home["provider"] = {"enabled": True, "traversal": ["manual", "manual"]}
+    assert "lists a method twice" in errors_of(home)
+    home["provider"] = {"enabled": True, "traversal": ["teleport"]}
+    assert "traversal" in errors_of(home)
+    assert [t.value for t in Config.model_validate(home | {"provider": {}}).provider.traversal] == [
+        "manual",
+        "upnp",
+        "holepunching",
+    ]
+
+
+def test_lan_address_must_be_a_host_of_the_subnet(home: dict[str, Any]) -> None:
+    home["network"]["lan_address"] = "192.168.2.50"
+    assert "is not a host address" in errors_of(home)
+    home["network"]["lan_address"] = "192.168.1.0"
+    assert "is not a host address" in errors_of(home)
+    home["network"]["lan_address"] = "192.168.1.255"
+    assert "is not a host address" in errors_of(home)
+
+
+def test_env_vars_are_derived_from_config(
+    home: dict[str, Any], vps: dict[str, Any], client: dict[str, Any]
+) -> None:
+    assert Config.model_validate(home).env_vars() == {
+        "COMPOSE_PROFILES": "provider,consumer,router,dns,ui",
+        "VIBEDPN_API_PORT": "4480",
+        "VIBEDPN_LAN_IFACE": "eth0",
+        "VIBEDPN_LAN_IP": "192.168.1.50",
+        "VIBEDPN_UI_PORT": "80",
+        "VIBEDPN_MYST_UDP_FROM": "56000",
+        "VIBEDPN_MYST_UDP_TO": "56100",
+        "VIBEDPN_MYST_TRAVERSAL": "manual,upnp,holepunching",
     }
-    assert "must not overlap" in errors_of(home)
+    assert Config.model_validate(vps).env_vars() == {
+        "COMPOSE_PROFILES": "provider,wg-server",
+        "VIBEDPN_API_PORT": "4480",
+        "VIBEDPN_MYST_UDP_FROM": "56000",
+        "VIBEDPN_MYST_UDP_TO": "56100",
+        "VIBEDPN_MYST_TRAVERSAL": "manual,upnp,holepunching",
+    }
+    assert Config.model_validate(client).env_vars() == {
+        "COMPOSE_PROFILES": "wg-client,router,dns,ui",
+        "VIBEDPN_API_PORT": "4480",
+        "VIBEDPN_LAN_IFACE": "eth0",
+        "VIBEDPN_LAN_IP": "192.168.1.50",
+        "VIBEDPN_UI_PORT": "80",
+    }
 
 
 @pytest.mark.parametrize("value", ["1024", "abc", "5000-4000", "0-10", "1-70000"])

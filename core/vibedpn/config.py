@@ -82,6 +82,17 @@ class DevicePolicy(StrEnum):
     BLOCK = "block"
 
 
+class Traversal(StrEnum):
+    """NAT traversal methods of the Mysterium node, tried in the listed order."""
+
+    MANUAL = "manual"
+    UPNP = "upnp"
+    HOLEPUNCHING = "holepunching"
+
+
+DEFAULT_TRAVERSAL = (Traversal.MANUAL, Traversal.UPNP, Traversal.HOLEPUNCHING)
+
+
 class StrictModel(BaseModel):
     """Base of every section: unknown keys are errors, strings are stripped."""
 
@@ -121,7 +132,17 @@ class NetworkConfig(StrictModel):
     mode: NetworkMode = NetworkMode.SIDECAR
     lan_interface: InterfaceName
     lan_subnet: IPv4Network
+    lan_address: IPv4Address
     wan_interface: InterfaceName | None = None
+
+    @model_validator(mode="after")
+    def check_lan_address(self) -> Self:
+        if self.lan_address not in self.lan_subnet.hosts():
+            raise ValueError(
+                f"network.lan_address {self.lan_address} is not a host address of"
+                f" network.lan_subnet {self.lan_subnet}"
+            )
+        return self
 
     @model_validator(mode="after")
     def check_interfaces(self) -> Self:
@@ -216,23 +237,23 @@ class ProviderConfig(StrictModel):
     """Mysterium provider node: share bandwidth, earn MYST."""
 
     enabled: bool = False
-    p2p_ports: str = "41920-42075"
-    wireguard_ports: str = "61920-62075"
-    nat_punching: bool = False
+    udp_ports: str = "56000-56100"
+    traversal: list[Traversal] = Field(default_factory=lambda: list(DEFAULT_TRAVERSAL))
 
-    @field_validator("p2p_ports", "wireguard_ports")
+    @field_validator("udp_ports")
     @classmethod
-    def check_port_range(cls, value: str) -> str:
+    def check_udp_ports(cls, value: str) -> str:
         parse_port_range(value)
         return value
 
-    @model_validator(mode="after")
-    def check_ranges_disjoint(self) -> Self:
-        p2p_start, p2p_end = parse_port_range(self.p2p_ports)
-        wg_start, wg_end = parse_port_range(self.wireguard_ports)
-        if p2p_start <= wg_end and wg_start <= p2p_end:
-            raise ValueError("provider.p2p_ports and provider.wireguard_ports must not overlap")
-        return self
+    @field_validator("traversal")
+    @classmethod
+    def check_traversal(cls, value: list[Traversal]) -> list[Traversal]:
+        if not value:
+            raise ValueError("provider.traversal needs at least one method")
+        if len(set(value)) != len(value):
+            raise ValueError("provider.traversal lists a method twice")
+        return value
 
 
 class WgServerConfig(StrictModel):
@@ -398,6 +419,26 @@ class Config(StrictModel):
             Profile.UI: self.ui.enabled,
         }
         return [profile for profile in Profile if wanted.get(profile, False)]
+
+    def env_vars(self) -> dict[str, str]:
+        """Values ``vibedpn init`` writes to ``.env`` for ``compose.yaml``; every one is derived.
+
+        ``VIBEDPN_TAG`` is deliberately absent: the image tag is not a property of the box.
+        """
+        env = {
+            "COMPOSE_PROFILES": ",".join(profile.value for profile in self.compose_profiles()),
+            "VIBEDPN_API_PORT": str(self.api.port),
+        }
+        if self.network is not None:
+            env["VIBEDPN_LAN_IFACE"] = self.network.lan_interface
+            env["VIBEDPN_LAN_IP"] = str(self.network.lan_address)
+            env["VIBEDPN_UI_PORT"] = str(self.ui.port)
+        if self.provider.enabled:
+            start, end = parse_port_range(self.provider.udp_ports)
+            env["VIBEDPN_MYST_UDP_FROM"] = str(start)
+            env["VIBEDPN_MYST_UDP_TO"] = str(end)
+            env["VIBEDPN_MYST_TRAVERSAL"] = ",".join(t.value for t in self.provider.traversal)
+        return env
 
 
 class ConfigError(ValueError):

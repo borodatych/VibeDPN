@@ -18,6 +18,7 @@ network:
                             # gateway — «в разрыв», WAN + LAN (два порта, Stage 9)
   lan_interface: eth0
   lan_subnet: 192.168.1.0/24
+  lan_address: 192.168.1.50 # адрес коробки в LAN: на нём слушают ui и dns; закрепите его на роутере
   # wan_interface: eth1     # только для mode: gateway
 
 # Политика для трафика LAN.
@@ -50,9 +51,8 @@ upstreams:
 # Нода Mysterium (provider): раздаём канал, получаем MYST.
 provider:
   enabled: true
-  p2p_ports: "41920-42075"        # UDP; пробросить на домашнем роутере (Stage 7)
-  wireguard_ports: "61920-62075"  # UDP
-  nat_punching: false             # true — если проброс портов невозможен
+  udp_ports: "56000-56100"        # UDP-диапазон ноды; пробросить на домашнем роутере (Stage 7)
+  traversal: [manual, upnp, holepunching]   # порядок обхода NAT: проброс руками, UPnP, hole punching
 
 # DNS и адблок: AdGuard Home на порту 53 LAN-интерфейса.
 dns:

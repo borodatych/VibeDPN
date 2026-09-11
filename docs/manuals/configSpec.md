@@ -51,6 +51,7 @@
 | `mode` | `sidecar` \| `gateway` | `sidecar` | `sidecar` — коробка стоит в существующей LAN одним портом; `gateway` — «в разрыв», WAN + LAN двумя портами |
 | `lan_interface` | имя интерфейса (`eth0`, `end0`, `enp1s0`; до 15 символов) | — | интерфейс в сторону домашних устройств |
 | `lan_subnet` | IPv4-сеть в CIDR (`192.168.1.0/24`) | — | адрес сети, не хоста: `192.168.1.5/24` — ошибка |
+| `lan_address` | IPv4 внутри `lan_subnet` | — | адрес коробки в LAN; на нём слушают `ui` и `dns`. Закрепить на роутере (DHCP-резервация или статика) |
 | `wan_interface` | имя интерфейса | — | только для `mode: gateway`, обязателен там и запрещён в `sidecar`; не равен `lan_interface` |
 
 ### `routing` — политика LAN-трафика
@@ -96,11 +97,10 @@ upstreams:
 | Ключ | Тип | По умолчанию | Смысл |
 |---|---|---|---|
 | `enabled` | bool | `false` | раздавать канал и получать MYST |
-| `p2p_ports` | `"start-end"` | `"41920-42075"` | UDP-диапазон p2p; пробрасывать на роутере |
-| `wireguard_ports` | `"start-end"` | `"61920-62075"` | UDP-диапазон WireGuard ноды |
-| `nat_punching` | bool | `false` | `true`, если проброс портов невозможен |
+| `udp_ports` | `"start-end"` | `"56000-56100"` | UDP-диапазон ноды (флаг `--udp.ports`); пробрасывать на роутере |
+| `traversal` | список из `manual`, `upnp`, `holepunching` | `[manual, upnp, holepunching]` | порядок обхода NAT (флаг `--traversal`): проброс руками, UPnP, hole punching. Минимум один, без повторов |
 
-Диапазоны — строки в кавычках, 1–65535, `start <= end`, не пересекаются.
+Диапазон — строка в кавычках, 1–65535, `start <= end`.
 
 ### `wg_server` — сервер приватного туннеля (только `vps`)
 
@@ -149,6 +149,7 @@ network:
   mode: sidecar
   lan_interface: eth0
   lan_subnet: 192.168.1.0/24
+  lan_address: 192.168.1.50
 routing:
   mode: full
   default_upstream: dpn
@@ -167,9 +168,8 @@ upstreams:
     country: DE
 provider:
   enabled: true
-  p2p_ports: "41920-42075"
-  wireguard_ports: "61920-62075"
-  nat_punching: false
+  udp_ports: "56000-56100"
+  traversal: [manual, upnp, holepunching]
 dns:
   enabled: true
   upstreams:
@@ -190,9 +190,8 @@ version: 1
 role: vps
 provider:
   enabled: true
-  p2p_ports: "41920-42075"
-  wireguard_ports: "61920-62075"
-  nat_punching: false
+  udp_ports: "56000-56100"
+  traversal: [manual, upnp, holepunching]
 wg_server:
   endpoint: 203.0.113.7
   subnet: 10.78.0.0/24
@@ -211,6 +210,7 @@ network:
   mode: sidecar
   lan_interface: end0
   lan_subnet: 192.168.0.0/24
+  lan_address: 192.168.0.2
 routing:
   mode: full
   default_upstream: vps
@@ -227,10 +227,12 @@ ui:
   enabled: true
 ```
 
-## Как из конфига получаются профили Compose
+## Как из конфига получается `.env`
 
-`vibedpn init` пишет в `.env` строку `COMPOSE_PROFILES=…` — производную от роли и включённых
-секций; руками её не править.
+`vibedpn init` пишет `.env` для `compose.yaml`; всё в нём, кроме `VIBEDPN_TAG`, — производные
+от этого файла (`Config.env_vars()`), руками их не править: `COMPOSE_PROFILES`, `VIBEDPN_API_PORT`,
+`VIBEDPN_LAN_IFACE`, `VIBEDPN_LAN_IP` и `VIBEDPN_UI_PORT` (роли с LAN), `VIBEDPN_MYST_UDP_FROM/TO` и
+`VIBEDPN_MYST_TRAVERSAL` (если включён provider).
 
 | Роль | Профили |
 |---|---|
