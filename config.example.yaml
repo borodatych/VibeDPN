@@ -1,0 +1,71 @@
+# VibeDPN — config.yaml
+#
+# Единственный источник правды о коробке. `vibedpn init` пишет этот файл сам; править руками
+# можно, после правки — `vibedpn restart`. Секретов здесь нет: ключи WireGuard и keystore ноды
+# лежат в secrets/ и data/, переменные Compose — в .env (см. .env.example).
+#
+# Это образец для роли home (всё в одной коробке). Полная спека формата с образцами для ролей
+# vps и client — docs/manuals/configSpec.md; какая роль что запускает — docs/roles.md.
+
+version: 1
+
+# Роль коробки: home | vps | client.
+role: home
+
+# Сеть коробки. `init` определяет интерфейс и подсеть сам.
+network:
+  mode: sidecar             # sidecar — коробка стоит в существующей LAN (один порт);
+                            # gateway — «в разрыв», WAN + LAN (два порта, Stage 9)
+  lan_interface: eth0
+  lan_subnet: 192.168.1.0/24
+  # wan_interface: eth1     # только для mode: gateway
+
+# Политика для трафика LAN.
+routing:
+  mode: off                 # off — всё напрямую; full — всё через default_upstream;
+                            # smart — через аплинк только smart_domains и устройства с политикой
+  default_upstream: dpn     # vps | dpn. У роли home есть только dpn
+  failopen: false           # false — упал аплинк, трафик стоит (kill-switch);
+                            # true — упал аплинк, трафик уходит напрямую (осознанный выбор)
+  smart_domains: []         # доменные суффиксы для режима smart: [netflix.com, bbc.co.uk]
+
+# Устройства LAN с собственной политикой поверх routing.mode. Идентификация по MAC, IP — запасной.
+devices: []
+# devices:
+#   - name: TV
+#     mac: aa:bb:cc:dd:ee:01
+#     policy: bypass        # vps | dpn | bypass | block
+#   - name: Laptop
+#     ip: 192.168.1.42
+#     policy: dpn
+
+# Аплинки — куда коробка может отправлять трафик.
+upstreams:
+  vps:
+    enabled: false          # у роли home VPS-туннеля нет (это роль client)
+  dpn:
+    enabled: true           # consumer Mysterium: выход через ноду сети с выбором страны
+    country: DE             # ISO 3166-1 alpha-2; убрать строку — любая страна
+
+# Нода Mysterium (provider): раздаём канал, получаем MYST.
+provider:
+  enabled: true
+  p2p_ports: "41920-42075"        # UDP; пробросить на домашнем роутере (Stage 7)
+  wireguard_ports: "61920-62075"  # UDP
+  nat_punching: false             # true — если проброс портов невозможен
+
+# DNS и адблок: AdGuard Home на порту 53 LAN-интерфейса.
+dns:
+  enabled: true
+  upstreams:
+    - https://dns.cloudflare.com/dns-query   # DNS-over-HTTPS
+  web_port: 3000            # веб-панель AdGuard на LAN-интерфейсе
+
+# Веб-интерфейс коробки, только на LAN-интерфейсе.
+ui:
+  enabled: true
+  port: 80
+
+# API ядра. Слушает только 127.0.0.1; на LAN его отдаёт ui (nginx) с авторизацией.
+api:
+  port: 4480

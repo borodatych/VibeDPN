@@ -1,0 +1,433 @@
+"""Model of ``config.yaml``: the single source of truth of a VibeDPN box.
+
+The whole v1 schema is declared here so that later stages extend one place. What a ``home``,
+``vps`` or ``client`` box must and must not contain is enforced by ``Config`` itself; the
+Compose profile preset of a role is derived by :meth:`Config.compose_profiles` and written to
+``.env`` by ``vibedpn init``. The human-readable spec of this format, with an example per
+role, is ``docs/manuals/configSpec.md``; keep the two in sync.
+"""
+
+from __future__ import annotations
+
+import re
+from enum import StrEnum
+from ipaddress import IPv4Address, IPv4Network
+from pathlib import Path
+from typing import Annotated, Literal, Self
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
+
+CONFIG_SCHEMA_VERSION = 1
+
+# Protocol-level constants (not user settings): validation patterns and port bounds.
+MAC_PATTERN = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
+COUNTRY_PATTERN = re.compile(r"^[A-Z]{2}$")
+PORT_RANGE_PATTERN = re.compile(r"^(\d{1,5})-(\d{1,5})$")
+DOMAIN_PATTERN = re.compile(
+    r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$"
+)
+DOH_URL_PATTERN = re.compile(r"^https://[^\s/]+/\S*$")
+HOSTNAME_PATTERN = re.compile(
+    r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$"
+)
+INTERFACE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")  # IFNAMSIZ is 16 with the NUL
+PORT_MIN = 1
+PORT_MAX = 65535
+MIN_WG_SUBNET_ADDRESSES = 4  # network, server, at least one peer, broadcast
+
+Port = Annotated[int, Field(ge=PORT_MIN, le=PORT_MAX)]
+InterfaceName = Annotated[str, Field(pattern=INTERFACE_PATTERN.pattern)]
+
+
+class Role(StrEnum):
+    HOME = "home"
+    VPS = "vps"
+    CLIENT = "client"
+
+
+class Profile(StrEnum):
+    """Compose profiles, in the order they are listed in ``COMPOSE_PROFILES``."""
+
+    PROVIDER = "provider"
+    CONSUMER = "consumer"
+    WG_SERVER = "wg-server"
+    WG_CLIENT = "wg-client"
+    ROUTER = "router"
+    DNS = "dns"
+    UI = "ui"
+
+
+class NetworkMode(StrEnum):
+    SIDECAR = "sidecar"
+    GATEWAY = "gateway"
+
+
+class RoutingMode(StrEnum):
+    OFF = "off"
+    FULL = "full"
+    SMART = "smart"
+
+
+class Upstream(StrEnum):
+    VPS = "vps"
+    DPN = "dpn"
+
+
+class DevicePolicy(StrEnum):
+    VPS = "vps"
+    DPN = "dpn"
+    BYPASS = "bypass"
+    BLOCK = "block"
+
+
+class StrictModel(BaseModel):
+    """Base of every section: unknown keys are errors, strings are stripped."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+def parse_port_range(value: str) -> tuple[int, int]:
+    """Parse ``"start-end"`` into a tuple; raise ``ValueError`` on anything else."""
+    match = PORT_RANGE_PATTERN.fullmatch(value)
+    if match is None:
+        raise ValueError(f"{value!r} is not a port range (expected 'start-end')")
+    start, end = int(match[1]), int(match[2])
+    if not PORT_MIN <= start <= end <= PORT_MAX:
+        raise ValueError(f"{value!r}: ports must be within {PORT_MIN}-{PORT_MAX} and start <= end")
+    return start, end
+
+
+def normalize_mac(value: str) -> str:
+    """Lower-case a MAC and accept ``-`` as separator; raise ``ValueError`` if not a MAC."""
+    mac = value.lower().replace("-", ":")
+    if MAC_PATTERN.fullmatch(mac) is None:
+        raise ValueError(f"{value!r} is not a MAC address (expected aa:bb:cc:dd:ee:ff)")
+    return mac
+
+
+def normalize_domain(value: str) -> str:
+    """Lower-case a domain suffix, strip surrounding dots; raise ``ValueError`` if invalid."""
+    domain = value.lower().strip(".")
+    if DOMAIN_PATTERN.fullmatch(domain) is None:
+        raise ValueError(f"{value!r} is not a domain name")
+    return domain
+
+
+class NetworkConfig(StrictModel):
+    """Where the box sits: one LAN port (sidecar) or WAN+LAN (gateway, Stage 9)."""
+
+    mode: NetworkMode = NetworkMode.SIDECAR
+    lan_interface: InterfaceName
+    lan_subnet: IPv4Network
+    wan_interface: InterfaceName | None = None
+
+    @model_validator(mode="after")
+    def check_interfaces(self) -> Self:
+        if self.mode is NetworkMode.GATEWAY and self.wan_interface is None:
+            raise ValueError("network.mode 'gateway' requires network.wan_interface")
+        if self.mode is NetworkMode.SIDECAR and self.wan_interface is not None:
+            raise ValueError("network.wan_interface is only used with network.mode 'gateway'")
+        if self.wan_interface == self.lan_interface:
+            raise ValueError("network.wan_interface must differ from network.lan_interface")
+        return self
+
+
+class RoutingConfig(StrictModel):
+    """LAN traffic policy: everything direct, everything via an uplink, or by domain list."""
+
+    mode: RoutingMode = RoutingMode.OFF
+    default_upstream: Upstream
+    failopen: bool = False
+    smart_domains: list[str] = Field(default_factory=list)
+
+    @field_validator("smart_domains")
+    @classmethod
+    def check_domains(cls, domains: list[str]) -> list[str]:
+        normalized = [normalize_domain(domain) for domain in domains]
+        duplicates = sorted({d for d in normalized if normalized.count(d) > 1})
+        if duplicates:
+            raise ValueError(f"routing.smart_domains has duplicates: {', '.join(duplicates)}")
+        return normalized
+
+
+class DeviceConfig(StrictModel):
+    """A LAN device with its own policy; identified by MAC, IP is the fallback."""
+
+    name: str = Field(min_length=1, max_length=64)
+    mac: str | None = None
+    ip: IPv4Address | None = None
+    policy: DevicePolicy
+
+    @field_validator("mac")
+    @classmethod
+    def check_mac(cls, value: str | None) -> str | None:
+        return None if value is None else normalize_mac(value)
+
+    @model_validator(mode="after")
+    def check_identity(self) -> Self:
+        if self.mac is None and self.ip is None:
+            raise ValueError(f"device {self.name!r} needs a mac or an ip")
+        return self
+
+
+class VpsUplink(StrictModel):
+    """Private WireGuard tunnel to the owner's VPS (``wg-client`` container)."""
+
+    enabled: bool = False
+    peer_config: Path | None = None
+
+    @model_validator(mode="after")
+    def check_peer_config(self) -> Self:
+        if self.enabled and self.peer_config is None:
+            raise ValueError("upstreams.vps.peer_config is required when the VPS uplink is enabled")
+        return self
+
+
+class DpnUplink(StrictModel):
+    """Mysterium consumer: exit through a network node, optionally pinned to a country."""
+
+    enabled: bool = False
+    country: str | None = None
+
+    @field_validator("country", mode="before")
+    @classmethod
+    def check_country(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError(f"{value!r} is not a country code")
+        code = value.strip().upper()
+        if COUNTRY_PATTERN.fullmatch(code) is None:
+            raise ValueError(f"{value!r} is not an ISO 3166-1 alpha-2 country code")
+        return code
+
+
+class UpstreamsConfig(StrictModel):
+    vps: VpsUplink = Field(default_factory=VpsUplink)
+    dpn: DpnUplink = Field(default_factory=DpnUplink)
+
+    def is_enabled(self, upstream: Upstream) -> bool:
+        return self.vps.enabled if upstream is Upstream.VPS else self.dpn.enabled
+
+
+class ProviderConfig(StrictModel):
+    """Mysterium provider node: share bandwidth, earn MYST."""
+
+    enabled: bool = False
+    p2p_ports: str = "41920-42075"
+    wireguard_ports: str = "61920-62075"
+    nat_punching: bool = False
+
+    @field_validator("p2p_ports", "wireguard_ports")
+    @classmethod
+    def check_port_range(cls, value: str) -> str:
+        parse_port_range(value)
+        return value
+
+    @model_validator(mode="after")
+    def check_ranges_disjoint(self) -> Self:
+        p2p_start, p2p_end = parse_port_range(self.p2p_ports)
+        wg_start, wg_end = parse_port_range(self.wireguard_ports)
+        if p2p_start <= wg_end and wg_start <= p2p_end:
+            raise ValueError("provider.p2p_ports and provider.wireguard_ports must not overlap")
+        return self
+
+
+class WgServerConfig(StrictModel):
+    """WireGuard server of a VPS box; home boxes dial ``endpoint:listen_port``."""
+
+    endpoint: str
+    subnet: IPv4Network = IPv4Network("10.78.0.0/24")
+    listen_port: Port = 51820
+
+    @field_validator("endpoint")
+    @classmethod
+    def check_endpoint(cls, value: str) -> str:
+        if HOSTNAME_PATTERN.fullmatch(value) is None:
+            raise ValueError(f"{value!r} is not a hostname or IPv4 address")
+        return value
+
+    @field_validator("subnet")
+    @classmethod
+    def check_subnet(cls, value: IPv4Network) -> IPv4Network:
+        if value.num_addresses < MIN_WG_SUBNET_ADDRESSES:
+            raise ValueError(f"wg_server.subnet {value} is too small for a server and a peer")
+        return value
+
+
+class DnsConfig(StrictModel):
+    """AdGuard Home on port 53 of the LAN interface with DNS-over-HTTPS upstreams."""
+
+    enabled: bool = True
+    upstreams: list[str] = Field(default_factory=lambda: ["https://dns.cloudflare.com/dns-query"])
+    web_port: Port = 3000
+
+    @field_validator("upstreams")
+    @classmethod
+    def check_upstreams(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("dns.upstreams needs at least one DNS-over-HTTPS URL")
+        for url in value:
+            if DOH_URL_PATTERN.fullmatch(url) is None:
+                raise ValueError(f"{url!r} is not a DNS-over-HTTPS URL (https://host/path)")
+        return value
+
+
+class UiConfig(StrictModel):
+    """Web UI (nginx) on the LAN interface; it also proxies the core API."""
+
+    enabled: bool = True
+    port: Port = 80
+
+
+class ApiConfig(StrictModel):
+    """Core API; binds loopback only and is reached through ``ui``."""
+
+    port: Port = 4480
+
+
+# Sections that describe a LAN-side box and make no sense on a headless VPS.
+LAN_SECTIONS = ("network", "routing", "devices", "upstreams", "dns", "ui")
+
+
+class Config(StrictModel):
+    """Top level of ``config.yaml``."""
+
+    version: Literal[1]
+    role: Role
+    network: NetworkConfig | None = None
+    routing: RoutingConfig | None = None
+    devices: list[DeviceConfig] = Field(default_factory=list)
+    upstreams: UpstreamsConfig = Field(default_factory=UpstreamsConfig)
+    provider: ProviderConfig = Field(default_factory=ProviderConfig)
+    wg_server: WgServerConfig | None = None
+    dns: DnsConfig = Field(default_factory=DnsConfig)
+    ui: UiConfig = Field(default_factory=UiConfig)
+    api: ApiConfig = Field(default_factory=ApiConfig)
+
+    @model_validator(mode="after")
+    def check_role_rules(self) -> Self:
+        errors = self._role_errors()
+        if errors:
+            raise ValueError("; ".join(errors))
+        return self
+
+    def _role_errors(self) -> list[str]:
+        if self.role is Role.VPS:
+            return self._vps_errors()
+        errors = self._lan_box_errors()
+        if self.role is Role.HOME and self.upstreams.vps.enabled:
+            errors.append(
+                "upstreams.vps: role 'home' has no VPS uplink; a box paired with a VPS is role"
+                " 'client'"
+            )
+        if self.role is Role.CLIENT:
+            if not self.upstreams.vps.enabled:
+                errors.append("upstreams.vps.enabled: must be true for role 'client'")
+            if self.provider.enabled:
+                errors.append(
+                    "provider.enabled: role 'client' runs no node; the node is on the VPS"
+                )
+        return errors
+
+    def _vps_errors(self) -> list[str]:
+        errors = [
+            f"{section}: not part of role 'vps'"
+            for section in LAN_SECTIONS
+            if section in self.model_fields_set
+        ]
+        if self.wg_server is None:
+            errors.append("wg_server: required for role 'vps'")
+        if not self.provider.enabled:
+            errors.append("provider.enabled: must be true for role 'vps'")
+        return errors
+
+    def _lan_box_errors(self) -> list[str]:
+        errors: list[str] = []
+        if self.network is None:
+            errors.append(f"network: required for role '{self.role}'")
+        if self.routing is None:
+            errors.append(f"routing: required for role '{self.role}'")
+        elif self.routing.mode is not RoutingMode.OFF and not self.upstreams.is_enabled(
+            self.routing.default_upstream
+        ):
+            errors.append(
+                f"routing.default_upstream: '{self.routing.default_upstream}' is not an enabled"
+                " uplink"
+            )
+        if self.wg_server is not None:
+            errors.append("wg_server: only role 'vps' runs the WireGuard server")
+        errors.extend(self._device_errors())
+        return errors
+
+    def _device_errors(self) -> list[str]:
+        errors: list[str] = []
+        seen_macs: set[str] = set()
+        seen_ips: set[IPv4Address] = set()
+        for device in self.devices:
+            policy_uplink = {DevicePolicy.VPS: Upstream.VPS, DevicePolicy.DPN: Upstream.DPN}.get(
+                device.policy
+            )
+            if policy_uplink is not None and not self.upstreams.is_enabled(policy_uplink):
+                errors.append(
+                    f"devices: {device.name!r} uses policy '{device.policy}' but that uplink"
+                    " is not enabled"
+                )
+            if device.mac is not None:
+                if device.mac in seen_macs:
+                    errors.append(f"devices: duplicate mac {device.mac}")
+                seen_macs.add(device.mac)
+            if device.ip is not None:
+                if device.ip in seen_ips:
+                    errors.append(f"devices: duplicate ip {device.ip}")
+                seen_ips.add(device.ip)
+        return errors
+
+    def compose_profiles(self) -> list[Profile]:
+        """Compose profiles this box needs, in the canonical order of ``Profile``."""
+        if self.role is Role.VPS:
+            return [Profile.PROVIDER, Profile.WG_SERVER]
+        wanted = {
+            Profile.PROVIDER: self.provider.enabled,
+            Profile.CONSUMER: self.upstreams.dpn.enabled,
+            Profile.WG_CLIENT: self.role is Role.CLIENT,
+            Profile.ROUTER: True,
+            Profile.DNS: self.dns.enabled,
+            Profile.UI: self.ui.enabled,
+        }
+        return [profile for profile in Profile if wanted.get(profile, False)]
+
+
+class ConfigError(ValueError):
+    """``config.yaml`` could not be read: missing file, bad YAML or not a mapping."""
+
+
+def parse_yaml(text: str) -> object:
+    """Parse YAML 1.2 into plain Python objects (the caller narrows the type).
+
+    YAML 1.1 loaders (PyYAML) read ``off``, ``NO`` and ``yes`` as booleans, which breaks
+    ``routing.mode: off`` and ``country: NO``. The pure-Python ruamel loader is YAML 1.2, where
+    those are strings; ``pure=True`` pins that behaviour regardless of optional C extensions.
+    """
+    return YAML(typ="safe", pure=True).load(text)
+
+
+def load_config(path: Path) -> Config:
+    """Read and validate ``config.yaml``.
+
+    Raises ``ConfigError`` for file-level problems and ``pydantic.ValidationError`` for schema
+    violations; both messages are meant to be shown to the user as they are.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ConfigError(f"{path}: not found") from exc
+    try:
+        data = parse_yaml(text)
+    except YAMLError as exc:
+        raise ConfigError(f"{path}: invalid YAML: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ConfigError(f"{path}: the top level must be a mapping")
+    return Config.model_validate(data)
