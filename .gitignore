@@ -1,0 +1,25 @@
+# Live box state — never committed. Examples (config.example.yaml, .env.example) are.
+/config.yaml
+/.env
+/secrets/
+/data/
+/backups/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+core/dist/
+
+# Node
+node_modules/
+ui/dist/
+
+# Local tooling
+.claude/settings.local.json
+.DS_Store
+.idea/
