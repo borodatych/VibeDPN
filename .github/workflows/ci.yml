@@ -66,8 +66,9 @@ jobs:
           docker run --rm -v "$PWD:/src:ro" "debian:${{ matrix.debian }}-slim" bash -eu -c '
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates >/dev/null
-            git config --global --add safe.directory /src
-            git clone -q /src /tmp/repo && git -C /tmp/repo checkout -q -b ci-install
+            git config --global --add safe.directory "*"
+            git clone -q /src /tmp/repo
+            git -C /tmp/repo checkout -q -b ci-install
             install -m 755 /src/tests/install/docker-stub.sh /usr/local/bin/docker
             export VIBEDPN_REPO=/tmp/repo VIBEDPN_BRANCH=ci-install
             bash /src/install.sh
