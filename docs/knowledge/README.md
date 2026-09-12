@@ -36,6 +36,9 @@
   kill-switch в netns контейнера, «упал» = удалён или down; ключи X25519 из `cryptography`
   с clamping как у `wg genkey` (вектор RFC 7748); пиры на работающем сервере через `wg syncconf`,
   синхронизация маршрутов, формат `wg show dump`, QR-код через `segno`
+- [tunnelAccess.md](wireguard/tunnelAccess.md) — панель ноды и API ядра на адресе туннеля:
+  `IP_FREEBIND` для адреса, которого ещё нет, несколько uvicorn и сигналы, NodeUI за TCP-пробросом,
+  файрвол «туннельная подсеть только через wg0»
 
 ## platform
 

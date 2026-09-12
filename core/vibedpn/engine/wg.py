@@ -86,6 +86,9 @@ class Peer(BaseModel):
     public_key: str
     private_key: str
     created: datetime
+    # Only the tunnel subnet goes through the tunnel: a laptop or phone that needs the node
+    # panel, not a home box that sends everything through its VPS.
+    tunnel_only: bool = False
 
 
 class PeerRegistry(BaseModel):
@@ -185,7 +188,7 @@ def render_client_conf(config: Config, server_public_key: str, peer: Peer) -> st
         peer=peer,
         server_public_key=server_public_key,
         endpoint=f"{server.endpoint}:{server.listen_port}",
-        allowed_ips=CLIENT_ALLOWED_IPS,
+        allowed_ips=str(server.subnet) if peer.tunnel_only else CLIENT_ALLOWED_IPS,
         keepalive=CLIENT_KEEPALIVE_SECONDS,
     )
 
@@ -320,7 +323,14 @@ def find_peer(config: Config, secrets_dir: Path, name: str) -> Peer:
     raise PeerNotFoundError(f"no peer named {name!r}")
 
 
-def add_peer(config: Config, secrets_dir: Path, name: str, now: datetime | None = None) -> Peer:
+def add_peer(
+    config: Config,
+    secrets_dir: Path,
+    name: str,
+    now: datetime | None = None,
+    *,
+    tunnel_only: bool = False,
+) -> Peer:
     """Register a home box: a fresh key pair and the next free address, then re-render."""
     check_peer_name(name)
     with _REGISTRY_LOCK:
@@ -335,6 +345,7 @@ def add_peer(config: Config, secrets_dir: Path, name: str, now: datetime | None 
             public_key=public_key(private_key),
             private_key=private_key,
             created=now or datetime.now(UTC),
+            tunnel_only=tunnel_only,
         )
         _commit(config, directory, [*peers, peer])
     return peer

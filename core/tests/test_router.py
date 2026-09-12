@@ -39,7 +39,12 @@ def test_ruleset_opens_exactly_what_the_role_needs() -> None:
     assert "tcp dport { 22, 2222 } accept" in text
     assert "udp dport 51820 accept" in text
     assert "elements = { 56000-56100 }" in text and "udp dport @myst_udp accept" in text
-    assert 'iifname "wg0" accept' in text
+    assert (
+        'ip daddr 10.78.0.0/24 iifname != "wg0" drop'
+        ' comment "the tunnel subnet only through the tunnel"'
+    ) in text
+    assert 'iifname "wg0" tcp dport { 4449, 4480 } accept' in text
+    assert 'iifname "wg0" accept' not in text  # a home box sees the panel and the API, not ssh
     assert "owner" not in text
     assert (
         text.startswith("# VibeDPN host firewall")
@@ -157,7 +162,7 @@ def test_core_reports_a_configuration_without_firewall(
             },
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=False),
-        patch("vibedpn.api.server.uvicorn.run"),
+        patch("vibedpn.api.server.run_servers"),
     ):
         server.main()
     assert "table inet vibedpn removed if it was loaded" in capsys.readouterr().err
@@ -175,7 +180,7 @@ def test_core_applies_the_firewall_before_serving(tmp_path: Path) -> None:
             {server.CONFIG_PATH_ENV: str(good), server.SECRETS_DIR_ENV: str(tmp_path / "secrets")},
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=True) as applied,
-        patch("vibedpn.api.server.uvicorn.run") as run,
+        patch("vibedpn.api.server.run_servers") as run,
     ):
         server.main()
     applied.assert_called_once()
@@ -186,7 +191,7 @@ def test_core_applies_the_firewall_before_serving(tmp_path: Path) -> None:
             {server.CONFIG_PATH_ENV: str(good), server.SECRETS_DIR_ENV: str(tmp_path / "secrets")},
         ),
         patch("vibedpn.api.server.apply_firewall", side_effect=RouterError("nft failed")),
-        patch("vibedpn.api.server.uvicorn.run") as run,
+        patch("vibedpn.api.server.run_servers") as run,
         pytest.raises(SystemExit) as excinfo,
     ):
         server.main()
@@ -222,7 +227,7 @@ def test_core_renders_the_tunnel_after_the_firewall_and_before_serving(tmp_path:
         ),
         patch("vibedpn.api.server.apply_firewall", side_effect=lambda _c: order.append("firewall")),
         patch("vibedpn.api.server.ensure_server", side_effect=tunnel),
-        patch("vibedpn.api.server.uvicorn.run", side_effect=serve),
+        patch("vibedpn.api.server.run_servers", side_effect=serve),
     ):
         server.main()
     assert order == ["firewall", "tunnel", "api"]
@@ -246,7 +251,7 @@ def test_core_refuses_to_start_on_a_broken_tunnel_key(
             },
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=True),
-        patch("vibedpn.api.server.uvicorn.run") as run,
+        patch("vibedpn.api.server.run_servers") as run,
         pytest.raises(SystemExit) as exit_info,
     ):
         server.main()
@@ -281,10 +286,26 @@ def test_core_reports_peers_moved_by_a_subnet_change(
             {server.CONFIG_PATH_ENV: str(config), server.SECRETS_DIR_ENV: str(secrets)},
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=True),
-        patch("vibedpn.api.server.uvicorn.run"),
+        patch("vibedpn.api.server.run_servers"),
     ):
         server.main()
     assert (
         "peer dacha moved from 10.78.0.2 to 10.99.0.2; run `vibedpn peer export dacha`"
         in capsys.readouterr().err
     )
+
+
+def test_tunnel_input_follows_the_api_port_and_subnet() -> None:
+    raw = {
+        "version": 1,
+        "role": "vps",
+        "provider": {"enabled": True},
+        "wg_server": {"endpoint": "203.0.113.7", "subnet": "10.99.0.0/16"},
+        "api": {"port": 4499},
+    }
+    text = firewall_ruleset(Config.model_validate(raw))
+    assert text is not None
+    assert 'ip daddr 10.99.0.0/16 iifname != "wg0" drop' in text
+    assert 'iifname "wg0" tcp dport { 4449, 4499 } accept' in text
+    # The anti-spoofing drop comes before anything that could accept the packet.
+    assert text.index('iifname != "wg0" drop') < text.index("tcp dport { 22")

@@ -43,7 +43,7 @@ def _send(
     method: str,
     path: str,
     *,
-    body: dict[str, str] | None = None,
+    body: dict[str, str | bool] | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> httpx.Response:
     url = f"http://{CORE_API_HOST}:{port}{path}"
@@ -89,7 +89,7 @@ def _peer_request(
     path: str,
     expected: int,
     *,
-    body: dict[str, str] | None = None,
+    body: dict[str, str | bool] | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> httpx.Response:
     try:
@@ -120,8 +120,14 @@ def list_peers(port: int, transport: httpx.BaseTransport | None = None) -> list[
         ) from exc
 
 
-def add_peer(port: int, name: str, transport: httpx.BaseTransport | None = None) -> PeerFile:
-    body = PeerCreate(name=name).model_dump()
+def add_peer(
+    port: int,
+    name: str,
+    transport: httpx.BaseTransport | None = None,
+    *,
+    tunnel_only: bool = False,
+) -> PeerFile:
+    body = PeerCreate(name=name, tunnel_only=tunnel_only).model_dump()
     return _peer_file(
         _peer_request(port, "POST", "/peers", httpx.codes.CREATED, body=body, transport=transport)
     )

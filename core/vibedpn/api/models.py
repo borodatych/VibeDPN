@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 class PeerCreate(BaseModel):
     name: str
+    tunnel_only: bool = False
 
 
 class PeerView(BaseModel):
@@ -24,6 +25,10 @@ class PeerView(BaseModel):
     latest_handshake: int | None = None  # unix seconds; 0 means no handshake yet
     rx_bytes: int | None = None
     tx_bytes: int | None = None
+    # None: core cannot read the interface; False: registered, not on wg0 yet (wg-server applies
+    # a change within seconds, so a peer that stays False points at wg-server); True: on wg0.
+    applied: bool | None = None
+    tunnel_only: bool = False
 
 
 class PeerFile(BaseModel):

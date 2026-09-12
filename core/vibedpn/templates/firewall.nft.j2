@@ -18,6 +18,9 @@ table inet vibedpn {
     ct state established,related accept
     ct state invalid drop
     iif "lo" accept
+{% if tunnel_subnet %}
+    ip daddr {{ tunnel_subnet }} iifname != "{{ wg_interface }}" drop comment "the tunnel subnet only through the tunnel"
+{% endif %}
     icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } accept
     meta l4proto ipv6-icmp accept
     ip6 saddr fe80::/10 ip6 daddr fe80::/10 udp sport 547 udp dport 546 accept comment "dhcpv6 client"
@@ -28,7 +31,9 @@ table inet vibedpn {
 {% if provider %}
     udp dport @myst_udp accept comment "mysterium node"
 {% endif %}
-    iifname "{{ wg_interface }}" accept comment "home boxes over the tunnel"
+{% if tunnel_subnet %}
+    iifname "{{ wg_interface }}" tcp dport { {{ tunnel_tcp_ports | join(", ") }} } accept comment "node panel and core API for home boxes"
+{% endif %}
 {% if allow_tcp %}
     tcp dport { {{ allow_tcp | join(", ") }} } accept comment "owner"
 {% endif %}

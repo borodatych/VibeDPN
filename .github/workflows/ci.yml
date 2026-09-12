@@ -181,6 +181,11 @@ jobs:
             nft list table inet vibedpn | tee /tmp/loaded.nft
             grep -q "tcp dport { 22, 2222 } accept" /tmp/loaded.nft
             grep -q "dhcpv6 client" /tmp/loaded.nft
+            # Home boxes reach only the node panel and the core API, and the tunnel subnet
+            # is dropped anywhere but wg0.
+            grep -q "ip daddr 10.78.0.0/24 iifname != \"wg0\" drop" /tmp/loaded.nft
+            grep -q "iifname \"wg0\" tcp dport { 4449, 4480 } accept" /tmp/loaded.nft
+            if grep -q "iifname \"wg0\" accept" /tmp/loaded.nft; then echo "wg0 is open to everything"; exit 1; fi
             grep -q "policy drop" /tmp/loaded.nft
             # An overlapping UDP range must replace the old set elements, not clash with them.
             nft -f - < /tmp/narrowed.nft

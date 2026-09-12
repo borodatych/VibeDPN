@@ -39,15 +39,17 @@ def test_add_prints_the_file_its_qr_code_and_the_next_step(
     vps_box: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple[int, str]] = []
+    flags: list[bool] = []
 
-    def fake_add(port: int, name: str) -> PeerFile:
+    def fake_add(port: int, name: str, *, tunnel_only: bool = False) -> PeerFile:
         calls.append((port, name))
+        flags.append(tunnel_only)
         return PEER
 
     monkeypatch.setattr(core_api, "add_peer", fake_add)
     result = runner.invoke(cli.app, ["peer", "add", "dacha", "--dir", str(vps_box)])
     assert result.exit_code == 0, result.output
-    assert calls == [(4480, "dacha")]
+    assert calls == [(4480, "dacha")] and flags == [False]
     assert result.output.startswith(PEER_TEXT)
     assert any(block in result.output for block in ("█", "▀", "▄"))
     assert "sudo vibedpn init --role client --peer-config FILE" in result.output
@@ -117,7 +119,7 @@ def test_rm_asks_first(vps_box: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_core_failures_are_one_line(
     vps_box: Path, monkeypatch: pytest.MonkeyPatch, error: Exception, expected: str
 ) -> None:
-    def fail(_port: int, _name: str) -> PeerFile:
+    def fail(_port: int, _name: str, *, tunnel_only: bool = False) -> PeerFile:
         raise error
 
     monkeypatch.setattr(core_api, "add_peer", fail)
@@ -166,3 +168,18 @@ def test_force_replaces_a_readable_file_with_a_private_one(
     assert out.read_text(encoding="utf-8") == PEER_TEXT
     assert stat.S_IMODE(out.stat().st_mode) == 0o600
     assert out.stat().st_ino != inode  # replaced by rename, never rewritten in place
+
+
+def test_add_passes_tunnel_only(vps_box: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    flags: list[bool] = []
+
+    def fake_add(_port: int, _name: str, *, tunnel_only: bool = False) -> PeerFile:
+        flags.append(tunnel_only)
+        return PEER
+
+    monkeypatch.setattr(core_api, "add_peer", fake_add)
+    result = runner.invoke(
+        cli.app, ["peer", "add", "laptop", "--tunnel-only", "--dir", str(vps_box)]
+    )
+    assert result.exit_code == 0, result.output
+    assert flags == [True]

@@ -14,7 +14,7 @@ SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 3600
 SECONDS_PER_DAY = 86400
 UNKNOWN = "?"
-TABLE_HEADER = ("NAME", "ADDRESS", "HANDSHAKE", "RX", "TX", "ENDPOINT")
+TABLE_HEADER = ("NAME", "ADDRESS", "ROUTES", "HANDSHAKE", "RX", "TX", "ENDPOINT")
 
 
 def handshake_text(latest: int | None, now: float) -> str:
@@ -44,7 +44,8 @@ def render_peers(peers: Sequence[PeerView], now: float) -> list[str]:
         (
             peer.name,
             str(peer.address),
-            handshake_text(peer.latest_handshake, now),
+            "tunnel" if peer.tunnel_only else "all",
+            "pending" if peer.applied is False else handshake_text(peer.latest_handshake, now),
             _bytes(peer.rx_bytes),
             _bytes(peer.tx_bytes),
             peer.endpoint or "-",
@@ -57,7 +58,7 @@ def render_peers(peers: Sequence[PeerView], now: float) -> list[str]:
         "  ".join(cell.ljust(widths[column]) for column, cell in enumerate(row)).rstrip()
         for row in table
     ]
-    if all(peer.latest_handshake is None for peer in peers):
+    if all(peer.applied is None for peer in peers):
         lines.append("live state unavailable: core cannot read wg0 (is wg-server running?)")
     return lines
 

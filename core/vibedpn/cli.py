@@ -461,11 +461,19 @@ def peer_add(
     name: PeerName,
     out: OutFile = None,
     force: Force = False,
+    tunnel_only: Annotated[
+        bool,
+        typer.Option(
+            "--tunnel-only",
+            help="Route only the tunnel subnet through this peer: a laptop or phone that needs"
+            " the node panel, not a home box that sends all its traffic through the VPS.",
+        ),
+    ] = False,
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
     """Register a home box: a key pair and a tunnel address, applied to the running server."""
     config = _vps_box(box_dir)
-    peer = _core_call(lambda: core_api.add_peer(config.api.port, name))
+    peer = _core_call(lambda: core_api.add_peer(config.api.port, name, tunnel_only=tunnel_only))
     _deliver(peer, out, force=force)
 
 

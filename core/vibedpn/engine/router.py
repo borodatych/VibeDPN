@@ -13,6 +13,7 @@ import subprocess
 
 from vibedpn.config import Config, Role, parse_port_range
 from vibedpn.detect import SBIN_DIRS
+from vibedpn.engine.myst import NODEUI_PORT
 from vibedpn.templating import template_environment
 
 NFT = "nft"
@@ -45,6 +46,8 @@ def firewall_ruleset(config: Config) -> str | None:
             udp_from=udp_from,
             udp_to=udp_to,
             wg_interface=WG_INTERFACE,
+            tunnel_subnet=str(config.wg_server.subnet) if config.wg_server else None,
+            tunnel_tcp_ports=[NODEUI_PORT, config.api.port],
             allow_tcp=config.firewall.allow_tcp,
             allow_udp=config.firewall.allow_udp,
         )

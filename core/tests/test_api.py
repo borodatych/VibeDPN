@@ -226,3 +226,25 @@ def test_created_timestamps_are_timezone_aware(tmp_path: Path) -> None:
     api.post("/peers", json={"name": "dacha"})
     created = PeerView.model_validate(api.get("/peers").json()[0]).created
     assert created.tzinfo is not None and created <= datetime.now(UTC)
+
+
+def test_tunnel_only_over_the_api(tmp_path: Path) -> None:
+    api = tunnel_app(tmp_path)
+    created = api.post("/peers", json={"name": "laptop", "tunnel_only": True})
+    assert created.status_code == 201
+    assert "AllowedIPs = 10.78.0.0/24" in created.json()["config"]
+    assert api.get("/peers").json()[0]["tunnel_only"] is True
+
+
+def test_peer_list_tells_pending_from_unknown(tmp_path: Path) -> None:
+    api = tunnel_app(tmp_path)
+    api.post("/peers", json={"name": "dacha"})
+    api.post("/peers", json={"name": "flat"})
+    keys = {p["name"]: p["public_key"] for p in api.get("/peers").json()}
+    live = {
+        p["name"]: p["applied"]
+        for p in tunnel_app(tmp_path, {keys["dacha"]: PEER_LINK}).get("/peers").json()
+    }
+    assert live == {"dacha": True, "flat": False}  # flat is registered, wg0 does not have it yet
+    unreadable = tunnel_app(tmp_path, None).get("/peers").json()
+    assert [p["applied"] for p in unreadable] == [None, None]

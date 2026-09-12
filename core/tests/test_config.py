@@ -385,11 +385,11 @@ def test_server_serves_on_loopback_and_config_port(tmp_path: Path) -> None:
             {server.CONFIG_PATH_ENV: str(good), server.SECRETS_DIR_ENV: str(tmp_path / "secrets")},
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=True),
-        patch("vibedpn.api.server.uvicorn.run") as run,
+        patch("vibedpn.api.server.run_servers") as run,
     ):
         server.main()
     run.assert_called_once()
-    application, kwargs = run.call_args.args[0], run.call_args.kwargs
-    assert kwargs == {"host": "127.0.0.1", "port": 4499, "log_level": "info"}
+    loaded, application = run.call_args.args
+    assert loaded.api.port == 4499
     # The app is built from the loaded config: a vps box answers /provider/stats.
     assert {route.path for route in application.routes} >= {"/health", "/provider/stats"}

@@ -33,7 +33,7 @@ from vibedpn.config import Config, Profile, Role, parse_port_range
 from vibedpn.detect import SSHD, WIREGUARD_MODULE, module_present
 from vibedpn.engine.myst import NODEUI_PORT, TEQUILAPI_PORT
 from vibedpn.engine.router import NFT_TABLE, find_nft
-from vibedpn.engine.wg import SERVER_CONF_FILE, SERVER_KEY_FILE
+from vibedpn.engine.wg import SERVER_CONF_FILE, SERVER_KEY_FILE, server_address
 from vibedpn.engine.wg import SERVER_DIR as WG_SERVER_DIR
 
 NFTABLES_MODULE = "nf_tables"
@@ -208,6 +208,9 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
         results.extend(_firewall_results(config, facts))
         if facts.tunnel:
             results.append(_tunnel_result(facts.tunnel))
+        access = _tunnel_access_result(config, facts.listeners)
+        if access is not None:
+            results.append(access)
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -296,6 +299,34 @@ def _tunnel_result(files: dict[str, FileFact]) -> CheckResult:
             "vibedpn restart (core resets the mode to 600)",
         )
     return CheckResult("tunnel", Verdict.OK, f"{names} in {SECRETS_DIR}/{WG_SERVER_DIR}, mode 600")
+
+
+def _tunnel_access_result(config: Config, listeners: list[Listener] | None) -> CheckResult | None:
+    """Core has to listen on the tunnel address: the node panel and the API for home boxes."""
+    if config.wg_server is None or listeners is None:
+        return None
+    address = str(server_address(config).ip)
+    missing = [
+        str(port)
+        for port in (NODEUI_PORT, config.api.port)
+        if not any(
+            item.proto == "tcp" and item.address == address and item.port == port
+            for item in listeners
+        )
+    ]
+    if missing:
+        return CheckResult(
+            "tunnel access",
+            Verdict.FAIL,
+            f"core does not listen on {address} port {', '.join(missing)}",
+            "vibedpn restart, then vibedpn logs core",
+        )
+    return CheckResult(
+        "tunnel access",
+        Verdict.OK,
+        f"node panel {address}:{NODEUI_PORT} and core API {address}:{config.api.port}"
+        " for home boxes",
+    )
 
 
 def _firewall_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:

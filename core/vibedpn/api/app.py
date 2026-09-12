@@ -72,6 +72,8 @@ def _view(peer: Peer, links: dict[str, PeerLink] | None) -> PeerView:
         latest_handshake=None if link is None else link.latest_handshake,
         rx_bytes=None if link is None else link.rx_bytes,
         tx_bytes=None if link is None else link.tx_bytes,
+        applied=None if links is None else link is not None,
+        tunnel_only=peer.tunnel_only,
     )
 
 
@@ -121,7 +123,7 @@ def create_app(
     def create_peer(request: PeerCreate) -> PeerFile:
         box, secrets = tunnel()
         try:
-            peer = add_peer(box, secrets, request.name)
+            peer = add_peer(box, secrets, request.name, tunnel_only=request.tunnel_only)
             text = peer_config(box, secrets, peer.name)
         except WgError as exc:
             raise _http_error(exc) from exc

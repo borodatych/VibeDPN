@@ -1,22 +1,22 @@
 """Console entry point of the ``core`` container: load ``config.yaml`` and serve the API.
 
-The API binds loopback only. The ``ui`` container (nginx) exposes it on the LAN interface
-with authentication; on a VPS the wg0 side is opened in Stage 3.
+The full API binds loopback only. The ``ui`` container (nginx) exposes it on the LAN interface
+with authentication; on a VPS home boxes reach a read-only part of it, and the node panel, on
+the tunnel address (``vibedpn.api.tunnel``).
 """
 
 import os
 import sys
 from pathlib import Path
 
-import uvicorn
 from pydantic import ValidationError
 
 from vibedpn.api.app import create_app
+from vibedpn.api.tunnel import run_servers
 from vibedpn.config import ConfigError, load_config
 from vibedpn.engine.router import RouterError, apply_firewall
 from vibedpn.engine.wg import WgError, ensure_server
 
-API_HOST = "127.0.0.1"
 CONFIG_PATH_ENV = "VIBEDPN_CONFIG"
 DEFAULT_CONFIG_PATH = Path("/etc/vibedpn/config.yaml")
 SECRETS_DIR_ENV = "VIBEDPN_SECRETS"
@@ -24,7 +24,7 @@ DEFAULT_SECRETS_DIR = Path("/etc/vibedpn/secrets")  # compose.yaml mounts ./secr
 
 
 def main() -> None:
-    """Serve ``vibedpn.api.app:app`` on the port from ``api.port`` of the box config.
+    """Serve the API on the port from ``api.port`` of the box config.
 
     A missing or invalid config is a user error: one readable message, exit code ``EX_CONFIG``.
     """
@@ -62,4 +62,4 @@ def main() -> None:
                 f" run `vibedpn peer export {moved.name}` for its home box\n"
             )
     application = create_app(config, secrets_dir=secrets_dir)
-    uvicorn.run(application, host=API_HOST, port=config.api.port, log_level="info")
+    run_servers(config, application)

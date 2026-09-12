@@ -468,3 +468,26 @@ def test_export_never_creates_a_server_key(tmp_path: Path) -> None:
     with pytest.raises(WgError, match="is missing; core creates the server key at start"):
         wg.peer_config(vps(), tmp_path, "dacha")
     assert not key_file.exists()
+
+
+def test_a_tunnel_only_peer_routes_only_the_tunnel_subnet(tmp_path: Path) -> None:
+    laptop = wg.add_peer(vps(), tmp_path, "laptop", tunnel_only=True)
+    box = wg.add_peer(vps(), tmp_path, "dacha")
+    assert laptop.tunnel_only and not box.tunnel_only
+    assert "AllowedIPs = 10.78.0.0/24\n" in wg.peer_config(vps(), tmp_path, "laptop")
+    assert "AllowedIPs = 0.0.0.0/0\n" in wg.peer_config(vps(), tmp_path, "dacha")
+    stored = {p.name: p.tunnel_only for p in wg.list_peers(vps(), tmp_path)}
+    assert stored == {"laptop": True, "dacha": False}
+    moved = vps(subnet="10.99.0.0/24")
+    ensure_server(moved, tmp_path)
+    assert "AllowedIPs = 10.99.0.0/24\n" in wg.peer_config(moved, tmp_path, "laptop")
+
+
+def test_registries_written_before_tunnel_only_still_load(tmp_path: Path) -> None:
+    ensure_server(vps(), tmp_path)
+    old = peer("dacha", "10.78.0.2").model_dump(mode="json")
+    del old["tunnel_only"]
+    registry_file(tmp_path).write_text(
+        '{"version": 1, "peers": [' + __import__("json").dumps(old) + "]}", encoding="utf-8"
+    )
+    assert wg.list_peers(vps(), tmp_path)[0].tunnel_only is False
