@@ -12,8 +12,10 @@ SUBNET=10.99.0.0/24
 GATEWAY=10.99.0.1
 SERVER_IP=10.99.0.2
 CLIENT_IP=10.99.0.3
+SPLIT_IP=10.99.0.4
 SERVER_WG=10.78.0.1
 CLIENT_WG=10.78.0.2
+SPLIT_WG=10.78.0.3
 LISTEN_PORT=51820
 WORK_DIR="$(mktemp -d)"
 HANDSHAKE_TIMEOUT=30
@@ -24,7 +26,11 @@ log() {
 }
 
 cleanup() {
-  docker rm -f vibedpn-wg-server vibedpn-wg-client >/dev/null 2>&1 || true
+  docker rm -f vibedpn-wg-server vibedpn-wg-client vibedpn-wg-split vibedpn-wg-host \
+    >/dev/null 2>&1 || true
+  # The host-namespace part of the test may leave wg0 behind; remove it without needing root.
+  docker run --rm --network host --cap-add NET_ADMIN --entrypoint ip "$IMAGE" \
+    link del wg0 >/dev/null 2>&1 || true
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
   rm -rf "$WORK_DIR"
 }
@@ -40,7 +46,13 @@ in_client() {
 }
 
 fails() {
-  # The command must fail; used for the leak checks, where success is the defect.
+  # The command must fail *inside a running container*: a `docker exec` that errors because the
+  # container is gone would otherwise pass a leak check for the wrong reason.
+  running="$(docker inspect -f '{{.State.Running}}' vibedpn-wg-client)"
+  if [ "$running" != true ]; then
+    echo "FAIL: the client container is not running, so '$*' proves nothing" >&2
+    exit 1
+  fi
   if "$@" >/dev/null 2>&1; then
     echo "FAIL: '$*' succeeded, but the kill switch had to drop it" >&2
     exit 1
@@ -50,8 +62,10 @@ fails() {
 log "keys"
 server_key="$(wg_tool genkey)"
 client_key="$(wg_tool genkey)"
+split_key="$(wg_tool genkey)"
 server_pub="$(printf '%s' "$server_key" | wg_tool pubkey)"
 client_pub="$(printf '%s' "$client_key" | wg_tool pubkey)"
+split_pub="$(printf '%s' "$split_key" | wg_tool pubkey)"
 
 cat >"$WORK_DIR/server.conf" <<EOF
 [Interface]
@@ -62,12 +76,31 @@ PrivateKey = $server_key
 [Peer]
 PublicKey = $client_pub
 AllowedIPs = $CLIENT_WG/32
+
+[Peer]
+PublicKey = $split_pub
+AllowedIPs = $SPLIT_WG/32
+EOF
+
+# A home box that only wants to reach the VPS, not to exit through it: no 0.0.0.0/0, and no
+# PersistentKeepalive either — the entrypoint has to mark its packets and add the keepalive
+# itself, or the kill switch would strangle the handshake.
+cat >"$WORK_DIR/split.conf" <<EOF
+[Interface]
+Address = $SPLIT_WG/32
+PrivateKey = $split_key
+
+[Peer]
+PublicKey = $server_pub
+Endpoint = $SERVER_IP:$LISTEN_PORT
+AllowedIPs = 10.78.0.0/24
 EOF
 
 # Tabs, an "=" without spaces and a comment: the entrypoint has to read a config the way
 # WireGuard does, not the way a single example happens to be formatted.
 cat >"$WORK_DIR/client.conf" <<EOF
 [Interface]
+Address = fd00::2/128
 	Address=$CLIENT_WG/32
 PrivateKey = $client_key
 MTU = 1400
@@ -79,6 +112,9 @@ Endpoint = $SERVER_IP:$LISTEN_PORT
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25
 EOF
+# A file written on Windows: every line ends with CRLF, and the entrypoint must still read it.
+sed -e 's/$/\r/' "$WORK_DIR/client.conf" >"$WORK_DIR/client.crlf" &&
+  mv "$WORK_DIR/client.crlf" "$WORK_DIR/client.conf"
 chmod 600 "$WORK_DIR"/*.conf
 
 log "network and containers"
@@ -92,27 +128,39 @@ docker run -d --name vibedpn-wg-client --network "$NETWORK" --ip "$CLIENT_IP" \
   --restart unless-stopped --cap-add NET_ADMIN --sysctl net.ipv4.ip_forward=1 \
   --sysctl net.ipv4.conf.all.src_valid_mark=1 \
   -v "$WORK_DIR/client.conf:/etc/wireguard/wg0.conf:ro" "$IMAGE" client >/dev/null
+docker run -d --name vibedpn-wg-split --network "$NETWORK" --ip "$SPLIT_IP" \
+  --restart unless-stopped --cap-add NET_ADMIN --sysctl net.ipv4.ip_forward=1 \
+  --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+  -v "$WORK_DIR/split.conf:/etc/wireguard/wg0.conf:ro" "$IMAGE" client >/dev/null
 
-await_client_health() {
+await_health() {
   elapsed=0
   while [ "$elapsed" -lt "$HANDSHAKE_TIMEOUT" ]; do
-    if in_client /usr/local/bin/entrypoint.sh health >/dev/null 2>&1; then
+    if docker exec "$1" /usr/local/bin/entrypoint.sh health >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
     elapsed=$((elapsed + 2))
   done
-  echo "FAIL: the client was not healthy within ${HANDSHAKE_TIMEOUT}s" >&2
-  docker logs vibedpn-wg-client >&2
-  docker logs vibedpn-wg-server >&2
+  echo "FAIL: $1 was not healthy within ${HANDSHAKE_TIMEOUT}s" >&2
+  docker logs --tail 20 "$1" >&2
   exit 1
 }
 
 log "handshake"
-await_client_health
+await_health vibedpn-wg-client
 in_client /usr/local/bin/entrypoint.sh health
 docker exec vibedpn-wg-server /usr/local/bin/entrypoint.sh health
 docker exec vibedpn-wg-server wg show wg0 latest-handshakes
+
+log "a split tunnel handshakes too: the kill switch must not strangle its own packets"
+await_health vibedpn-wg-split
+docker exec vibedpn-wg-split ping -c 2 -W 2 "$SERVER_WG"
+docker exec vibedpn-wg-split wg show wg0 persistent-keepalive | grep -q 25
+if docker exec vibedpn-wg-split ip route show table "$LISTEN_PORT" | grep -q default; then
+  echo "FAIL: a split tunnel must not take over the default route" >&2
+  exit 1
+fi
 
 log "traffic through the tunnel"
 in_client ping -c 2 -W 2 "$SERVER_WG"
@@ -146,9 +194,28 @@ if [ "$restarts" -eq 0 ]; then
   echo "FAIL: the client kept running with a downed tunnel" >&2
   exit 1
 fi
-await_client_health
+await_health vibedpn-wg-client
 in_client ping -c 1 -W 2 "$SERVER_WG"
 fails in_client ping -c 1 -W 2 "$GATEWAY"
+
+# The real wg-server runs with network_mode: host, so its interface outlives a container that
+# was killed instead of stopped — exactly what happens on a crash or a `docker kill`.
+log "a host-namespace server comes back after a crash that left wg0 behind"
+sed "s/^ListenPort = .*/ListenPort = $((LISTEN_PORT + 1))/" "$WORK_DIR/server.conf" \
+  >"$WORK_DIR/host-server.conf"
+chmod 600 "$WORK_DIR/host-server.conf"
+docker run -d --name vibedpn-wg-host --network host --cap-add NET_ADMIN \
+  -v "$WORK_DIR/host-server.conf:/etc/wireguard/wg0.conf:ro" "$IMAGE" server >/dev/null
+await_health vibedpn-wg-host
+docker kill -s KILL vibedpn-wg-host >/dev/null
+if ! docker run --rm --network host --cap-add NET_ADMIN --entrypoint ip "$IMAGE" \
+  link show wg0 >/dev/null 2>&1; then
+  echo "FAIL: wg0 vanished with the killed container, so the test proves nothing" >&2
+  exit 1
+fi
+docker start vibedpn-wg-host >/dev/null
+await_health vibedpn-wg-host
+docker rm -f vibedpn-wg-host >/dev/null
 
 log "a stopped container exits cleanly"
 docker stop -t 10 vibedpn-wg-client >/dev/null
