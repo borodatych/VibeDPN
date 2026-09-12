@@ -27,9 +27,9 @@
 
 | Образ | Откуда | Тег |
 |---|---|---|
-| `ghcr.io/vibebrainsprojects/vibedpn-core` | `core/Dockerfile`, `python:3.12-slim-trixie`, зависимости из `uv.lock` | `${VIBEDPN_TAG}` (`latest` = main, `next`, `sha-…`, semver из тегов `v*`) |
-| `ghcr.io/vibebrainsprojects/vibedpn-wg` | `images/wg/Dockerfile`, `alpine:3.24` | `${VIBEDPN_TAG}` |
-| `ghcr.io/vibebrainsprojects/vibedpn-ui` | `ui/Dockerfile`, `nginx:1.31-alpine` (mainline) | `${VIBEDPN_TAG}` |
+| `ghcr.io/borodatych/vibedpn-core` | `core/Dockerfile`, `python:3.12-slim-trixie`, зависимости из `uv.lock` | `${VIBEDPN_TAG}` (`latest` = main, `next`, `sha-…`, semver из тегов `v*`) |
+| `ghcr.io/borodatych/vibedpn-wg` | `images/wg/Dockerfile`, `alpine:3.24` | `${VIBEDPN_TAG}` |
+| `ghcr.io/borodatych/vibedpn-ui` | `ui/Dockerfile`, `nginx:1.31-alpine` (mainline) | `${VIBEDPN_TAG}` |
 | `mysteriumnetwork/myst` | Docker Hub, multi-arch amd64/arm64/arm-v7 | `1.39.5-alpine` (`${MYST_TAG}`) |
 | `adguard/adguardhome` | Docker Hub, multi-arch | `v0.107.79` (`${ADGUARD_TAG}`) |
 

@@ -11,7 +11,7 @@ services:
   # the only component allowed to program nftables / ip rule on the host. Never touches the
   # host default route: every uplink is a gateway container on the `upstreams` network.
   core:
-    image: ghcr.io/vibebrainsprojects/vibedpn-core:${VIBEDPN_TAG:-latest}
+    image: ghcr.io/borodatych/vibedpn-core:${VIBEDPN_TAG:-latest}
     build:
       context: ./core
     network_mode: host
@@ -43,7 +43,7 @@ services:
   # Web UI: nginx serving the React build (Stage 6; a placeholder page until then) and proxying
   # /api/ to core on loopback. Listens on the LAN address only.
   ui:
-    image: ghcr.io/vibebrainsprojects/vibedpn-ui:${VIBEDPN_TAG:-latest}
+    image: ghcr.io/borodatych/vibedpn-ui:${VIBEDPN_TAG:-latest}
     build:
       context: ./ui
     profiles:
@@ -117,7 +117,7 @@ services:
   # WireGuard client = uplink `vps`: a gateway container at 10.77.0.10 (role client). Uses the
   # host kernel WireGuard module (no /dev/net/tun); kill switch in nftables (Stage 3).
   wg-client:
-    image: ghcr.io/vibebrainsprojects/vibedpn-wg:${VIBEDPN_TAG:-latest}
+    image: ghcr.io/borodatych/vibedpn-wg:${VIBEDPN_TAG:-latest}
     build:
       context: ./images/wg
     profiles:
@@ -145,7 +145,7 @@ services:
   # WireGuard server of the VPS (wg0 10.78.0.1/24 by default). Host network: no port mapping,
   # the UDP port is opened by the nftables baseline core applies (Stage 2/3).
   wg-server:
-    image: ghcr.io/vibebrainsprojects/vibedpn-wg:${VIBEDPN_TAG:-latest}
+    image: ghcr.io/borodatych/vibedpn-wg:${VIBEDPN_TAG:-latest}
     build:
       context: ./images/wg
     profiles:

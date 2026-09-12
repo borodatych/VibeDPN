@@ -5,6 +5,8 @@
 > `CLAUDE.md` и `.vibe/rules/vibedpn.mdc` (§11), роли — [roles.md](roles.md), формат конфига —
 > [manuals/configSpec.md](manuals/configSpec.md). Пути к докам из §5 приведены к соглашениям
 > проекта — соответствие в [README.md](README.md).
+> Репозиторий — `github.com/borodatych/VibeDPN`, а не `VibeBrainsProjects/vibedpn` из §0: решение
+> владельца 2026-09-12 (VibeBrains — только для IDE и их окружения).
 
 > Рабочее название. Альтернативы: VibeGate, VibeNode. Домен не куплен — имя не залочено.
 > Репо: `VibeBrainsProjects/vibedpn`. Лицензия: MIT (myst — GPL-3, мы его не форкаем, а запускаем как отдельный контейнер — конфликта нет).

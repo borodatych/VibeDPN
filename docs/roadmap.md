@@ -14,6 +14,7 @@
       спека формата [manuals/configSpec.md](manuals/configSpec.md)
 - [x] **CI** — ✅ (2026-09-11, `next`) lint (ruff, mypy strict, eslint через `npm run lint` когда появится `ui/package.json`), pytest, shellcheck, actionlint, `compose config`, buildx multi-arch (amd64+arm64) сборка `core`, `wg`, `ui` в GHCR; workflow проверен actionlint, прогон в GitHub — после первого push
 - [x] **README** — ✅ (2026-09-11, `next`) три сценария в одном абзаце каждый, статус и предупреждение об exit-ноде (заполняется по мере стадий)
+- [x] **Репозиторий на GitHub** — ✅ (2026-09-12, `next`) публичный `github.com/borodatych/VibeDPN`, образы `ghcr.io/borodatych/vibedpn-{core,wg,ui}`; VibeBrainsProjects из kickoff не используется — решение владельца
 - [x] **Ревью Stage 0** — ✅ (2026-09-11, `next`) состязательное ревью шестью линзами: главная находка — `trusted_host_interfaces` не пропускает транзит в бридж, сеть переведена на `nat-unprotected` с обязательным nft-drop прямого доступа в Stage 4; `peer_config` убран из конфига (фиксированный `secrets/wg-client.conf`), bind-mount файлов без создания каталогов, чистые ошибки конфига у `vibedpn-core`, IPv4-валидация `endpoint`, проверка `lan_address` без перебора /8, пин ruff, `concurrency` и пиновый actionlint в CI, `latest` строго для `main`
 
 ## Stage 1 — CLI и install
