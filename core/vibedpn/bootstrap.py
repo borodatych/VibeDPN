@@ -259,12 +259,12 @@ def write_box(box_dir: Path, config: Config, answers: Answers, *, force: bool) -
         box_dir.mkdir(parents=True, exist_ok=True)
         if config_path.exists():
             shutil.copy2(config_path, box_dir / CONFIG_BACKUP)
-        result.files.append(_write(config_path, text, PUBLIC_FILE_MODE))
-        result.files.append(_write(env_path, env_text, PUBLIC_FILE_MODE))
+        result.files.append(write_file(config_path, text, PUBLIC_FILE_MODE))
+        result.files.append(write_file(env_path, env_text, PUBLIC_FILE_MODE))
         secrets_dir.mkdir(mode=SECRET_DIR_MODE, exist_ok=True)
         secrets_dir.chmod(SECRET_DIR_MODE)
         for name, content in secrets.items():
-            result.files.append(_write(secrets_dir / name, content, SECRET_FILE_MODE))
+            result.files.append(write_file(secrets_dir / name, content, SECRET_FILE_MODE))
         for name in KNOWN_SECRETS:
             stale = secrets_dir / name
             if name not in secrets and stale.exists():
@@ -278,8 +278,8 @@ def write_box(box_dir: Path, config: Config, answers: Answers, *, force: bool) -
     return result
 
 
-def _write(path: Path, text: str, mode: int) -> Path:
-    # Create with the final mode so a secret is never readable through a default umask.
+def write_file(path: Path, text: str, mode: int) -> Path:
+    """Write text creating the file with ``mode`` so a secret is never readable via the umask."""
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(text)

@@ -21,10 +21,25 @@ from vibedpn.bootstrap import (
     public_address,
     write_box,
 )
-from vibedpn.config import Role, check_endpoint
+from vibedpn.compose import (
+    DEFAULT_LOG_TAIL,
+    ComposeError,
+    capture,
+    check_box,
+    compose_argv,
+    parse_ps,
+    preflight,
+    refresh_env,
+    run,
+)
+from vibedpn.config import Config, Role, Upstream, check_endpoint
 from vibedpn.detect import DetectError, HostProbe
 
 EXIT_USER_ERROR = 1
+
+BoxDir = Annotated[
+    Path, typer.Option("--dir", envvar="VIBEDPN_DIR", help="Installation directory.")
+]
 
 app = typer.Typer(
     name="vibedpn",
@@ -175,10 +190,7 @@ def init(
             readable=True,
         ),
     ] = None,
-    box_dir: Annotated[
-        Path,
-        typer.Option("--dir", envvar="VIBEDPN_DIR", help="Installation directory."),
-    ] = DEFAULT_BOX_DIR,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
     force: Annotated[
         bool,
         typer.Option("--force", help="Replace an existing config.yaml (kept as config.yaml.bak)."),
@@ -218,3 +230,90 @@ def init(
             err=True,
         )
     typer.echo(f"Role {answers.role.value} configured. Next step: vibedpn up")
+
+
+def _prepare(box_dir: Path, *, refresh: bool) -> Config:
+    """Common start of every Compose command: a valid box, a usable Docker, a fresh ``.env``."""
+    try:
+        config = check_box(box_dir)
+        preflight()
+        if refresh:
+            refresh_env(box_dir, config)
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+    return config
+
+
+def _compose(box_dir: Path, *args: str, all_profiles: bool = False) -> None:
+    """Run Compose live and exit with its code when it fails."""
+    try:
+        code = run(compose_argv(box_dir, *args, all_profiles=all_profiles))
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+    if code != 0:
+        raise typer.Exit(code)
+
+
+@app.command()
+def up(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Start the box: derive .env from config.yaml and bring the role's services up."""
+    _prepare(box_dir, refresh=True)
+    _compose(box_dir, "up", "-d", "--remove-orphans")
+
+
+@app.command()
+def down(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Stop and remove every service of the box, whatever profile it belongs to."""
+    _prepare(box_dir, refresh=False)
+    _compose(box_dir, "down", all_profiles=True)
+
+
+@app.command()
+def restart(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Apply config.yaml changes: refresh .env, recreate what changed, restart the rest."""
+    _prepare(box_dir, refresh=True)
+    _compose(box_dir, "up", "-d", "--remove-orphans")
+    _compose(box_dir, "restart")
+
+
+@app.command()
+def status(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Role and routing from config.yaml, then the state of every container."""
+    config = _prepare(box_dir, refresh=False)
+    typer.echo(f"role: {config.role.value}")
+    if config.routing is not None:
+        typer.echo(
+            f"routing: mode={config.routing.mode.value}"
+            f" default_upstream={config.routing.default_upstream.value}"
+            f" failopen={str(config.routing.failopen).lower()}"
+        )
+    uplinks = [name for name in ("vps", "dpn") if config.upstreams.is_enabled(Upstream(name))]
+    typer.echo(f"uplinks: {', '.join(uplinks) or '-'}")
+    typer.echo(f"profiles: {','.join(profile.value for profile in config.compose_profiles())}")
+    try:
+        services = parse_ps(capture(compose_argv(box_dir, "ps", "-a", "--format", "json")))
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+    if not services:
+        typer.echo("containers: none (run `vibedpn up`)")
+        return
+    width = max(len(item.service) for item in services)
+    for item in services:
+        typer.echo(f"{item.service.ljust(width)}  {item.state:<8} {item.health:<9} {item.status}")
+
+
+@app.command()
+def logs(
+    service: Annotated[str | None, typer.Argument(help="One service, or all when omitted.")] = None,
+    follow: Annotated[bool, typer.Option("--follow", "-f", help="Keep streaming.")] = False,
+    tail: Annotated[int, typer.Option("--tail", help="Lines per container.")] = DEFAULT_LOG_TAIL,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Container logs (docker compose logs)."""
+    _prepare(box_dir, refresh=False)
+    args = ["logs", "--tail", str(tail)]
+    if follow:
+        args.append("--follow")
+    if service:
+        args.append(service)
+    _compose(box_dir, *args, all_profiles=True)
