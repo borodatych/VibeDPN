@@ -25,3 +25,18 @@ https://docs.github.com/en/packages/working-with-a-github-packages-registry/work
 https://github.com/actions/runner-images , https://github.com/actions/runner-images/issues/14254 ,
 https://github.blog/changelog/2025-08-07-arm64-hosted-runners-for-public-repositories-are-now-generally-available/ ,
 https://github.com/rhysd/actionlint/blob/main/docs/usage.md , https://github.com/astral-sh/ruff/releases/tag/0.16.0 .
+
+## [баг] Тест в контейнере на раннере: git «dubious ownership» и `&&` под `set -e`
+
+**Контекст:** задача `install` гоняет `install.sh` внутри `debian:*-slim` с bind-mount чекаута
+`/src`; локально в colima проходила, в GitHub падала.
+**Суть:** на раннере владелец `/src` — uid раннера, внутри контейнера мы root, и git отказывается
+клонировать: «detected dubious ownership», причём просит `safe.directory /src/.git` (путь до
+`.git`, не до каталога). В одноразовом контейнере проще `git config --global --add
+safe.directory "*"`. Вторая грабля скрыла первую: `git clone … && git checkout …` под `bash -e`
+не останавливает скрипт — в AND-списках `set -e` не действует ни на одну команду, кроме
+последней, — и тест ушёл дальше до `fatal: repository '/tmp/repo' does not exist` в install.sh.
+**Применение:** в скриптах для CI — команды отдельными строками, `&&` только там, где короткое
+замыкание и нужно; клон чужого чекаута — с `safe.directory`.
+**Источники:** https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory ,
+https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html (поведение `-e` в списках).
