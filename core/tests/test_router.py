@@ -20,7 +20,7 @@ from vibedpn.engine.router import (
     firewall_ruleset,
     ssh_rule_present,
 )
-from vibedpn.engine.wg import ensure_server
+from vibedpn.engine.wg import ServerFiles, add_peer, ensure_server
 
 FACTS = HostFacts(None, wireguard_module=True, ssh_ports=[22, 2222])
 
@@ -205,7 +205,7 @@ def test_core_renders_the_tunnel_after_the_firewall_and_before_serving(tmp_path:
     secrets = tmp_path / "secrets"
     order: list[str] = []
 
-    def tunnel(loaded: Config, secrets_dir: Path) -> Path | None:
+    def tunnel(loaded: Config, secrets_dir: Path) -> ServerFiles | None:
         order.append("tunnel")
         return ensure_server(loaded, secrets_dir)
 
@@ -253,3 +253,38 @@ def test_core_refuses_to_start_on_a_broken_tunnel_key(
     assert exit_info.value.code == os.EX_CONFIG
     assert "restore it from a backup" in capsys.readouterr().err
     run.assert_not_called()
+
+
+def test_core_reports_peers_moved_by_a_subnet_change(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    secrets = tmp_path / "secrets"
+    old = Config.model_validate(
+        {
+            "version": 1,
+            "role": "vps",
+            "provider": {"enabled": True},
+            "wg_server": {"endpoint": "203.0.113.7"},
+        }
+    )
+    add_peer(old, secrets, "dacha")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        VPS_CONFIG.replace(
+            "{endpoint: 203.0.113.7}", "{endpoint: 203.0.113.7, subnet: 10.99.0.0/24}"
+        ),
+        encoding="utf-8",
+    )
+    with (
+        patch.dict(
+            "os.environ",
+            {server.CONFIG_PATH_ENV: str(config), server.SECRETS_DIR_ENV: str(secrets)},
+        ),
+        patch("vibedpn.api.server.apply_firewall", return_value=True),
+        patch("vibedpn.api.server.uvicorn.run"),
+    ):
+        server.main()
+    assert (
+        "peer dacha moved from 10.78.0.2 to 10.99.0.2; run `vibedpn peer export dacha`"
+        in capsys.readouterr().err
+    )

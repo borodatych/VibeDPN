@@ -12,11 +12,9 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-import os
 import re
 import secrets
 import subprocess
-import tempfile
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -28,6 +26,7 @@ from typing import Literal
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from vibedpn.atomic import FILE_MODE, write_private
 from vibedpn.config import Config, WgServerConfig
 from vibedpn.detect import find_tool
 from vibedpn.templating import template_environment
@@ -40,7 +39,6 @@ PEERS_FILE = "peers.json"
 SERVER_TEMPLATE = "wg-server.conf.j2"
 CLIENT_TEMPLATE = "wg-client.conf.j2"
 DIR_MODE = 0o700
-FILE_MODE = 0o600
 # A peer name ends up in file names, comments and the CLI: keep it boring.
 PEER_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 # A home box sends everything through its uplink, and sits behind NAT, so it keeps the mapping.
@@ -50,6 +48,7 @@ WG = "wg"
 WG_INTERFACE = "wg0"
 DUMP_PEER_FIELDS = 8  # public key, psk, endpoint, allowed ips, handshake, rx, tx, keepalive
 NO_VALUE = "(none)"
+RESERVED_ADDRESSES = 3  # the network, the broadcast and the server address
 
 # FastAPI runs synchronous handlers in a thread pool: two requests must not interleave the
 # read-modify-write of the registry.
@@ -114,6 +113,21 @@ class PeerLink:
     tx_bytes: int
 
 
+@dataclass(frozen=True)
+class Renumbered:
+    """A peer moved into ``wg_server.subnet`` after the owner changed it."""
+
+    name: str
+    old: IPv4Address
+    new: IPv4Address
+
+
+@dataclass(frozen=True)
+class ServerFiles:
+    conf: Path
+    renumbered: tuple[Renumbered, ...] = ()
+
+
 def clamp(raw: bytes) -> bytes:
     """Curve25519 scalar clamping (RFC 7748 §5), what ``wg genkey`` applies to random bytes.
 
@@ -176,40 +190,21 @@ def render_client_conf(config: Config, server_public_key: str, peer: Peer) -> st
     )
 
 
-def write_private(path: Path, content: str) -> bool:
-    """Write a secret atomically with mode 600; ``False`` when the file already says exactly that.
-
-    The temporary file is created 600 in the same directory, flushed to disk and renamed over the
-    target, so a reader — the wg-server container — never sees a half-written key or config, and
-    a power cut never leaves an empty one.
-    """
-    if path.is_file() and path.read_text(encoding="utf-8") == content:
-        path.chmod(FILE_MODE)
-        return False
-    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+def load_server_key(directory: Path) -> str:
+    """The persisted server key, read only. A peer file made with a key the running server does
+    not have would never handshake, so a missing key is an error here, never a new key."""
+    path = directory / SERVER_KEY_FILE
+    if not path.exists():
+        raise WgError(f"{path} is missing; core creates the server key at start (vibedpn restart)")
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            os.fchmod(handle.fileno(), FILE_MODE)
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        Path(temporary).replace(path)
-    except BaseException:
-        Path(temporary).unlink(missing_ok=True)
-        raise
-    fsync_directory(path.parent)
-    return True
-
-
-def fsync_directory(directory: Path) -> None:
-    """Make a rename durable. ext4 flushes a rename onto an existing name early, but not one onto
-    a new name — the very first server.key — so a power cut right after the first start could
-    leave an empty key that core then refuses to replace."""
-    descriptor = os.open(directory, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        key = path.read_text(encoding="utf-8").strip()
+        decode_key(key)
+    except (OSError, UnicodeDecodeError, WgError) as exc:
+        raise WgError(
+            f"{path} is unreadable or not a WireGuard key ({exc}); restore it from a backup —"
+            " a new key would disconnect every home box"
+        ) from None
+    return key
 
 
 def load_or_create_server_key(directory: Path) -> tuple[str, bool]:
@@ -220,14 +215,7 @@ def load_or_create_server_key(directory: Path) -> tuple[str, bool]:
     """
     path = directory / SERVER_KEY_FILE
     if path.exists():
-        try:
-            key = path.read_text(encoding="utf-8").strip()
-            decode_key(key)
-        except (OSError, UnicodeDecodeError, WgError) as exc:
-            raise WgError(
-                f"{path} is unreadable or not a WireGuard key ({exc}); restore it from a backup —"
-                " a new key would disconnect every home box"
-            ) from None
+        key = load_server_key(directory)
         path.chmod(FILE_MODE)
         return key, False
     key = generate_private_key()
@@ -248,11 +236,6 @@ def load_peers(directory: Path) -> list[Peer]:
             f"{path} is damaged ({exc.__class__.__name__}); restore it from a backup"
         ) from None
     return registry.peers
-
-
-def save_peers(directory: Path, peers: Sequence[Peer]) -> None:
-    registry = PeerRegistry(peers=list(peers))
-    write_private(directory / PEERS_FILE, registry.model_dump_json(indent=2) + "\n")
 
 
 def check_peer_name(name: str) -> str:
@@ -276,12 +259,53 @@ def next_address(config: Config, peers: Sequence[Peer]) -> IPv4Address:
     )
 
 
-def ensure_server(config: Config, secrets_dir: Path) -> Path | None:
+def fit_to_subnet(
+    config: Config, peers: Sequence[Peer]
+) -> tuple[list[Peer], tuple[Renumbered, ...]]:
+    """Peers whose address does not belong to ``wg_server.subnet`` any more — the owner changed
+    it — move to free addresses of the new subnet and keep their keys and names.
+
+    Refusing to start instead would leave the owner without the API, so without ``vibedpn peer``
+    to fix it; moved boxes only need their file exported again. A subnet too small for every
+    peer is a configuration error the owner fixes in ``config.yaml``.
+    """
+    subnet = _server_config(config).subnet
+    server_ip = server_address(config).ip
+    outside = {subnet.network_address, subnet.broadcast_address, server_ip}
+    kept: list[Peer] = []
+    for peer in peers:
+        if peer.address in subnet and peer.address not in outside:
+            kept.append(peer)
+    kept_names = {peer.name for peer in kept}
+    placed: list[Peer] = []
+    taken = list(kept)
+    moved: list[Renumbered] = []
+    for peer in peers:
+        if peer.name in kept_names:
+            placed.append(peer)
+            continue
+        try:
+            address = next_address(config, taken)
+        except SubnetFullError:
+            capacity = max(0, subnet.num_addresses - RESERVED_ADDRESSES)
+            raise WgError(
+                f"wg_server.subnet {subnet} has room for {capacity} peers, the registry has"
+                f" {len(peers)}; choose a wider subnet in config.yaml"
+            ) from None
+        moved_peer = peer.model_copy(update={"address": address})
+        taken.append(moved_peer)
+        placed.append(moved_peer)
+        moved.append(Renumbered(peer.name, peer.address, address))
+    return placed, tuple(moved)
+
+
+def ensure_server(config: Config, secrets_dir: Path) -> ServerFiles | None:
     """Key and ``wg0.conf`` of the VPS server; ``None`` when this configuration runs none."""
     if config.wg_server is None:
         return None
     with _REGISTRY_LOCK:
-        return _render(config, _ensure_directory(secrets_dir))
+        directory = _ensure_directory(secrets_dir)
+        return _commit(config, directory, load_peers(directory))
 
 
 def list_peers(config: Config, secrets_dir: Path) -> list[Peer]:
@@ -312,8 +336,7 @@ def add_peer(config: Config, secrets_dir: Path, name: str, now: datetime | None 
             private_key=private_key,
             created=now or datetime.now(UTC),
         )
-        save_peers(directory, [*peers, peer])
-        _render(config, directory)
+        _commit(config, directory, [*peers, peer])
     return peer
 
 
@@ -324,14 +347,13 @@ def remove_peer(config: Config, secrets_dir: Path, name: str) -> Peer:
         removed = next((peer for peer in peers if peer.name == name), None)
         if removed is None:
             raise PeerNotFoundError(f"no peer named {name!r}")
-        save_peers(directory, [peer for peer in peers if peer.name != name])
-        _render(config, directory)
+        _commit(config, directory, [peer for peer in peers if peer.name != name])
     return removed
 
 
 def peer_config(config: Config, secrets_dir: Path, name: str) -> str:
     peer = find_peer(config, secrets_dir, name)
-    key, _ = load_or_create_server_key(secrets_dir / SERVER_DIR)
+    key = load_server_key(secrets_dir / SERVER_DIR)
     return render_client_conf(config, public_key(key), peer)
 
 
@@ -391,11 +413,28 @@ def _ensure_directory(secrets_dir: Path) -> Path:
     return directory
 
 
-def _render(config: Config, directory: Path) -> Path:
+def _commit(config: Config, directory: Path, peers: Sequence[Peer]) -> ServerFiles:
+    """Write ``wg0.conf`` and the registry as one change.
+
+    The config goes first and is put back when the registry cannot be saved: the running server
+    never keeps a peer the registry lost, and a retried ``peer add`` never meets a name that is
+    registered but missing from the server.
+    """
+    conf = directory / SERVER_CONF_FILE
     try:
         key, _ = load_or_create_server_key(directory)
-        conf = directory / SERVER_CONF_FILE
-        write_private(conf, render_server_conf(config, key, load_peers(directory)))
+        placed, renumbered = fit_to_subnet(config, peers)
+        previous = conf.read_text(encoding="utf-8") if conf.is_file() else None
+        write_private(conf, render_server_conf(config, key, placed))
+        try:
+            registry = PeerRegistry(peers=placed)
+            write_private(directory / PEERS_FILE, registry.model_dump_json(indent=2) + "\n")
+        except BaseException:
+            if previous is None:
+                conf.unlink(missing_ok=True)
+            else:
+                write_private(conf, previous)
+            raise
     except OSError as exc:
         raise WgError(f"cannot write the tunnel files in {directory}: {exc.strerror}") from exc
-    return conf
+    return ServerFiles(conf=conf, renumbered=renumbered)

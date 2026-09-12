@@ -132,3 +132,37 @@ def test_peers_are_refused_off_the_vps(tmp_path: Path) -> None:
     result = runner.invoke(cli.app, ["peer", "list", "--dir", str(home)])
     assert result.exit_code == 1
     assert "tunnel peers live on the VPS; this box has role home" in result.output
+
+
+def test_out_refuses_a_symlink(
+    vps_box: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dangling link passes an exists() check; the key must not follow it anywhere."""
+    monkeypatch.setattr(core_api, "export_peer", lambda _port, _name: PEER)
+    target = tmp_path / "elsewhere.conf"
+    link = tmp_path / "dacha.conf"
+    link.symlink_to(target)
+    result = runner.invoke(
+        cli.app,
+        ["peer", "export", "dacha", "--out", str(link), "--force", "--dir", str(vps_box)],
+    )
+    assert result.exit_code == 1 and "is a symlink" in result.output
+    assert not target.exists()
+
+
+def test_force_replaces_a_readable_file_with_a_private_one(
+    vps_box: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(core_api, "export_peer", lambda _port, _name: PEER)
+    out = tmp_path / "dacha.conf"
+    out.write_text("old\n", encoding="utf-8")
+    out.chmod(0o644)
+    inode = out.stat().st_ino
+    result = runner.invoke(
+        cli.app,
+        ["peer", "export", "dacha", "--out", str(out), "--force", "--dir", str(vps_box)],
+    )
+    assert result.exit_code == 0, result.output
+    assert out.read_text(encoding="utf-8") == PEER_TEXT
+    assert stat.S_IMODE(out.stat().st_mode) == 0o600
+    assert out.stat().st_ino != inode  # replaced by rename, never rewritten in place

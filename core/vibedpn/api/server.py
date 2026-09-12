@@ -49,11 +49,17 @@ def main() -> None:
     # is always the one rendered from the current config.
     secrets_dir = Path(os.environ.get(SECRETS_DIR_ENV, DEFAULT_SECRETS_DIR))
     try:
-        conf = ensure_server(config, secrets_dir)
+        files = ensure_server(config, secrets_dir)
     except WgError as exc:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None
-    if conf is not None:
-        sys.stderr.write(f"vibedpn-core: WireGuard server config rendered ({conf.name})\n")
+    if files is not None:
+        sys.stderr.write(f"vibedpn-core: WireGuard server config rendered ({files.conf.name})\n")
+        for moved in files.renumbered:
+            # The owner changed wg_server.subnet: this box needs its peer file exported again.
+            sys.stderr.write(
+                f"vibedpn-core: peer {moved.name} moved from {moved.old} to {moved.new};"
+                f" run `vibedpn peer export {moved.name}` for its home box\n"
+            )
     application = create_app(config, secrets_dir=secrets_dir)
     uvicorn.run(application, host=API_HOST, port=config.api.port, log_level="info")

@@ -20,9 +20,9 @@ from vibedpn.api.client import (
     fetch_provider_stats,
 )
 from vibedpn.api.models import PeerFile
+from vibedpn.atomic import write_private
 from vibedpn.bootstrap import (
     DEFAULT_BOX_DIR,
-    SECRET_FILE_MODE,
     Answers,
     BootstrapError,
     HostFacts,
@@ -31,7 +31,6 @@ from vibedpn.bootstrap import (
     ensure_replaceable,
     public_address,
     write_box,
-    write_file,
 )
 from vibedpn.compose import (
     DEFAULT_LOG_TAIL,
@@ -437,19 +436,23 @@ def _deliver(peer: PeerFile, out: Path | None, *, force: bool) -> None:
     if out is None:
         typer.echo(peer.config, nl=False)
         typer.echo(qr_code(peer.config), nl=False)
-        target = "FILE"
         typer.echo("Save the text above as FILE on the home box (mode 600), then run:")
+        target = "FILE"
     else:
+        # The file holds the box's private key: never write it through a link that points
+        # somewhere else, and never into an existing file whose mode would apply to it first.
+        if out.is_symlink():
+            raise _fail(f"{out} is a symlink; write the peer file to a plain path")
         if out.exists() and not force:
             raise _fail(f"{out} already exists; pass --force to overwrite it")
         try:
-            write_file(out, peer.config, SECRET_FILE_MODE)
+            write_private(out, peer.config)
         except OSError as exc:
             raise _fail(f"cannot write {out}: {exc.strerror}") from None
-        target = str(out)
         typer.echo(
             f"wrote {out} (peer {peer.name}, {peer.address}); copy it to the home box, then:"
         )
+        target = str(out)
     typer.echo(f"  sudo vibedpn init --role client --peer-config {target}")
 
 

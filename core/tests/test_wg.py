@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import pytest
 
+from vibedpn.atomic import write_private
 from vibedpn.bootstrap import read_peer_config
 from vibedpn.config import Config, parse_yaml
 from vibedpn.engine import wg
@@ -28,7 +29,6 @@ from vibedpn.engine.wg import (
     public_key,
     render_server_conf,
     server_address,
-    write_private,
 )
 
 from .conftest import home_config, vps_config
@@ -120,7 +120,9 @@ def test_roles_without_a_server_render_nothing(tmp_path: Path) -> None:
 
 
 def test_first_start_creates_a_private_key_and_config(tmp_path: Path) -> None:
-    conf = ensure_server(vps(), tmp_path)
+    files = ensure_server(vps(), tmp_path)
+    assert files is not None and files.renumbered == ()
+    conf = files.conf
     directory = tmp_path / SERVER_DIR
     key_file = directory / SERVER_KEY_FILE
     assert conf == directory / SERVER_CONF_FILE
@@ -373,3 +375,96 @@ def test_read_wg_dump_degrades_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     links = wg.read_wg_dump()
     assert links is not None and len(links) == 2
+
+
+# --- subnet changes and failed writes ------------------------------------------------------
+
+
+def test_a_changed_subnet_moves_peers_and_keeps_their_keys(tmp_path: Path) -> None:
+    first = wg.add_peer(vps(), tmp_path, "dacha")
+    second = wg.add_peer(vps(), tmp_path, "flat")
+    moved_config = vps(subnet="10.99.0.0/24")
+    files = ensure_server(moved_config, tmp_path)
+    assert files is not None
+    assert files.renumbered == (
+        wg.Renumbered("dacha", IPv4Address("10.78.0.2"), IPv4Address("10.99.0.2")),
+        wg.Renumbered("flat", IPv4Address("10.78.0.3"), IPv4Address("10.99.0.3")),
+    )
+    moved = {p.name: p for p in wg.list_peers(moved_config, tmp_path)}
+    assert moved["dacha"].private_key == first.private_key
+    assert moved["flat"].public_key == second.public_key
+    conf = files.conf.read_text(encoding="utf-8")
+    assert "Address = 10.99.0.1/24" in conf and "AllowedIPs = 10.99.0.2/32" in conf
+    assert "10.78." not in conf
+    assert "Address = 10.99.0.2/32" in wg.peer_config(moved_config, tmp_path, "dacha")
+    again = ensure_server(moved_config, tmp_path)
+    assert again is not None and again.renumbered == ()
+
+
+def test_a_peer_on_the_server_address_is_moved(tmp_path: Path) -> None:
+    ensure_server(vps(), tmp_path)
+    registry_file(tmp_path).write_text(
+        wg.PeerRegistry(peers=[peer("dacha", "10.78.0.1")]).model_dump_json(), encoding="utf-8"
+    )
+    files = ensure_server(vps(), tmp_path)
+    assert files is not None
+    assert files.renumbered == (
+        wg.Renumbered("dacha", IPv4Address("10.78.0.1"), IPv4Address("10.78.0.2")),
+    )
+
+
+def test_a_subnet_too_small_for_the_registry_is_a_clear_error(tmp_path: Path) -> None:
+    wg.add_peer(vps(), tmp_path, "dacha")
+    wg.add_peer(vps(), tmp_path, "flat")
+    before = registry_file(tmp_path).read_text(encoding="utf-8")
+    with pytest.raises(WgError, match="room for 1 peers, the registry has 2"):
+        ensure_server(vps(subnet="10.99.0.0/30"), tmp_path)
+    assert registry_file(tmp_path).read_text(encoding="utf-8") == before
+
+
+def test_a_failed_registry_write_puts_the_old_config_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wg.add_peer(vps(), tmp_path, "dacha")
+    conf_path = tmp_path / SERVER_DIR / SERVER_CONF_FILE
+    conf_before = conf_path.read_text(encoding="utf-8")
+    registry_before = registry_file(tmp_path).read_text(encoding="utf-8")
+
+    def failing_registry(path: Path, content: str) -> bool:
+        if path.name == wg.PEERS_FILE:
+            raise OSError(28, "No space left on device")
+        return write_private(path, content)
+
+    monkeypatch.setattr("vibedpn.engine.wg.write_private", failing_registry)
+    with pytest.raises(WgError, match="No space left on device"):
+        wg.add_peer(vps(), tmp_path, "flat")
+    assert conf_path.read_text(encoding="utf-8") == conf_before
+    assert registry_file(tmp_path).read_text(encoding="utf-8") == registry_before
+    monkeypatch.setattr("vibedpn.engine.wg.write_private", write_private)
+    assert wg.add_peer(vps(), tmp_path, "flat").name == "flat"  # a retry is not a 409
+
+
+def test_a_failed_config_write_leaves_the_registry_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wg.add_peer(vps(), tmp_path, "dacha")
+    registry_before = registry_file(tmp_path).read_text(encoding="utf-8")
+
+    def failing_conf(path: Path, content: str) -> bool:
+        if path.name == SERVER_CONF_FILE:
+            raise OSError(5, "Input/output error")
+        return write_private(path, content)
+
+    monkeypatch.setattr("vibedpn.engine.wg.write_private", failing_conf)
+    with pytest.raises(WgError, match="Input/output error"):
+        wg.remove_peer(vps(), tmp_path, "dacha")
+    assert registry_file(tmp_path).read_text(encoding="utf-8") == registry_before
+
+
+def test_export_never_creates_a_server_key(tmp_path: Path) -> None:
+    wg.add_peer(vps(), tmp_path, "dacha")
+    key_file = tmp_path / SERVER_DIR / SERVER_KEY_FILE
+    key_file.unlink()
+    with pytest.raises(WgError, match="is missing; core creates the server key at start"):
+        wg.peer_config(vps(), tmp_path, "dacha")
+    assert not key_file.exists()
