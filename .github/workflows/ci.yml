@@ -76,9 +76,13 @@ jobs:
             vibedpn --version
             bash /src/install.sh
             vibedpn init --role vps --endpoint 203.0.113.7
-            test -f /opt/vibedpn/config.yaml && test -f /opt/vibedpn/.env
+            test -f /opt/vibedpn/config.yaml
+            test -f /opt/vibedpn/.env
             test ! -e /opt/vibedpn/secrets/htpasswd
-            ! vibedpn init --role vps --endpoint 203.0.113.7
+            before=$(sha256sum /opt/vibedpn/config.yaml)
+            if vibedpn init --role vps --endpoint 203.0.113.7; then echo "init must refuse without --force" >&2; exit 1; fi
+            test "$before" = "$(sha256sum /opt/vibedpn/config.yaml)"
+            test ! -e /opt/vibedpn/config.yaml.bak
             vibedpn init --role vps --endpoint 203.0.113.7 --force
             test -f /opt/vibedpn/config.yaml.bak
           '

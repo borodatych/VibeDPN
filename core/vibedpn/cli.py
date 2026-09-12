@@ -16,13 +16,14 @@ from vibedpn.bootstrap import (
     BootstrapError,
     HostFacts,
     build_config,
+    check_password,
+    ensure_replaceable,
     public_address,
     write_box,
 )
-from vibedpn.config import Role
+from vibedpn.config import Role, check_endpoint
 from vibedpn.detect import DetectError, HostProbe
 
-MIN_PASSWORD_LENGTH = 8
 EXIT_USER_ERROR = 1
 
 app = typer.Typer(
@@ -60,16 +61,24 @@ def _fail(message: str) -> typer.Exit:
     return typer.Exit(EXIT_USER_ERROR)
 
 
+def _retry(message: str) -> None:
+    typer.secho(f"{message}; try again", fg=typer.colors.YELLOW, err=True)
+
+
 def _ask_role() -> Role:
     choice = typer.prompt("Role", type=click.Choice([role.value for role in Role]))
     return Role(choice)
 
 
 def _ask_password() -> str:
-    password: str = typer.prompt("UI password", hide_input=True, confirmation_prompt=True)
-    if len(password) < MIN_PASSWORD_LENGTH:
-        raise _fail(f"the password must be at least {MIN_PASSWORD_LENGTH} characters long")
-    return password
+    while True:
+        password: str = typer.prompt("UI password", hide_input=True, confirmation_prompt=True)
+        try:
+            check_password(password)
+        except BootstrapError as exc:
+            _retry(str(exc))
+            continue
+        return password
 
 
 def _read_password_file(path: Path) -> str:
@@ -77,9 +86,46 @@ def _read_password_file(path: Path) -> str:
         password = path.read_text(encoding="utf-8").strip()
     except OSError as exc:
         raise _fail(f"cannot read {path}: {exc.strerror}") from None
-    if len(password) < MIN_PASSWORD_LENGTH:
-        raise _fail(f"the password must be at least {MIN_PASSWORD_LENGTH} characters long")
+    try:
+        check_password(password)
+    except BootstrapError as exc:
+        raise _fail(str(exc)) from None
     return password
+
+
+def _ask_peer_config() -> Path:
+    while True:
+        answer = typer.prompt("Path to the WireGuard peer file (.conf) from the VPS")
+        path = Path(answer).expanduser()
+        if path.is_file():
+            return path
+        _retry(f"{path} is not a file")
+
+
+def _ask_endpoint() -> str:
+    while True:
+        answer: str = typer.prompt("Public host or IPv4 of this VPS")
+        try:
+            return check_endpoint(answer.strip())
+        except ValueError as exc:
+            _retry(f"{exc}; give the host without a port")
+
+
+def _check_flags_for_role(
+    role: Role, peer_config: Path | None, endpoint: str | None, password_file: Path | None
+) -> None:
+    """A flag of another role is a mistake, not something to ignore silently."""
+    if peer_config is not None and role is not Role.CLIENT:
+        raise _fail("--peer-config is only used with --role client")
+    if password_file is not None and role is Role.VPS:
+        raise _fail("--password-file is not used with --role vps: a VPS has no UI")
+    if endpoint is not None and role is not Role.VPS:
+        raise _fail("--endpoint is only used with --role vps")
+    if endpoint is not None:
+        try:
+            check_endpoint(endpoint)
+        except ValueError as exc:
+            raise _fail(f"--endpoint: {exc}; give the host without a port") from None
 
 
 def _collect_answers(
@@ -89,17 +135,18 @@ def _collect_answers(
     password_file: Path | None,
     facts: HostFacts,
 ) -> Answers:
-    """Ask only what cannot be detected or was not passed as a flag."""
+    """Ask only what cannot be detected or was not passed as a flag; fail early on known facts."""
     role = role or _ask_role()
+    _check_flags_for_role(role, peer_config, endpoint, password_file)
+    if role is not Role.VPS and facts.interface is None:
+        raise _fail("no interface with a default route was found; connect the box to the LAN first")
     password = None
     if role is not Role.VPS:
         password = _read_password_file(password_file) if password_file else _ask_password()
     if role is Role.CLIENT and peer_config is None:
-        peer_config = Path(typer.prompt("Path to the WireGuard peer file (.conf) from the VPS"))
-        if not peer_config.is_file():
-            raise _fail(f"{peer_config} is not a file")
+        peer_config = _ask_peer_config()
     if role is Role.VPS and endpoint is None and public_address(facts) is None:
-        endpoint = typer.prompt("Public host or IPv4 of this VPS")
+        endpoint = _ask_endpoint()
     return Answers(role=role, password=password, peer_config=peer_config, endpoint=endpoint)
 
 
@@ -139,6 +186,10 @@ def init(
 ) -> None:
     """Configure this box: detect the network, ask what cannot be detected, write config.yaml,
     .env and secrets/."""
+    try:
+        ensure_replaceable(box_dir, force=force)
+    except BootstrapError as exc:
+        raise _fail(str(exc)) from None
     probe = HostProbe()
     try:
         facts = HostFacts(
@@ -156,8 +207,10 @@ def init(
         written = write_box(box_dir, config, answers, force=force)
     except BootstrapError as exc:
         raise _fail(str(exc)) from None
-    for path in written:
+    for path in written.files:
         typer.echo(f"wrote {path}")
+    for path in written.retired:
+        typer.echo(f"set aside a secret of the previous role: {path}")
     if not facts.wireguard_module:
         typer.secho(
             "warning: the wireguard kernel module is not available; tunnels will not start",

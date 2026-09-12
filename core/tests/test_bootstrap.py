@@ -12,8 +12,10 @@ from vibedpn.bootstrap import (
     BootstrapError,
     HostFacts,
     build_config,
-    image_tag_of,
+    check_password,
+    preserved_env,
     public_address,
+    read_peer_config,
     render_config,
     render_env,
     write_box,
@@ -77,6 +79,22 @@ def test_vps_config_needs_endpoint_behind_nat() -> None:
     assert config.wg_server.endpoint == "vps.example.com"
 
 
+def test_vps_config_rejects_bad_endpoint_readably() -> None:
+    with pytest.raises(BootstrapError, match="without a port"):
+        build_config(Answers(Role.VPS, endpoint="vps.example.com:51820"), LAN)
+
+
+def test_password_policy() -> None:
+    check_password("secret123")
+    check_password("x" * 72)
+    with pytest.raises(BootstrapError, match="at least 8"):
+        check_password("short")
+    with pytest.raises(BootstrapError, match="72 bytes"):
+        check_password("x" * 73)
+    with pytest.raises(BootstrapError, match="72 bytes"):
+        check_password("п" * 37)  # 74 bytes of UTF-8
+
+
 def test_lan_roles_need_an_interface() -> None:
     with pytest.raises(BootstrapError, match="default route"):
         build_config(Answers(Role.HOME, password="secret123"), NOTHING)
@@ -91,17 +109,21 @@ def test_rendered_config_round_trips(role: Role) -> None:
 
 def test_render_env_lists_every_derived_variable() -> None:
     config = build_config(Answers(Role.HOME, password="secret123"), LAN)
-    text = render_env(config, image_tag="next")
+    text = render_env(config, {"VIBEDPN_TAG": "next", "MYST_TAG": "1.40.0-alpine"})
     for key, value in config.env_vars().items():
         assert f"{key}={value}\n" in text
     assert "VIBEDPN_TAG=next\n" in text
+    assert "MYST_TAG=1.40.0-alpine\n" in text
 
 
-def test_image_tag_survives_reinit(tmp_path: Path) -> None:
+def test_preserved_env_keeps_tags_only(tmp_path: Path) -> None:
     env = tmp_path / ".env"
-    assert image_tag_of(env) == "latest"
-    env.write_text("COMPOSE_PROFILES=provider\nVIBEDPN_TAG=v0.2.0\n", encoding="utf-8")
-    assert image_tag_of(env) == "v0.2.0"
+    assert preserved_env(env) == {"VIBEDPN_TAG": "latest"}
+    env.write_text(
+        "COMPOSE_PROFILES=provider\nVIBEDPN_TAG=v0.2.0\nADGUARD_TAG=v0.108.0\nJUNK=1\n",
+        encoding="utf-8",
+    )
+    assert preserved_env(env) == {"VIBEDPN_TAG": "v0.2.0", "ADGUARD_TAG": "v0.108.0"}
 
 
 def test_write_box_writes_config_env_and_secrets(tmp_path: Path) -> None:
@@ -111,7 +133,8 @@ def test_write_box_writes_config_env_and_secrets(tmp_path: Path) -> None:
     config = build_config(answers, LAN)
     box = tmp_path / "box"
     written = write_box(box, config, answers, force=False)
-    assert [p.name for p in written] == ["config.yaml", ".env", "htpasswd", "wg-client.conf"]
+    assert [p.name for p in written.files] == ["config.yaml", ".env", "htpasswd", "wg-client.conf"]
+    assert written.retired == []
     assert load_config(box / "config.yaml") == config
     assert stat.S_IMODE((box / "secrets").stat().st_mode) == 0o700
     assert stat.S_IMODE((box / "secrets" / "htpasswd").stat().st_mode) == 0o600
@@ -133,13 +156,56 @@ def test_write_box_refuses_to_overwrite_without_force(tmp_path: Path) -> None:
     with pytest.raises(BootstrapError, match="--force"):
         write_box(tmp_path, config, answers, force=False)
     written = write_box(tmp_path, config, answers, force=True)
-    assert [p.name for p in written] == ["config.yaml", ".env"]
+    assert [p.name for p in written.files] == ["config.yaml", ".env"]
     assert (tmp_path / "config.yaml.bak").is_file()
     assert "VIBEDPN_TAG=v9" in (tmp_path / ".env").read_text(encoding="utf-8")
     assert not (tmp_path / "secrets" / "htpasswd").exists()
 
 
-def test_write_box_reports_unreadable_peer_file(tmp_path: Path) -> None:
+def test_write_box_gathers_everything_before_writing(tmp_path: Path) -> None:
+    box = tmp_path / "box"
     answers = Answers(Role.CLIENT, password="secret123", peer_config=tmp_path / "missing.conf")
     with pytest.raises(BootstrapError, match="cannot read"):
-        write_box(tmp_path / "box", build_config(answers, LAN), answers, force=False)
+        write_box(box, build_config(answers, LAN), answers, force=False)
+    assert not box.exists()
+    binary = tmp_path / "blob.conf"
+    binary.write_bytes(b"\xff\xfe\x00")
+    answers = Answers(Role.CLIENT, password="secret123", peer_config=binary)
+    with pytest.raises(BootstrapError, match="not a UTF-8"):
+        write_box(box, build_config(answers, LAN), answers, force=False)
+    assert not box.exists()
+    long_password = Answers(Role.HOME, password="п" * 37)
+    with pytest.raises(BootstrapError, match="72 bytes"):
+        write_box(box, build_config(long_password, LAN), long_password, force=False)
+    assert not box.exists()
+
+
+def test_read_peer_config_sanity(tmp_path: Path) -> None:
+    not_a_peer = tmp_path / "notes.conf"
+    not_a_peer.write_text("hello\n", encoding="utf-8")
+    with pytest.raises(BootstrapError, match="Interface"):
+        read_peer_config(not_a_peer)
+
+
+def test_force_with_a_new_role_sets_old_secrets_aside(tmp_path: Path) -> None:
+    peer = tmp_path / "home.conf"
+    peer.write_text("[Interface]\nPrivateKey = x\n", encoding="utf-8")
+    client = Answers(Role.CLIENT, password="secret123", peer_config=peer)
+    box = tmp_path / "box"
+    write_box(box, build_config(client, LAN), client, force=False)
+    vps = Answers(Role.VPS, endpoint="vps.example.com")
+    written = write_box(box, build_config(vps, LAN), vps, force=True)
+    assert sorted(p.name for p in written.retired) == ["htpasswd.bak", "wg-client.conf.bak"]
+    assert not (box / "secrets" / "wg-client.conf").exists()
+    assert stat.S_IMODE((box / "secrets" / "wg-client.conf.bak").stat().st_mode) == 0o600
+
+
+def test_write_box_reports_unwritable_directory(tmp_path: Path) -> None:
+    locked = tmp_path / "locked"
+    locked.mkdir(mode=0o500)
+    answers = Answers(Role.VPS, endpoint="vps.example.com")
+    try:
+        with pytest.raises(BootstrapError, match="sudo"):
+            write_box(locked / "box", build_config(answers, LAN), answers, force=False)
+    finally:
+        locked.chmod(0o700)

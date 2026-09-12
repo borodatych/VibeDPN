@@ -14,7 +14,8 @@ set -euo pipefail
 
 VIBEDPN_REPO="${VIBEDPN_REPO:-https://github.com/borodatych/VibeDPN.git}"
 VIBEDPN_BRANCH="${VIBEDPN_BRANCH:-main}"
-VIBEDPN_DIR="${VIBEDPN_DIR:-/opt/vibedpn}"
+DEFAULT_DIR="/opt/vibedpn"  # `vibedpn init` has the same default; keep them equal
+VIBEDPN_DIR="${VIBEDPN_DIR:-$DEFAULT_DIR}"
 VIBEDPN_BIN="/usr/local/bin/vibedpn"
 MIN_PYTHON="3.11"
 DOCKER_KEYRING="/etc/apt/keyrings/docker.asc"
@@ -138,7 +139,11 @@ main() {
   clone_or_update
   install_cli
   add_docker_group
-  log "Done. Next step: sudo vibedpn init"
+  if [ "$VIBEDPN_DIR" = "$DEFAULT_DIR" ]; then
+    log "Done. Next step: sudo vibedpn init"
+  else
+    log "Done. Next step: sudo vibedpn init --dir \"$VIBEDPN_DIR\""
+  fi
 }
 
 main "$@"

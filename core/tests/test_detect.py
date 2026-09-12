@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from vibedpn import detect
 from vibedpn.detect import DetectError, HostProbe, Interface, parse_default_route, parse_interface
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -40,7 +41,17 @@ def test_probe_reports_missing_ip(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subprocess, "run", missing)
     with pytest.raises(DetectError, match="iproute2"):
         HostProbe().default_interface()
-    assert HostProbe().wireguard_module_present() is False or True  # sysfs may exist on Linux
+
+
+def test_wireguard_module_detection(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def missing(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError("modprobe")
+
+    monkeypatch.setattr(subprocess, "run", missing)
+    monkeypatch.setattr(detect, "WIREGUARD_MODULE_SYSFS", tmp_path / "absent")
+    assert HostProbe().wireguard_module_present() is False
+    monkeypatch.setattr(detect, "WIREGUARD_MODULE_SYSFS", tmp_path)
+    assert HostProbe().wireguard_module_present() is True
 
 
 def test_probe_reports_failing_ip(monkeypatch: pytest.MonkeyPatch) -> None:

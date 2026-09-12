@@ -37,6 +37,9 @@ safe.directory "*"`. Вторая грабля скрыла первую: `git c
 не останавливает скрипт — в AND-списках `set -e` не действует ни на одну команду, кроме
 последней, — и тест ушёл дальше до `fatal: repository '/tmp/repo' does not exist` в install.sh.
 **Применение:** в скриптах для CI — команды отдельными строками, `&&` только там, где короткое
-замыкание и нужно; клон чужого чекаута — с `safe.directory`.
+замыкание и нужно; клон чужого чекаута — с `safe.directory`. Та же грабля у негативных проверок:
+`! cmd` под `set -e` тоже не останавливает скрипт (errexit игнорирует команды с `!`), поэтому
+«команда обязана упасть» пишется как `if cmd; then echo "must fail" >&2; exit 1; fi` — и лучше
+с проверкой побочного эффекта (sha256 файла до и после), иначе тест доказывает только код возврата.
 **Источники:** https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory ,
 https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html (поведение `-e` в списках).

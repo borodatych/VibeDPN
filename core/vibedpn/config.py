@@ -117,6 +117,17 @@ def normalize_mac(value: str) -> str:
     return mac
 
 
+def check_endpoint(value: str) -> str:
+    """A hostname or IPv4 address; raise ``ValueError`` with a user-facing reason otherwise."""
+    try:
+        IPv4Address(value)
+    except ValueError:
+        looks_numeric = value.replace(".", "").isdigit()
+        if looks_numeric or HOSTNAME_PATTERN.fullmatch(value) is None:
+            raise ValueError(f"{value!r} is not a hostname or IPv4 address") from None
+    return value
+
+
 def normalize_domain(value: str) -> str:
     """Lower-case a domain suffix, strip surrounding dots; raise ``ValueError`` if invalid."""
     domain = value.lower().strip(".")
@@ -267,14 +278,8 @@ class WgServerConfig(StrictModel):
 
     @field_validator("endpoint")
     @classmethod
-    def check_endpoint(cls, value: str) -> str:
-        try:
-            IPv4Address(value)
-        except ValueError:
-            looks_numeric = value.replace(".", "").isdigit()
-            if looks_numeric or HOSTNAME_PATTERN.fullmatch(value) is None:
-                raise ValueError(f"{value!r} is not a hostname or IPv4 address") from None
-        return value
+    def validate_endpoint(cls, value: str) -> str:
+        return check_endpoint(value)
 
     @field_validator("subnet")
     @classmethod

@@ -1,17 +1,20 @@
 """Assemble the box configuration from wizard answers and host facts, and write it to disk.
 
-Pure parts (``build_config``, ``render_config``, ``render_env``) are unit-tested without a host;
-``write_box`` is the only function that touches the filesystem.
+Pure parts (``build_config``, ``render_config``, ``render_env``, ``check_password``) are
+unit-tested without a host; ``write_box`` is the only function that touches the filesystem, and
+it gathers every byte it will write before creating a single file.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import bcrypt
 from jinja2 import Environment, PackageLoader, StrictUndefined
+from pydantic import ValidationError
 
 from vibedpn.config import (
     Config,
@@ -24,20 +27,29 @@ from vibedpn.config import (
     UpstreamsConfig,
     VpsUplink,
     WgServerConfig,
+    check_endpoint,
     parse_yaml,
 )
 from vibedpn.detect import Interface
 
-DEFAULT_BOX_DIR = Path("/opt/vibedpn")
+DEFAULT_BOX_DIR = Path("/opt/vibedpn")  # install.sh has the same default; keep them equal
 DEFAULT_IMAGE_TAG = "latest"
 IMAGE_TAG_VAR = "VIBEDPN_TAG"
+# Lines of an existing .env that survive a re-run of init: the image tag and the two optional
+# overrides of third-party image pins that .env.example documents.
+PRESERVED_ENV_VARS = (IMAGE_TAG_VAR, "MYST_TAG", "ADGUARD_TAG")
 UI_USER = "admin"
+MIN_PASSWORD_LENGTH = 8
+MAX_PASSWORD_BYTES = 72  # bcrypt hashes at most 72 bytes; nginx's crypt() has the same limit
+MAX_PEER_FILE_BYTES = 64 * 1024
 CONFIG_FILE = "config.yaml"
 CONFIG_BACKUP = "config.yaml.bak"
 ENV_FILE = ".env"
 SECRETS_DIR = "secrets"
 HTPASSWD_FILE = "htpasswd"
 WG_CLIENT_CONF = "wg-client.conf"
+KNOWN_SECRETS = (HTPASSWD_FILE, WG_CLIENT_CONF)
+BACKUP_SUFFIX = ".bak"
 SECRET_DIR_MODE = 0o700
 SECRET_FILE_MODE = 0o600
 PUBLIC_FILE_MODE = 0o644
@@ -66,11 +78,50 @@ class HostFacts:
     wireguard_module: bool
 
 
+@dataclass(frozen=True)
+class Written:
+    """What ``write_box`` did: files written, and secrets of a previous role set aside."""
+
+    files: list[Path] = field(default_factory=list)
+    retired: list[Path] = field(default_factory=list)
+
+
 def public_address(facts: HostFacts) -> str | None:
     """The detected interface address when it is globally routable, else ``None``."""
     if facts.interface is not None and facts.interface.address.is_global:
         return str(facts.interface.address)
     return None
+
+
+def check_password(password: str) -> None:
+    """Raise ``BootstrapError`` unless the password fits both the policy and bcrypt."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise BootstrapError(f"the password must be at least {MIN_PASSWORD_LENGTH} characters long")
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        raise BootstrapError(
+            f"the password must be at most {MAX_PASSWORD_BYTES} bytes in UTF-8 (bcrypt limit);"
+            " non-Latin letters take 2 bytes each"
+        )
+
+
+def ensure_replaceable(box_dir: Path, *, force: bool) -> None:
+    """Refuse to touch an existing ``config.yaml`` unless ``--force`` was given."""
+    if (box_dir / CONFIG_FILE).exists() and not force:
+        raise BootstrapError(
+            f"{box_dir / CONFIG_FILE} exists; re-run with --force to replace it"
+            f" (the old file is kept as {CONFIG_BACKUP})"
+        )
+
+
+def _validated(**fields: object) -> Config:
+    try:
+        return Config(**fields)  # type: ignore[arg-type]
+    except ValidationError as exc:
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+            for error in exc.errors()
+        )
+        raise BootstrapError(problems) from None
 
 
 def build_config(answers: Answers, facts: HostFacts) -> Config:
@@ -82,7 +133,11 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
                 "the public address of this VPS could not be detected;"
                 " pass --endpoint <host or IPv4>"
             )
-        return Config(
+        try:
+            check_endpoint(endpoint)
+        except ValueError as exc:
+            raise BootstrapError(f"endpoint: {exc}; give the host without a port") from None
+        return _validated(
             version=1,
             role=Role.VPS,
             provider=ProviderConfig(enabled=True),
@@ -98,7 +153,7 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
         lan_address=facts.interface.address,
     )
     if answers.role is Role.HOME:
-        return Config(
+        return _validated(
             version=1,
             role=Role.HOME,
             network=network,
@@ -106,7 +161,7 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
             upstreams=UpstreamsConfig(dpn=DpnUplink(enabled=True)),
             provider=ProviderConfig(enabled=True),
         )
-    return Config(
+    return _validated(
         version=1,
         role=Role.CLIENT,
         network=network,
@@ -129,70 +184,104 @@ def render_config(config: Config) -> str:
     return template.render(config=config, lan=config.role is not Role.VPS)
 
 
-def render_env(config: Config, image_tag: str) -> str:
+def preserved_env(env_path: Path) -> dict[str, str]:
+    """Values of an existing ``.env`` that a re-run keeps; the image tag always has a value."""
+    kept = {IMAGE_TAG_VAR: DEFAULT_IMAGE_TAG}
+    if not env_path.is_file():
+        return kept
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() in PRESERVED_ENV_VARS and value.strip():
+            kept[key.strip()] = value.strip()
+    return kept
+
+
+def render_env(config: Config, preserved: dict[str, str]) -> str:
     lines = [
         "# VibeDPN — written by `vibedpn init` from config.yaml."
         " Edit config.yaml, then `vibedpn restart`.",
         "",
         *(f"{key}={value}" for key, value in config.env_vars().items()),
         "",
-        "# Image tag of ghcr.io/borodatych/vibedpn-{core,wg,ui}; `vibedpn update` moves it.",
-        f"{IMAGE_TAG_VAR}={image_tag}",
+        "# Image tag of ghcr.io/borodatych/vibedpn-{core,wg,ui}; `vibedpn update` moves it."
+        " MYST_TAG / ADGUARD_TAG override the pins in compose.yaml.",
+        *(f"{key}={preserved[key]}" for key in PRESERVED_ENV_VARS if key in preserved),
         "",
     ]
     return "\n".join(lines)
 
 
-def image_tag_of(env_path: Path) -> str:
-    """Keep the tag of an existing ``.env`` across re-runs of ``init``."""
-    if not env_path.is_file():
-        return DEFAULT_IMAGE_TAG
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        key, sep, value = line.partition("=")
-        if sep and key.strip() == IMAGE_TAG_VAR and value.strip():
-            return value.strip()
-    return DEFAULT_IMAGE_TAG
-
-
 def htpasswd_line(user: str, password: str) -> str:
     """One ``user:hash`` line with a bcrypt hash, as nginx ``auth_basic`` reads it."""
+    check_password(password)
     digest = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
     return f"{user}:{digest}\n"
 
 
-def write_box(box_dir: Path, config: Config, answers: Answers, *, force: bool) -> list[Path]:
-    """Write ``config.yaml``, ``.env`` and ``secrets/``; return the written paths."""
-    box_dir.mkdir(parents=True, exist_ok=True)
+def read_peer_config(path: Path) -> str:
+    """The WireGuard peer file as text, or a ``BootstrapError`` saying what is wrong with it."""
+    try:
+        if path.stat().st_size > MAX_PEER_FILE_BYTES:
+            raise BootstrapError(f"{path} is larger than a WireGuard peer file can be")
+        text = path.read_bytes().decode("utf-8")
+    except OSError as exc:
+        raise BootstrapError(f"cannot read {path}: {exc.strerror}") from exc
+    except UnicodeDecodeError:
+        raise BootstrapError(
+            f"{path} is not a UTF-8 text file (expected a WireGuard .conf)"
+        ) from None
+    if "[Interface]" not in text:
+        raise BootstrapError(f"{path} has no [Interface] section; is it a WireGuard .conf?")
+    return text
+
+
+def write_box(box_dir: Path, config: Config, answers: Answers, *, force: bool) -> Written:
+    """Write ``config.yaml``, ``.env`` and ``secrets/``.
+
+    Everything is rendered, hashed and read before the first file is created, so a bad input
+    never leaves a half-configured directory behind.
+    """
+    ensure_replaceable(box_dir, force=force)
     config_path = box_dir / CONFIG_FILE
-    if config_path.exists():
-        if not force:
-            raise BootstrapError(
-                f"{config_path} exists; re-run with --force to replace it"
-                f" (the old file is kept as {CONFIG_BACKUP})"
-            )
-        shutil.copy2(config_path, box_dir / CONFIG_BACKUP)
+    env_path = box_dir / ENV_FILE
+    secrets_dir = box_dir / SECRETS_DIR
     text = render_config(config)
     if Config.model_validate(parse_yaml(text)) != config:
         raise BootstrapError("rendered config.yaml does not round-trip; this is a template bug")
-    written = [_write(config_path, text, PUBLIC_FILE_MODE)]
-    env_path = box_dir / ENV_FILE
-    written.append(_write(env_path, render_env(config, image_tag_of(env_path)), PUBLIC_FILE_MODE))
-    secrets = box_dir / SECRETS_DIR
-    secrets.mkdir(mode=SECRET_DIR_MODE, exist_ok=True)
-    secrets.chmod(SECRET_DIR_MODE)
+    env_text = render_env(config, preserved_env(env_path))
+    secrets: dict[str, str] = {}
     if answers.password is not None:
-        line = htpasswd_line(UI_USER, answers.password)
-        written.append(_write(secrets / HTPASSWD_FILE, line, SECRET_FILE_MODE))
+        secrets[HTPASSWD_FILE] = htpasswd_line(UI_USER, answers.password)
     if answers.peer_config is not None:
-        try:
-            peer = answers.peer_config.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise BootstrapError(f"cannot read {answers.peer_config}: {exc.strerror}") from exc
-        written.append(_write(secrets / WG_CLIENT_CONF, peer, SECRET_FILE_MODE))
-    return written
+        secrets[WG_CLIENT_CONF] = read_peer_config(answers.peer_config)
+    result = Written()
+    try:
+        box_dir.mkdir(parents=True, exist_ok=True)
+        if config_path.exists():
+            shutil.copy2(config_path, box_dir / CONFIG_BACKUP)
+        result.files.append(_write(config_path, text, PUBLIC_FILE_MODE))
+        result.files.append(_write(env_path, env_text, PUBLIC_FILE_MODE))
+        secrets_dir.mkdir(mode=SECRET_DIR_MODE, exist_ok=True)
+        secrets_dir.chmod(SECRET_DIR_MODE)
+        for name, content in secrets.items():
+            result.files.append(_write(secrets_dir / name, content, SECRET_FILE_MODE))
+        for name in KNOWN_SECRETS:
+            stale = secrets_dir / name
+            if name not in secrets and stale.exists():
+                retired = stale.with_name(name + BACKUP_SUFFIX)
+                stale.replace(retired)
+                retired.chmod(SECRET_FILE_MODE)
+                result.retired.append(retired)
+    except OSError as exc:
+        target = exc.filename or box_dir
+        raise BootstrapError(f"cannot write {target}: {exc.strerror}; run with sudo?") from exc
+    return result
 
 
 def _write(path: Path, text: str, mode: int) -> Path:
-    path.write_text(text, encoding="utf-8")
+    # Create with the final mode so a secret is never readable through a default umask.
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(text)
     path.chmod(mode)
     return path
