@@ -15,9 +15,12 @@ from enum import StrEnum
 from pathlib import Path
 
 from vibedpn.bootstrap import (
+    DATA_DIR,
     ENV_FILE,
     HTPASSWD_FILE,
     KNOWN_SECRETS,
+    MYST_PROVIDER_DATA,
+    NODEUI_PASS_FILE,
     SECRETS_DIR,
     WG_CLIENT_CONF,
 )
@@ -215,13 +218,11 @@ def _env_result(env_current: bool | None) -> CheckResult:
 
 
 def _secrets_result(config: Config, secrets: dict[str, bool] | None) -> CheckResult:
-    needed = []
-    if config.role is not Role.VPS:
-        needed.append(HTPASSWD_FILE)
+    needed = [HTPASSWD_FILE]
     if config.role is Role.CLIENT:
         needed.append(WG_CLIENT_CONF)
-    if not needed:
-        return CheckResult("secrets", Verdict.OK, "none needed for this role")
+    if config.provider.enabled:
+        needed.append(NODEUI_PASS_FILE)
     if secrets is None:
         return CheckResult(
             "secrets",
@@ -412,10 +413,13 @@ def _secrets(box_dir: Path) -> dict[str, bool] | None:
 
     ``Path.is_file`` raises ``PermissionError`` on Python < 3.14 when the directory is closed.
     """
+    node_pass = box_dir / DATA_DIR / MYST_PROVIDER_DATA / NODEUI_PASS_FILE
     try:
-        return {name: (box_dir / SECRETS_DIR / name).is_file() for name in KNOWN_SECRETS}
+        found = {name: (box_dir / SECRETS_DIR / name).is_file() for name in KNOWN_SECRETS}
+        found[NODEUI_PASS_FILE] = node_pass.is_file()
     except OSError:
         return None
+    return found
 
 
 def _read_ip_forward() -> bool | None:

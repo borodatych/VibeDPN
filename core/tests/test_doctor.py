@@ -48,7 +48,7 @@ def facts(**overrides: object) -> DoctorFacts:
         "config_error": "",
         "config_hint": "",
         "env_current": True,
-        "secrets": {"htpasswd": True, "wg-client.conf": False},
+        "secrets": {"htpasswd": True, "wg-client.conf": False, "nodeui-pass": True},
         "wireguard": True,
         "nf_tables": True,
         "ip_forward": True,
@@ -186,16 +186,11 @@ def test_secrets_per_role_and_without_access() -> None:
     client = build_config(Answers(Role.CLIENT, password="x" * 8, peer_config=Path("p")), LAN)
     partial = facts(config=client, secrets={"htpasswd": True, "wg-client.conf": False})
     assert by_name(evaluate(partial))["secrets"].detail == "missing wg-client.conf"
-    assert (
-        by_name(evaluate(facts(config=vps_config())))["secrets"].detail
-        == "none needed for this role"
-    )
+    vps = by_name(evaluate(facts(config=vps_config(), secrets={"htpasswd": True})))["secrets"]
+    assert vps.verdict is Verdict.FAIL and vps.detail == "missing nodeui-pass"
     closed = by_name(evaluate(facts(secrets=None)))["secrets"]
     assert closed.verdict is Verdict.WARN and closed.hint == "sudo vibedpn doctor"
     assert "init" not in closed.hint
-    assert (
-        by_name(evaluate(facts(config=vps_config(), secrets=None)))["secrets"].verdict is Verdict.OK
-    )
 
 
 def test_services_not_started_broken_or_unhealthy() -> None:
@@ -253,7 +248,11 @@ def test_secrets_probe_returns_none_when_closed(tmp_path: Path) -> None:
         assert doctor._secrets(tmp_path) is None
     finally:
         secrets.chmod(stat.S_IRWXU)
-    assert doctor._secrets(tmp_path) == {"htpasswd": False, "wg-client.conf": False}
+    assert doctor._secrets(tmp_path) == {
+        "htpasswd": False,
+        "wg-client.conf": False,
+        "nodeui-pass": False,
+    }
 
 
 def test_doctor_command_exit_codes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

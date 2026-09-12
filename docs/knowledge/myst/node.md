@@ -66,6 +66,24 @@ bridge-контейнера (SSDP-multicast через docker-bridge не ход
 https://help.mystnodes.com/en/articles/13924892 (multi-node compose),
 https://raw.githubusercontent.com/mysteriumnetwork/node/master/cmd/commands/service/command.go .
 
+## [баг] TequilAPI не аутентифицирует; пароль NodeUI — файл `nodeui-pass`
+
+**Контекст:** Stage 2, чекбокс 1; хотели «пароль TequilAPI из secrets вместо myst/mystberry».
+**Суть:** проверено исполнением на 1.39.5-alpine (`daemon`, без `service`): `GET /identities`,
+`/connection`, `/sessions`, `/config`, `/proposals` отвечают 200 без токена — JWT из
+`POST /auth/login` защищает только NodeUI и `/auth/*`. Значит, «пароль TequilAPI» ничего не
+охраняет; охраняет только сеть: provider публикует 4050 на `127.0.0.1`, consumer (Stage 8) на
+10.77.0.20 обязан быть закрыт nft от LAN. Пароль NodeUI хранится в `<data-dir>/nodeui-pass` —
+bcrypt-хеш (60 байт, 600); при отсутствии файла нода при старте пишет туда хеш `mystberry`
+(лог: «CredentialsManager not found, initializing to default»). Файл с нашим `$2b$`-хешем нода
+принимает: логин с этим паролем — 200, с прежним — 401. `myst config set
+tequilapi.auth.password` — клиент к работающей ноде: пишет `config-mainnet.toml`
+(`[tequilapi.auth] password = …`), но на вход это не влияет.
+**Применение:** `init` пишет `data/myst-provider/nodeui-pass` с bcrypt пароля панелей;
+`config.toml` не трогаем. Core в чекбоксе 3 ходит в TequilAPI без учётных данных.
+**Источники:** исполнение 2026-09-12 (`docker run … daemon`, busybox wget к 127.0.0.1:4050);
+https://github.com/mysteriumnetwork/node/blob/master/core/auth/credentials.go (CredentialsManager).
+
 ## [провайдер] TequilAPI и NodeUI
 
 **Суть:** TequilAPI слушает `127.0.0.1:4050`; флаги `--tequilapi.address`, `--tequilapi.port`,

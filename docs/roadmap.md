@@ -35,8 +35,7 @@
 
 ## Stage 2 — Роль vps: нода
 
-- [ ] `myst-provider` контейнер с published-портами, volume, флагами из §10 idea.md (актуальные —
-      [knowledge/myst/node.md](knowledge/myst/node.md)); пароль TequilAPI из `secrets/`, не `myst/mystberry`
+- [x] **`myst-provider` контейнер** — ✅ (2026-09-12, `next`) сервис с published-портами (loopback 4449/4050, UDP-диапазон), томом `data/myst-provider`, актуальными флагами; пароль панели ноды — bcrypt-файл `nodeui-pass` от `init` (нода читает его при старте, проверено на 1.39.5), пароль спрашивается для всех ролей; TequilAPI, как выяснилось, без аутентификации вовсе — защита сетевая (loopback, nft в Stage 4/8); регистрация и клейм — чекбокс 4 на реальной VPS
 - [ ] nftables baseline VPS (ssh, wg, myst UDP; остальное drop), применяется `core`
 - [ ] `GET /provider/stats` через TequilAPI; `vibedpn status` показывает состояние ноды
 - [ ] Проверка: нода видна и заклеймлена в mystnodes.com, инструкция клейма в README

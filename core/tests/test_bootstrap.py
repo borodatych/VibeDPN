@@ -139,6 +139,7 @@ def test_write_box_writes_config_env_and_secrets(tmp_path: Path) -> None:
     written = write_box(box, config, answers, force=False)
     assert [p.name for p in written.files] == ["config.yaml", ".env", "htpasswd", "wg-client.conf"]
     assert written.retired == []
+    assert not (box / "data").exists()  # a client runs no node
     assert load_config(box / "config.yaml") == config
     assert stat.S_IMODE((box / "secrets").stat().st_mode) == 0o700
     assert stat.S_IMODE((box / "secrets" / "htpasswd").stat().st_mode) == 0o600
@@ -152,8 +153,22 @@ def test_write_box_writes_config_env_and_secrets(tmp_path: Path) -> None:
     assert "COMPOSE_PROFILES=wg-client,router,dns,ui" in (box / ".env").read_text(encoding="utf-8")
 
 
+def test_write_box_writes_the_node_password_for_provider_roles(tmp_path: Path) -> None:
+    for answers in (
+        Answers(Role.HOME, password="secret123"),
+        Answers(Role.VPS, password="secret123", endpoint="vps.example.com"),
+    ):
+        box = tmp_path / answers.role.value
+        written = write_box(box, build_config(answers, LAN), answers, force=False)
+        node_pass = box / "data" / "myst-provider" / "nodeui-pass"
+        assert node_pass in written.files
+        assert stat.S_IMODE(node_pass.stat().st_mode) == 0o600
+        digest = node_pass.read_text(encoding="utf-8").strip()
+        assert digest.startswith("$2b$") and bcrypt.checkpw(b"secret123", digest.encode("ascii"))
+
+
 def test_write_box_refuses_to_overwrite_without_force(tmp_path: Path) -> None:
-    answers = Answers(Role.VPS)
+    answers = Answers(Role.VPS)  # no password: nothing secret is written
     config = build_config(answers, PUBLIC)
     write_box(tmp_path, config, answers, force=False)
     (tmp_path / ".env").write_text("VIBEDPN_TAG=v9\n", encoding="utf-8")

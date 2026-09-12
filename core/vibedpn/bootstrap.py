@@ -54,6 +54,13 @@ SECRETS_DIR = "secrets"
 HTPASSWD_FILE = "htpasswd"
 WG_CLIENT_CONF = "wg-client.conf"
 KNOWN_SECRETS = (HTPASSWD_FILE, WG_CLIENT_CONF)
+DATA_DIR = "data"
+MYST_PROVIDER_DATA = "myst-provider"  # bind-mounted to /var/lib/mysterium-node in compose.yaml
+# The node reads its panel (NodeUI) password from this bcrypt file in its data dir at start;
+# without it the node falls back to the public default (myst/mystberry).
+NODEUI_PASS_FILE = "nodeui-pass"
+NODEUI_USER = "myst"
+DATA_DIR_MODE = 0o755
 BACKUP_SUFFIX = ".bak"
 SECRET_DIR_MODE = 0o700
 SECRET_FILE_MODE = 0o600
@@ -70,7 +77,7 @@ class Answers:
     """What the wizard asked (or received as flags)."""
 
     role: Role
-    password: str | None = None
+    password: str | None = None  # panels: VibeDPN UI/API and the node's NodeUI
     peer_config: Path | None = None
     endpoint: str | None = None
 
@@ -237,11 +244,15 @@ def render_env(config: Config, preserved: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+def bcrypt_hash(password: str) -> str:
+    """A bcrypt hash of a policy-checked password (``$2b$``; nginx and the node accept it)."""
+    check_password(password)
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
+
+
 def htpasswd_line(user: str, password: str) -> str:
     """One ``user:hash`` line with a bcrypt hash, as nginx ``auth_basic`` reads it."""
-    check_password(password)
-    digest = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
-    return f"{user}:{digest}\n"
+    return f"{user}:{bcrypt_hash(password)}\n"
 
 
 def read_peer_config(path: Path) -> str:
@@ -280,6 +291,9 @@ def write_box(box_dir: Path, config: Config, answers: Answers, *, force: bool) -
         secrets[HTPASSWD_FILE] = htpasswd_line(UI_USER, answers.password)
     if answers.peer_config is not None:
         secrets[WG_CLIENT_CONF] = read_peer_config(answers.peer_config)
+    node_pass = None
+    if answers.password is not None and config.provider.enabled:
+        node_pass = bcrypt_hash(answers.password) + "\n"
     result = Written()
     try:
         box_dir.mkdir(parents=True, exist_ok=True)
@@ -287,6 +301,12 @@ def write_box(box_dir: Path, config: Config, answers: Answers, *, force: bool) -
             shutil.copy2(config_path, box_dir / CONFIG_BACKUP)
         result.files.append(write_file(config_path, text, PUBLIC_FILE_MODE))
         result.files.append(write_file(env_path, env_text, PUBLIC_FILE_MODE))
+        if node_pass is not None:
+            node_dir = box_dir / DATA_DIR / MYST_PROVIDER_DATA
+            node_dir.mkdir(mode=DATA_DIR_MODE, parents=True, exist_ok=True)
+            result.files.append(
+                write_file(node_dir / NODEUI_PASS_FILE, node_pass, SECRET_FILE_MODE)
+            )
         # The top-level files belong to the person, not to root: `vibedpn up` rewrites .env and
         # later commands edit config.yaml without sudo. secrets/ stays root-only.
         for path in (config_path, env_path, box_dir / CONFIG_BACKUP):

@@ -89,7 +89,11 @@ def _ask_role() -> Role:
 
 def _ask_password() -> str:
     while True:
-        password: str = typer.prompt("UI password", hide_input=True, confirmation_prompt=True)
+        password: str = typer.prompt(
+            "Password for the panels (VibeDPN UI and the node's NodeUI)",
+            hide_input=True,
+            confirmation_prompt=True,
+        )
         try:
             check_password(password)
         except BootstrapError as exc:
@@ -134,8 +138,6 @@ def _check_flags_for_role(
     """A flag of another role is a mistake, not something to ignore silently."""
     if peer_config is not None and role is not Role.CLIENT:
         raise _fail("--peer-config is only used with --role client")
-    if password_file is not None and role is Role.VPS:
-        raise _fail("--password-file is not used with --role vps: a VPS has no UI")
     if endpoint is not None and role is not Role.VPS:
         raise _fail("--endpoint is only used with --role vps")
     if endpoint is not None:
@@ -157,9 +159,7 @@ def _collect_answers(
     _check_flags_for_role(role, peer_config, endpoint, password_file)
     if role is not Role.VPS and facts.interface is None:
         raise _fail("no interface with a default route was found; connect the box to the LAN first")
-    password = None
-    if role is not Role.VPS:
-        password = _read_password_file(password_file) if password_file else _ask_password()
+    password = _read_password_file(password_file) if password_file else _ask_password()
     if role is Role.CLIENT and peer_config is None:
         peer_config = _ask_peer_config()
     if role is Role.VPS and endpoint is None and public_address(facts) is None:
@@ -186,7 +186,7 @@ def init(
     password_file: Annotated[
         Path | None,
         typer.Option(
-            help="File with the UI password (roles home, client); asked interactively otherwise.",
+            help="File with the panel password (VibeDPN UI, NodeUI); else asked interactively.",
             exists=True,
             dir_okay=False,
             readable=True,

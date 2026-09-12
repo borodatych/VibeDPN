@@ -32,14 +32,33 @@ def fake_probe(monkeypatch: pytest.MonkeyPatch) -> type[FakeProbe]:
     return FakeProbe
 
 
+def password_file(tmp_path: Path) -> Path:
+    pw = tmp_path / "pw"
+    pw.write_text("secret123\n", encoding="utf-8")
+    return pw
+
+
 def test_init_vps_non_interactive(tmp_path: Path) -> None:
+    box = tmp_path / "box"
     result = runner.invoke(
-        cli.app, ["init", "--role", "vps", "--endpoint", "203.0.113.7", "--dir", str(tmp_path)]
+        cli.app,
+        [
+            "init",
+            "--role",
+            "vps",
+            "--endpoint",
+            "203.0.113.7",
+            "--password-file",
+            str(password_file(tmp_path)),
+            "--dir",
+            str(box),
+        ],
     )
     assert result.exit_code == 0, result.output
-    assert load_config(tmp_path / "config.yaml").role.value == "vps"
+    assert load_config(box / "config.yaml").role.value == "vps"
     assert "Next step: vibedpn up" in result.output
-    assert not (tmp_path / "secrets" / "htpasswd").exists()
+    assert (box / "secrets" / "htpasswd").is_file()
+    assert (box / "data" / "myst-provider" / "nodeui-pass").is_file()
 
 
 def test_init_client_with_flags(tmp_path: Path) -> None:
@@ -112,7 +131,7 @@ def test_init_reasks_a_bad_endpoint_interactively(tmp_path: Path) -> None:
     result = runner.invoke(
         cli.app,
         ["init", "--role", "vps", "--dir", str(tmp_path)],
-        input="2001:db8::1\nvps.example.com\n",
+        input="secret123\nsecret123\n2001:db8::1\nvps.example.com\n",
     )
     assert result.exit_code == 0, result.output
     assert "try again" in result.output
@@ -128,11 +147,6 @@ def test_init_rejects_flags_of_another_role(tmp_path: Path) -> None:
     assert (
         result.exit_code == 1 and "--peer-config is only used with --role client" in result.output
     )
-    result = runner.invoke(
-        cli.app,
-        ["init", "--role", "vps", "--password-file", str(peer), "--dir", str(tmp_path / "b")],
-    )
-    assert result.exit_code == 1 and "--password-file is not used with --role vps" in result.output
     result = runner.invoke(
         cli.app,
         ["init", "--role", "home", "--endpoint", "x.example.com", "--dir", str(tmp_path / "b")],
@@ -156,7 +170,9 @@ def test_init_expands_tilde_in_peer_prompt(tmp_path: Path, monkeypatch: pytest.M
 
 def test_init_asks_endpoint_behind_nat(tmp_path: Path) -> None:
     result = runner.invoke(
-        cli.app, ["init", "--role", "vps", "--dir", str(tmp_path)], input="vps.example.com\n"
+        cli.app,
+        ["init", "--role", "vps", "--dir", str(tmp_path)],
+        input="secret123\nsecret123\nvps.example.com\n",
     )
     assert result.exit_code == 0, result.output
     config = load_config(tmp_path / "config.yaml")
@@ -165,15 +181,26 @@ def test_init_asks_endpoint_behind_nat(tmp_path: Path) -> None:
 
 
 def test_init_refuses_second_run_without_force_before_asking(tmp_path: Path) -> None:
-    args = ["init", "--role", "vps", "--endpoint", "203.0.113.7", "--dir", str(tmp_path)]
+    box = tmp_path / "box"
+    args = [
+        "init",
+        "--role",
+        "vps",
+        "--endpoint",
+        "203.0.113.7",
+        "--password-file",
+        str(password_file(tmp_path)),
+        "--dir",
+        str(box),
+    ]
     assert runner.invoke(cli.app, args).exit_code == 0
-    again = runner.invoke(cli.app, ["init", "--dir", str(tmp_path)])  # no role: would prompt
+    again = runner.invoke(cli.app, ["init", "--dir", str(box)])  # no role: would prompt
     assert again.exit_code == 1
     assert "--force" in again.output
     assert "Role:" not in again.output
     forced = runner.invoke(cli.app, [*args, "--force"])
     assert forced.exit_code == 0, forced.output
-    assert (tmp_path / "config.yaml.bak").is_file()
+    assert (box / "config.yaml.bak").is_file()
 
 
 def test_init_warns_when_wireguard_cannot_be_checked(
@@ -181,7 +208,18 @@ def test_init_warns_when_wireguard_cannot_be_checked(
 ) -> None:
     fake_probe.wireguard = None
     result = runner.invoke(
-        cli.app, ["init", "--role", "vps", "--endpoint", "203.0.113.7", "--dir", str(tmp_path)]
+        cli.app,
+        [
+            "init",
+            "--role",
+            "vps",
+            "--endpoint",
+            "203.0.113.7",
+            "--password-file",
+            str(password_file(tmp_path)),
+            "--dir",
+            str(tmp_path / "box"),
+        ],
     )
     assert result.exit_code == 0, result.output
     assert "could not check the wireguard kernel module" in result.output
@@ -190,7 +228,18 @@ def test_init_warns_when_wireguard_cannot_be_checked(
 def test_init_warns_without_wireguard_module(tmp_path: Path, fake_probe: type[FakeProbe]) -> None:
     fake_probe.wireguard = False
     result = runner.invoke(
-        cli.app, ["init", "--role", "vps", "--endpoint", "203.0.113.7", "--dir", str(tmp_path)]
+        cli.app,
+        [
+            "init",
+            "--role",
+            "vps",
+            "--endpoint",
+            "203.0.113.7",
+            "--password-file",
+            str(password_file(tmp_path)),
+            "--dir",
+            str(tmp_path / "box"),
+        ],
     )
     assert result.exit_code == 0, result.output
     assert "wireguard kernel module" in result.output

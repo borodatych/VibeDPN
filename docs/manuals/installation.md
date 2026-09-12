@@ -57,9 +57,10 @@ docker compose version
 
 ## Настроить: `sudo vibedpn init`
 
-Мастер спрашивает только то, что нельзя определить: роль, пароль веб-интерфейса (роли `home`
-и `client`: от 8 символов, не длиннее 72 байт в UTF-8 — предел bcrypt, кириллица занимает
-2 байта на букву), для `client` — путь к peer-файлу с VPS. Флаг чужой роли (`--peer-config`
+Мастер спрашивает только то, что нельзя определить: роль, пароль панелей (от 8 символов, не
+длиннее 72 байт в UTF-8 — предел bcrypt, кириллица занимает 2 байта на букву; он же пароль
+веб-интерфейса VibeDPN и панели ноды NodeUI — логин там `myst`), для `client` — путь к peer-файлу
+с VPS. Флаг чужой роли (`--peer-config`
 у `home`, `--endpoint` у `client`) — ошибка, а не молчаливое игнорирование. Остальное детектируется:
 интерфейс с маршрутом по умолчанию, его адрес и подсеть, наличие модуля `wireguard` (без него —
 предупреждение). Для `vps` публичный адрес берётся с интерфейса; если коробка за NAT и адрес
@@ -68,8 +69,8 @@ docker compose version
 Всё задаваемо флагами — для автоматизации и повторяемости:
 
 ```bash
-sudo vibedpn init --role vps --endpoint vps.example.com
-sudo vibedpn init --role client --peer-config ~/home.conf --password-file ~/ui.pw
+sudo vibedpn init --role vps --endpoint vps.example.com --password-file ~/panels.pw
+sudo vibedpn init --role client --peer-config ~/home.conf --password-file ~/panels.pw
 ```
 
 Что пишется в `/opt/vibedpn`:
@@ -80,6 +81,7 @@ sudo vibedpn init --role client --peer-config ~/home.conf --password-file ~/ui.p
 | `.env` | производные для Compose и `VIBEDPN_TAG` (при повторном `init` тег сохраняется) | 644 |
 | `secrets/htpasswd` | `admin:` + bcrypt-хеш пароля — для `auth_basic` в `ui` и API (Stage 4) | 600 |
 | `secrets/wg-client.conf` | копия peer-файла (роль `client`) | 600 |
+| `data/myst-provider/nodeui-pass` | bcrypt-хеш того же пароля для панели ноды (роли с provider); нода читает его при старте | 600 |
 
 Повторный `init` при существующем `config.yaml` отказывается ещё до вопросов; `--force` заменяет
 файл, старый остаётся как `config.yaml.bak`, а секреты прежней роли (например, `wg-client.conf`
@@ -124,6 +126,18 @@ AdGuard слушает только адрес коробки в LAN. Что н�
 Тег образов `VIBEDPN_TAG` в `.env` `init` берёт из ветки чекаута: `main` → `latest`, иначе имя
 ветки (`next` при установке с `VIBEDPN_BRANCH=next`) — так CI их и публикует. Уже записанный тег
 `init --force` и `up` не трогают; переопределить — строкой `VIBEDPN_TAG=` в `.env`.
+
+## Роль `vps`: нода Mysterium
+
+После `vibedpn up` контейнер `myst-provider` стартует с `service --agreed-terms-and-conditions`
+и актуальными флагами (`--udp.ports`, `--traversal`), данные ноды — в `data/myst-provider/`.
+Панель ноды NodeUI слушает `127.0.0.1:4449`, TequilAPI — `127.0.0.1:4050`; наружу они не
+публикуются, доступ с домашней стороны появится через wg-туннель в Stage 3. TequilAPI отвечает
+без какой-либо аутентификации — его защищает только то, что он на loopback; пароль NodeUI (логин
+`myst`) — тот, что задан в `init`. В `bridge`-сети UPnP не работает; для VPS с публичным IP хватает
+`traversal: [manual]`, диапазон UDP открыт публикацией портов. Клейм ноды в mystnodes.com и
+проверка на живом сервере — чекбокс 4 этой стадии. До Stage 3 контейнер `wg-server` в этой роли
+честно завершается с ошибкой «not implemented» — `doctor` покажет это как `fail` сервиса.
 
 ## Удалить
 

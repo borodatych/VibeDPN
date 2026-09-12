@@ -58,7 +58,9 @@ services:
       API_PORT: ${VIBEDPN_API_PORT:-4480}
 
   # Mysterium provider node (roles home, vps). Bridge network with the UDP range published, as in
-  # the official Docker guide; NodeUI (4449) and TequilAPI (4050) only on host loopback.
+  # the official Docker guide; NodeUI (4449) and TequilAPI (4050) only on host loopback: TequilAPI
+  # answers without any authentication (verified on 1.39.5), so the network is its only guard.
+  # The NodeUI password is the bcrypt file data/myst-provider/nodeui-pass written by `vibedpn init`.
   # `--udp.ports`, `--traversal`, `--tequilapi.*`, `--ui.*` are GLOBAL options of `myst` and must
   # precede the command; `--agreed-terms-and-conditions` belongs to `service`. The old
   # --p2p.listen.ports / --wireguard.listen.ports / --experiment-natpunching are deprecated.

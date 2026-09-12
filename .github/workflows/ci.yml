@@ -75,15 +75,17 @@ jobs:
             test -L /usr/local/bin/vibedpn
             vibedpn --version
             bash /src/install.sh
-            vibedpn init --role vps --endpoint 203.0.113.7
+            echo "ci-panels-pw" > /tmp/pw
+            vibedpn init --role vps --endpoint 203.0.113.7 --password-file /tmp/pw
             test -f /opt/vibedpn/config.yaml
             test -f /opt/vibedpn/.env
-            test ! -e /opt/vibedpn/secrets/htpasswd
+            test -f /opt/vibedpn/secrets/htpasswd
+            test -f /opt/vibedpn/data/myst-provider/nodeui-pass
             before=$(sha256sum /opt/vibedpn/config.yaml)
-            if vibedpn init --role vps --endpoint 203.0.113.7; then echo "init must refuse without --force" >&2; exit 1; fi
+            if vibedpn init --role vps --endpoint 203.0.113.7 --password-file /tmp/pw; then echo "init must refuse without --force" >&2; exit 1; fi
             test "$before" = "$(sha256sum /opt/vibedpn/config.yaml)"
             test ! -e /opt/vibedpn/config.yaml.bak
-            vibedpn init --role vps --endpoint 203.0.113.7 --force
+            vibedpn init --role vps --endpoint 203.0.113.7 --password-file /tmp/pw --force
             test -f /opt/vibedpn/config.yaml.bak
             if vibedpn doctor > /tmp/doctor.txt; then echo "doctor must fail with a stubbed docker" >&2; exit 1; fi
             cat /tmp/doctor.txt

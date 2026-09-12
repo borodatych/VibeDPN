@@ -59,7 +59,7 @@
 | `.env` | производные для compose + `VIBEDPN_TAG`; пишет `init` | да |
 | `secrets/` | `htpasswd` (bcrypt пароля UI), `wg-client.conf` (peer-файл), ключи WireGuard — 600 внутри 700 | да |
 | `config.yaml.bak` | предыдущий конфиг после `init --force` | нет |
-| `data/` | keystore ноды, данные AdGuard, SQLite ядра | keystore — да |
+| `data/` | keystore ноды и `myst-provider/nodeui-pass` (bcrypt пароля панели), данные AdGuard, SQLite ядра | keystore и `nodeui-pass` — да |
 
 ## Отступления от kickoff
 
