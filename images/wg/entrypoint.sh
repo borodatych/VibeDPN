@@ -83,6 +83,12 @@ strip_conf() {
     }' "$CONF"
 }
 
+# The config the interface was built from, as a digest. core re-renders wg0.conf at every start
+# and replaces it atomically, so a different digest means the running tunnel is out of date.
+conf_digest() {
+  sha256sum "$CONF" 2>/dev/null | cut -d' ' -f1
+}
+
 # Every AllowedIPs entry of every peer, one per line.
 allowed_ips() {
   wg show "$IFACE" allowed-ips | awk '{ for (field = 2; field <= NF; field++) print $field }' |
@@ -126,6 +132,7 @@ ensure_keepalive() {
 
 setup_interface() {
   [ -r "$CONF" ] || die "$CONF is missing or unreadable; run \`vibedpn init\` on this box"
+  CONF_DIGEST="$(conf_digest)"
   # In mode server the interface lives in the host network namespace and outlives a container
   # that was killed rather than stopped; recreating it is what makes a restart work at all.
   # On a VibeDPN box wg0 belongs to VibeDPN — see docs/manuals/installation.md.
@@ -225,6 +232,9 @@ watch_interface() {
       [ "$age" -le "$HANDSHAKE_MAX_AGE_SECONDS" ] ||
         die "no handshake for ${age}s; rebuilding the tunnel"
     fi
+    # After a reboot Docker restarts containers on its own and ignores depends_on, so this one
+    # may have read wg0.conf before core re-rendered it. Starting over picks up the new file.
+    [ "$(conf_digest)" = "$CONF_DIGEST" ] || die "$CONF changed; rebuilding the tunnel from it"
     sleep "$WATCH_SECONDS" &
     wait "$!" || true
   done

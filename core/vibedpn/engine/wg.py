@@ -102,8 +102,9 @@ def render_server_conf(config: Config, private_key: str, peers: Sequence[Peer] =
 def write_private(path: Path, content: str) -> bool:
     """Write a secret atomically with mode 600; ``False`` when the file already says exactly that.
 
-    The temporary file is created 600 in the same directory and renamed over the target, so a
-    reader — the wg-server container — never sees a half-written key or config.
+    The temporary file is created 600 in the same directory, flushed to disk and renamed over the
+    target, so a reader — the wg-server container — never sees a half-written key or config, and
+    a power cut never leaves an empty one.
     """
     if path.is_file() and path.read_text(encoding="utf-8") == content:
         path.chmod(FILE_MODE)
@@ -111,13 +112,27 @@ def write_private(path: Path, content: str) -> bool:
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), FILE_MODE)
             handle.write(content)
-        Path(temporary).chmod(FILE_MODE)
+            handle.flush()
+            os.fsync(handle.fileno())
         Path(temporary).replace(path)
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
+    fsync_directory(path.parent)
     return True
+
+
+def fsync_directory(directory: Path) -> None:
+    """Make a rename durable. ext4 flushes a rename onto an existing name early, but not one onto
+    a new name — the very first server.key — so a power cut right after the first start could
+    leave an empty key that core then refuses to replace."""
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def load_or_create_server_key(directory: Path) -> tuple[str, bool]:

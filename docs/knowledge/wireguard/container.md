@@ -80,6 +80,14 @@ mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT`). �
 VPS и переживает контейнер, убитый SIGKILL или упавший после создания интерфейса. Тогда
 `ip link add` отвечает «File exists», и контейнер уходит в вечный рестарт с сообщением про
 модуль ядра (проверено исполнением). Поэтому перед созданием интерфейс сносится, если остался.
+**Сторож следит и за самим конфигом:** entrypoint запоминает sha256 `wg0.conf`, из которого
+собрал интерфейс, и выходит ненулевым кодом, если файл сменился. `depends_on` — механизм Compose и
+соблюдается при старте через `docker compose up`; когда после перезагрузки контейнеры поднимает
+сам Docker, `wg-server` может прочитать старый файл раньше, чем `core` его перерендерит. Ядро
+заменяет файл через rename, а `wg-server` монтирует **каталог** `secrets/wg-server` — поэтому
+замена видна внутри контейнера (у монтирования отдельного файла остался бы старый inode).
+Неизменившийся конфиг ядро не перезаписывает, так что лишних перезапусков нет. Проверено
+исполнением: сервер в netns хоста после подмены файла сам перезапустился и слушает новый порт.
 **Грабля awk:** `print a > b` — это перенаправление вывода в файл `b`, а не сравнение; тернарник
 в `print` нужно брать в скобки, иначе функция молча отдаёт пустую строку (так сломался расчёт
 возраста handshake, healthcheck стал падать при живом туннеле).
@@ -89,7 +97,8 @@ wg0, пиров может не быть.
 **Источники:** https://man7.org/linux/man-pages/man8/wg.8.html (setconf, ключи конфига),
 https://git.zx2c4.com/wireguard-tools/plain/src/man/wg-quick.8 (kill-switch, ключи wg-quick),
 https://git.zx2c4.com/wireguard-tools/plain/src/wg-quick/linux.bash (`parse_options`,
-`add_default`); исполнение 2026-09-12 (три контейнера и host-netns сервер на colima,
+`add_default`), https://docs.docker.com/compose/how-tos/startup-order/ (`depends_on` при
+`compose up`); исполнение 2026-09-12 (три контейнера и host-netns сервер на colima,
 `tests/wg/tunnel.sh`; ревью 2 линзы + скептики).
 
 ## [провайдер] Ключи WireGuard без `wg`: X25519 из `cryptography`, clamping как у `wg genkey`
@@ -104,10 +113,14 @@ https://git.zx2c4.com/wireguard-tools/plain/src/wg-quick/linux.bash (`parse_opti
 RFC 7748 §5 (`k[0] &= 248; k[31] &= 127; k[31] |= 64`) — проверено на 200 ключах из образа
 `vibedpn/wg`; X25519 clamps внутри и сам, но мы делаем то же до записи, чтобы файл ключа был
 байт-в-байт таким, какой дал бы `wg genkey`, и инструменты оставались взаимозаменяемыми.
-Ключ пишется атомарно (временный файл 600 в том же каталоге и `rename`), каталог 700;
+Ключ пишется атомарно: временный файл 600 в том же каталоге, `fsync`, `rename`, затем `fsync`
+каталога; каталог 700. Без `fsync` ext4 с отложенным выделением блоков может после сброса питания
+оставить файл нулевой длины: опция `auto_da_alloc` страхует только замену **существующего** файла
+через rename («replacing existing files»), а самый первый `server.key` пишется под новым именем;
 существующий, но нечитаемый ключ — ошибка старта, а не повод сгенерировать новый: смена ключа
 сервера молча отключает все домашние коробки.
 **Применение:** `core/vibedpn/engine/wg.py`, `secrets/wg-server/server.key` и `wg0.conf`.
 **Источники:** https://www.rfc-editor.org/rfc/rfc7748 (§5, §6.1),
 https://cryptography.io/en/latest/hazmat/primitives/asymmetric/x25519/ ,
-https://man7.org/linux/man-pages/man8/wg.8.html (genkey, pubkey); исполнение 2026-09-12.
+https://man7.org/linux/man-pages/man8/wg.8.html (genkey, pubkey),
+https://docs.kernel.org/admin-guide/ext4.html (`auto_da_alloc`); исполнение 2026-09-12.

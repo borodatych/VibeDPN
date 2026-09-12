@@ -28,7 +28,12 @@ docker/metadata-action); записанный тег сильнее. `restart` �
 диске уже с новым портом, а сервер слушал старый — прочёл файл до перерендера). Условие здоровья
 документировано для старта через `up`: «Compose waits for healthchecks to pass on dependencies
 marked with service_healthy» — поэтому остановленная коробка поднимается через `up`, который
-заодно пересоздаёт изменившееся.
+заодно пересоздаёт изменившееся. Цена — поведение fail-closed: если `core` после `stop` не
+становится здоровым, `up -d` падает с «dependency failed to start», зависимые сервисы остаются в
+`Created`, а независимые (`myst-provider`, `adguard`) стартуют; прежний `compose restart` оставлял бы
+`wg-server` работать на старом `wg0.conf`. Схема `config.yaml` проверяется CLI до `stop`.
+Условие `depends_on` соблюдает только Compose: после перезагрузки хоста Docker поднимает контейнеры
+с `restart: unless-stopped` сам и порядок не ждёт — это закрывает сторож в entrypoint образа `wg`.
 `.env` — производная и пересобирается перед `up`/`restart` из `config.yaml` (`render_env` +
 сохранённые `VIBEDPN_TAG`, `MYST_TAG`, `ADGUARD_TAG`): правка конфига руками работает без
 `init --force`. `ps --format json` отдаёт объект на строку (поля `Service`, `State`, `Health`,

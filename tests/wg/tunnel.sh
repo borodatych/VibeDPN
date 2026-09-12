@@ -199,13 +199,16 @@ in_client ping -c 1 -W 2 "$SERVER_WG"
 fails in_client ping -c 1 -W 2 "$GATEWAY"
 
 # The real wg-server runs with network_mode: host, so its interface outlives a container that
-# was killed instead of stopped — exactly what happens on a crash or a `docker kill`.
+# was killed instead of stopped — exactly what happens on a crash or a docker kill. Like
+# compose.yaml it mounts a directory, so a file that core replaces by rename is visible inside.
 log "a host-namespace server comes back after a crash that left wg0 behind"
+HOST_DIR="$WORK_DIR/host"
+mkdir -m 700 "$HOST_DIR"
 sed "s/^ListenPort = .*/ListenPort = $((LISTEN_PORT + 1))/" "$WORK_DIR/server.conf" \
-  >"$WORK_DIR/host-server.conf"
-chmod 600 "$WORK_DIR/host-server.conf"
+  >"$HOST_DIR/wg0.conf"
+chmod 600 "$HOST_DIR/wg0.conf"
 docker run -d --name vibedpn-wg-host --network host --cap-add NET_ADMIN \
-  -v "$WORK_DIR/host-server.conf:/etc/wireguard/wg0.conf:ro" "$IMAGE" server >/dev/null
+  -v "$HOST_DIR:/etc/wireguard:ro" "$IMAGE" server >/dev/null
 await_health vibedpn-wg-host
 docker kill -s KILL vibedpn-wg-host >/dev/null
 if ! docker run --rm --network host --cap-add NET_ADMIN --entrypoint ip "$IMAGE" \
@@ -215,6 +218,32 @@ if ! docker run --rm --network host --cap-add NET_ADMIN --entrypoint ip "$IMAGE"
 fi
 docker start vibedpn-wg-host >/dev/null
 await_health vibedpn-wg-host
+
+# After a reboot Docker restarts containers without waiting for core, so the server may start
+# on the previous file; core then replaces it by rename, and the server has to notice.
+log "a server rebuilds the tunnel when core replaces its config"
+docker update --restart unless-stopped vibedpn-wg-host >/dev/null
+NEW_PORT=$((LISTEN_PORT + 2))
+sed "s/^ListenPort = .*/ListenPort = $NEW_PORT/" "$HOST_DIR/wg0.conf" >"$HOST_DIR/.wg0.conf.new"
+chmod 600 "$HOST_DIR/.wg0.conf.new"
+mv "$HOST_DIR/.wg0.conf.new" "$HOST_DIR/wg0.conf"
+elapsed=0
+port=""
+while [ "$elapsed" -lt "$HANDSHAKE_TIMEOUT" ]; do
+  port="$(docker exec vibedpn-wg-host wg show wg0 listen-port 2>/dev/null || true)"
+  [ "$port" = "$NEW_PORT" ] && break
+  sleep 2
+  elapsed=$((elapsed + 2))
+done
+if [ "$port" != "$NEW_PORT" ]; then
+  echo "FAIL: the server still listens on '$port' after its config changed to $NEW_PORT" >&2
+  docker logs --tail 10 vibedpn-wg-host >&2
+  exit 1
+fi
+if [ "$(docker inspect -f '{{.RestartCount}}' vibedpn-wg-host)" -eq 0 ]; then
+  echo "FAIL: the port changed without a restart, so the watchdog was not what applied it" >&2
+  exit 1
+fi
 docker rm -f vibedpn-wg-host >/dev/null
 
 log "a stopped container exits cleanly"

@@ -4,10 +4,11 @@ import base64
 import os
 from ipaddress import IPv4Address, IPv4Interface
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
-from vibedpn.config import Config
+from vibedpn.config import Config, parse_yaml
 from vibedpn.engine import wg
 from vibedpn.engine.wg import (
     SERVER_CONF_FILE,
@@ -197,3 +198,30 @@ def test_module_constants_match_the_image_contract() -> None:
         encoding="utf-8"
     )
     assert f"CONF=/etc/wireguard/{wg.SERVER_CONF_FILE}" in entrypoint
+
+
+def test_wg_server_waits_for_core_to_render_its_config() -> None:
+    """Without the condition compose starts wg-server next to core, and it reads a stale file."""
+    compose = cast(
+        "dict[str, Any]",
+        parse_yaml((Path(__file__).parents[2] / "compose.yaml").read_text(encoding="utf-8")),
+    )
+    assert compose["services"]["wg-server"]["depends_on"]["core"]["condition"] == "service_healthy"
+
+
+def test_write_private_flushes_the_file_and_the_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    synced: list[int] = []
+    real_fsync = os.fsync
+
+    def recording_fsync(descriptor: int) -> None:
+        synced.append(descriptor)
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", recording_fsync)
+    write_private(tmp_path / "server.key", "key\n")
+    assert len(synced) == 2  # the temporary file before the rename, the directory after it
+    synced.clear()
+    write_private(tmp_path / "server.key", "key\n")
+    assert synced == []  # unchanged content: nothing written, nothing to flush

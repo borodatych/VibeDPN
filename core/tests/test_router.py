@@ -20,6 +20,7 @@ from vibedpn.engine.router import (
     firewall_ruleset,
     ssh_rule_present,
 )
+from vibedpn.engine.wg import ensure_server
 
 FACTS = HostFacts(None, wireguard_module=True, ssh_ports=[22, 2222])
 
@@ -201,22 +202,31 @@ VPS_CONFIG = (
 def test_core_renders_the_tunnel_after_the_firewall_and_before_serving(tmp_path: Path) -> None:
     config = tmp_path / "config.yaml"
     config.write_text(VPS_CONFIG, encoding="utf-8")
+    secrets = tmp_path / "secrets"
     order: list[str] = []
+
+    def tunnel(loaded: Config, secrets_dir: Path) -> Path | None:
+        order.append("tunnel")
+        return ensure_server(loaded, secrets_dir)
+
+    def serve(*_args: object, **_kwargs: object) -> None:
+        # The API must never come up before wg0.conf is on disk: compose starts wg-server
+        # as soon as core reports healthy.
+        assert (secrets / "wg-server" / "wg0.conf").is_file()
+        order.append("api")
+
     with (
         patch.dict(
             "os.environ",
-            {
-                server.CONFIG_PATH_ENV: str(config),
-                server.SECRETS_DIR_ENV: str(tmp_path / "secrets"),
-            },
+            {server.CONFIG_PATH_ENV: str(config), server.SECRETS_DIR_ENV: str(secrets)},
         ),
         patch("vibedpn.api.server.apply_firewall", side_effect=lambda _c: order.append("firewall")),
-        patch("vibedpn.api.server.uvicorn.run", side_effect=lambda *_a, **_k: order.append("api")),
+        patch("vibedpn.api.server.ensure_server", side_effect=tunnel),
+        patch("vibedpn.api.server.uvicorn.run", side_effect=serve),
     ):
         server.main()
-    assert order == ["firewall", "api"]
-    conf = tmp_path / "secrets" / "wg-server" / "wg0.conf"
-    assert conf.is_file() and "ListenPort = 51820" in conf.read_text(encoding="utf-8")
+    assert order == ["firewall", "tunnel", "api"]
+    assert "ListenPort = 51820" in (secrets / "wg-server" / "wg0.conf").read_text(encoding="utf-8")
 
 
 def test_core_refuses_to_start_on_a_broken_tunnel_key(
