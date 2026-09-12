@@ -89,6 +89,27 @@ conf_digest() {
   sha256sum "$CONF" 2>/dev/null | cut -d' ' -f1
 }
 
+# The [Interface] section alone: what cannot change without rebuilding the interface. Lines are
+# read the way strip_conf reads them — no comments, no blank lines — because the first [Peer]
+# arrives with a blank line in front of it, and that is not a change of the interface.
+interface_digest() {
+  awk '
+    { line = $0; sub(/\r$/, "", line); sub(/#.*/, "", line); gsub(/^[ \t]+|[ \t]+$/, "", line) }
+    line == "" { next }
+    line ~ /^\[/ { in_interface = (tolower(line) == "[interface]") }
+    in_interface { print line }' "$CONF" 2>/dev/null | sha256sum | cut -d' ' -f1
+}
+
+# What `wg setconf` and `wg syncconf` get: the config without wg-quick keys, with FwMark for a
+# client.
+write_stripped() {
+  if [ "$MODE" = client ]; then
+    strip_conf "$FWMARK" >"$1"
+  else
+    strip_conf "" >"$1"
+  fi
+}
+
 # Every AllowedIPs entry of every peer, one per line.
 allowed_ips() {
   wg show "$IFACE" allowed-ips | awk '{ for (field = 2; field <= NF; field++) print $field }' |
@@ -100,8 +121,14 @@ route_everything_into_the_tunnel() {
   # tunnel as well. The mark from the config keeps them out of it; `suppress_prefixlength 0`
   # keeps the specific routes of the main table — the local bridge — while ignoring its default.
   ip route replace default dev "$IFACE" table "$FWMARK"
+  remove_policy_rules  # a peer sync runs this again; `ip rule add` would stack duplicates
   ip rule add not fwmark "$FWMARK" table "$FWMARK"
   ip rule add table main suppress_prefixlength 0
+}
+
+remove_policy_rules() {
+  while ip rule del not fwmark "$FWMARK" table "$FWMARK" 2>/dev/null; do :; done
+  while ip rule del table main suppress_prefixlength 0 2>/dev/null; do :; done
 }
 
 add_routes() {
@@ -133,6 +160,7 @@ ensure_keepalive() {
 setup_interface() {
   [ -r "$CONF" ] || die "$CONF is missing or unreadable; run \`vibedpn init\` on this box"
   CONF_DIGEST="$(conf_digest)"
+  INTERFACE_DIGEST="$(interface_digest)"
   # In mode server the interface lives in the host network namespace and outlives a container
   # that was killed rather than stopped; recreating it is what makes a restart work at all.
   # On a VibeDPN box wg0 belongs to VibeDPN — see docs/manuals/installation.md.
@@ -143,11 +171,7 @@ setup_interface() {
   ip link add "$IFACE" type wireguard ||
     die "cannot create $IFACE: the host kernel needs the wireguard module (\`vibedpn doctor\`)"
   stripped="$STATE_DIR/$IFACE.conf"
-  if [ "$MODE" = client ]; then
-    strip_conf "$FWMARK" >"$stripped"
-  else
-    strip_conf "" >"$stripped"
-  fi
+  write_stripped "$stripped"
   wg setconf "$IFACE" "$stripped" || die "$CONF is not a valid WireGuard configuration"
   rm -f "$stripped"
   addresses="$(conf_values Address | tr ',\n' '  ')"
@@ -199,6 +223,46 @@ table $NFT_FAMILY $NFT_TABLE {
 NFT
 }
 
+# Routes follow AllowedIPs: add what is new, drop what no peer claims any more. The route the
+# kernel made for the interface address (proto kernel) is left alone; `ip route` prints a host
+# route without its /32, so the names are normalised before comparing.
+sync_routes() {
+  add_routes
+  wanted=" $(allowed_ips | tr '\n' ' ') "
+  ip -o route show dev "$IFACE" | awk '$0 !~ / proto kernel / { print $1 }' |
+    while read -r route; do
+      case "$route" in
+        */*) cidr="$route" ;;
+        *) cidr="$route/32" ;;
+      esac
+      case "$wanted" in
+        *" $cidr "*) ;;
+        *) ip route del "$route" dev "$IFACE" ;;
+      esac
+    done
+}
+
+# core re-renders wg0.conf when a peer is added or removed and when config.yaml changes. Peers
+# alone are applied in place: `wg syncconf` changes only what differs and keeps every other
+# session running (wg(8)). A changed [Interface] — address, port, key — needs the interface
+# rebuilt, so the container starts over.
+apply_config_change() {
+  new_digest="$(conf_digest)"
+  if [ "$(interface_digest)" != "$INTERFACE_DIGEST" ]; then
+    die "$CONF changed its [Interface] section; rebuilding the tunnel from it"
+  fi
+  stripped="$STATE_DIR/$IFACE.conf"
+  write_stripped "$stripped"
+  wg syncconf "$IFACE" "$stripped" || die "wg syncconf rejected $CONF; rebuilding the tunnel"
+  rm -f "$stripped"
+  sync_routes
+  if [ "$MODE" = client ]; then
+    ensure_keepalive
+  fi
+  CONF_DIGEST="$new_digest"
+  log "peers of $IFACE updated from $CONF without a restart"
+}
+
 # shellcheck disable=SC2329  # invoked through the TERM/INT trap, which ShellCheck cannot see
 teardown() {
   trap - TERM INT
@@ -206,8 +270,7 @@ teardown() {
     nft delete table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null || true
   fi
   ip link del "$IFACE" 2>/dev/null || true
-  while ip rule del not fwmark "$FWMARK" table "$FWMARK" 2>/dev/null; do :; done
-  while ip rule del table main suppress_prefixlength 0 2>/dev/null; do :; done
+  remove_policy_rules
   rm -f "$MODE_FILE"
   log "$IFACE is down"
   exit 0
@@ -233,8 +296,10 @@ watch_interface() {
         die "no handshake for ${age}s; rebuilding the tunnel"
     fi
     # After a reboot Docker restarts containers on its own and ignores depends_on, so this one
-    # may have read wg0.conf before core re-rendered it. Starting over picks up the new file.
-    [ "$(conf_digest)" = "$CONF_DIGEST" ] || die "$CONF changed; rebuilding the tunnel from it"
+    # may have read wg0.conf before core re-rendered it; and core rewrites it on peer changes.
+    if [ "$(conf_digest)" != "$CONF_DIGEST" ]; then
+      apply_config_change
+    fi
     sleep "$WATCH_SECONDS" &
     wait "$!" || true
   done

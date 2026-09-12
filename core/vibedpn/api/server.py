@@ -55,4 +55,5 @@ def main() -> None:
         raise SystemExit(os.EX_CONFIG) from None
     if conf is not None:
         sys.stderr.write(f"vibedpn-core: WireGuard server config rendered ({conf.name})\n")
-    uvicorn.run(create_app(config), host=API_HOST, port=config.api.port, log_level="info")
+    application = create_app(config, secrets_dir=secrets_dir)
+    uvicorn.run(application, host=API_HOST, port=config.api.port, log_level="info")

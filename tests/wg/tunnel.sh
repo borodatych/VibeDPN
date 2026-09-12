@@ -16,6 +16,7 @@ SPLIT_IP=10.99.0.4
 SERVER_WG=10.78.0.1
 CLIENT_WG=10.78.0.2
 SPLIT_WG=10.78.0.3
+EXTRA_WG=10.78.0.9
 LISTEN_PORT=51820
 WORK_DIR="$(mktemp -d)"
 HANDSHAKE_TIMEOUT=30
@@ -26,7 +27,7 @@ log() {
 }
 
 cleanup() {
-  docker rm -f vibedpn-wg-server vibedpn-wg-client vibedpn-wg-split vibedpn-wg-host \
+  docker rm -f vibedpn-wg-server vibedpn-wg-client vibedpn-wg-split vibedpn-wg-host vibedpn-wg-empty \
     >/dev/null 2>&1 || true
   # The host-namespace part of the test may leave wg0 behind; remove it without needing root.
   docker run --rm --network host --cap-add NET_ADMIN --entrypoint ip "$IMAGE" \
@@ -120,10 +121,15 @@ chmod 600 "$WORK_DIR"/*.conf
 log "network and containers"
 docker network create --subnet "$SUBNET" --gateway "$GATEWAY" "$NETWORK" >/dev/null
 # `--restart unless-stopped` is what compose.yaml gives both services; the self-healing check
-# below depends on it.
+# below depends on it. The server mounts a directory, like compose.yaml, so a config replaced by
+# rename — the way core writes it — is visible inside.
+SRV_DIR="$WORK_DIR/srv"
+mkdir -m 700 "$SRV_DIR"
+cp "$WORK_DIR/server.conf" "$SRV_DIR/wg0.conf"
+chmod 600 "$SRV_DIR/wg0.conf"
 docker run -d --name vibedpn-wg-server --network "$NETWORK" --ip "$SERVER_IP" \
   --restart unless-stopped --cap-add NET_ADMIN --sysctl net.ipv4.ip_forward=1 \
-  -v "$WORK_DIR/server.conf:/etc/wireguard/wg0.conf:ro" "$IMAGE" server >/dev/null
+  -v "$SRV_DIR:/etc/wireguard:ro" "$IMAGE" server >/dev/null
 docker run -d --name vibedpn-wg-client --network "$NETWORK" --ip "$CLIENT_IP" \
   --restart unless-stopped --cap-add NET_ADMIN --sysctl net.ipv4.ip_forward=1 \
   --sysctl net.ipv4.conf.all.src_valid_mark=1 \
@@ -145,6 +151,38 @@ await_health() {
   echo "FAIL: $1 was not healthy within ${HANDSHAKE_TIMEOUT}s" >&2
   docker logs --tail 20 "$1" >&2
   exit 1
+}
+
+# $1 present|absent, $2 a public key: wait until the running server agrees.
+await_server_peer() {
+  elapsed=0
+  while [ "$elapsed" -lt "$HANDSHAKE_TIMEOUT" ]; do
+    if docker exec vibedpn-wg-server wg show wg0 peers | grep -qxF "$2"; then
+      found=present
+    else
+      found=absent
+    fi
+    [ "$found" = "$1" ] && return 0
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  echo "FAIL: peer $2 is not $1 on the server after ${HANDSHAKE_TIMEOUT}s" >&2
+  docker logs --tail 10 vibedpn-wg-server >&2
+  exit 1
+}
+
+same_restarts() {
+  if [ "$(docker inspect -f '{{.RestartCount}}' "$1")" != "$2" ]; then
+    echo "FAIL: $1 restarted, but a peer change has to be applied in place" >&2
+    docker logs --tail 10 "$1" >&2
+    exit 1
+  fi
+}
+
+replace_server_conf() {
+  cp "$1" "$SRV_DIR/.wg0.conf.new"
+  chmod 600 "$SRV_DIR/.wg0.conf.new"
+  mv "$SRV_DIR/.wg0.conf.new" "$SRV_DIR/wg0.conf"
 }
 
 log "handshake"
@@ -178,6 +216,76 @@ fails in_client ping -c 1 -W 2 "$GATEWAY"
 fails in_client ping -c 1 -W 2 "$OUTSIDE"
 in_client nft list chain inet vibedpn_wg output | grep -q "policy drop"
 in_client nft list chain inet vibedpn_wg forward | grep -q "policy drop"
+
+log "a peer added to a running server is applied without a restart"
+extra_pub="$(wg_tool genkey | wg_tool pubkey)"
+server_restarts="$(docker inspect -f '{{.RestartCount}}' vibedpn-wg-server)"
+cp "$SRV_DIR/wg0.conf" "$WORK_DIR/srv-original.conf"
+{
+  cat "$WORK_DIR/srv-original.conf"
+  printf '\n[Peer]\nPublicKey = %s\nAllowedIPs = %s/32\n' "$extra_pub" "$EXTRA_WG"
+} >"$WORK_DIR/srv-extra.conf"
+replace_server_conf "$WORK_DIR/srv-extra.conf"
+await_server_peer present "$extra_pub"
+docker exec vibedpn-wg-server ip route show dev wg0 | grep -q "^$EXTRA_WG "
+same_restarts vibedpn-wg-server "$server_restarts"
+in_client ping -c 1 -W 2 "$SERVER_WG" >/dev/null
+
+log "removing it again drops the peer and its route, still without a restart"
+replace_server_conf "$WORK_DIR/srv-original.conf"
+await_server_peer absent "$extra_pub"
+if docker exec vibedpn-wg-server ip route show dev wg0 | grep -q "^$EXTRA_WG "; then
+  echo "FAIL: the route of a removed peer is still there" >&2
+  exit 1
+fi
+same_restarts vibedpn-wg-server "$server_restarts"
+in_client ping -c 1 -W 2 "$SERVER_WG" >/dev/null
+
+# core renders a server with no peers as [Interface] only, and the first peer arrives after a
+# blank line — which must not read as a changed interface. Same shape as wg-server.conf.j2.
+log "an empty server gets its first peer and loses its last one without a restart"
+EMPTY_DIR="$WORK_DIR/empty"
+mkdir -m 700 "$EMPTY_DIR"
+cat >"$WORK_DIR/empty-interface.conf" <<EOF
+# VibeDPN WireGuard server, role vps. Rendered by core from config.yaml at every start;
+# edits here are overwritten. The private key lives in server.key next to this file.
+[Interface]
+Address = $SERVER_WG/24
+ListenPort = $LISTEN_PORT
+PrivateKey = $server_key
+EOF
+{
+  cat "$WORK_DIR/empty-interface.conf"
+  printf '\n[Peer]\n# first\nPublicKey = %s\nAllowedIPs = %s/32\n' "$extra_pub" "$EXTRA_WG"
+} >"$WORK_DIR/empty-first.conf"
+cp "$WORK_DIR/empty-interface.conf" "$EMPTY_DIR/wg0.conf"
+chmod 600 "$EMPTY_DIR/wg0.conf"
+docker run -d --name vibedpn-wg-empty --network "$NETWORK" \
+  --restart unless-stopped --cap-add NET_ADMIN \
+  -v "$EMPTY_DIR:/etc/wireguard:ro" "$IMAGE" server >/dev/null
+await_health vibedpn-wg-empty
+empty_peers() {
+  docker exec vibedpn-wg-empty wg show wg0 peers | grep -cxF "$extra_pub" || true
+}
+for step in first interface; do
+  cp "$WORK_DIR/empty-$step.conf" "$EMPTY_DIR/.wg0.conf.new"
+  chmod 600 "$EMPTY_DIR/.wg0.conf.new"
+  mv "$EMPTY_DIR/.wg0.conf.new" "$EMPTY_DIR/wg0.conf"
+  want=1
+  [ "$step" = interface ] && want=0
+  elapsed=0
+  until [ "$(empty_peers)" = "$want" ]; do
+    elapsed=$((elapsed + 2))
+    if [ "$elapsed" -gt "$HANDSHAKE_TIMEOUT" ]; then
+      echo "FAIL: the empty server did not apply '$step' in ${HANDSHAKE_TIMEOUT}s" >&2
+      docker logs --tail 10 vibedpn-wg-empty >&2
+      exit 1
+    fi
+    sleep 2
+  done
+  same_restarts vibedpn-wg-empty 0
+done
+docker rm -f vibedpn-wg-empty >/dev/null
 
 log "a broken tunnel restarts the container instead of leaking"
 in_client ip link set wg0 down

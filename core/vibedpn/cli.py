@@ -3,16 +3,26 @@
 Stage 1 ships ``init``; ``up``, ``down``, ``restart``, ``status``, ``logs`` and ``doctor`` follow.
 """
 
+import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TypeVar
 
 import click
 import typer
 
 from vibedpn import __version__
-from vibedpn.api.client import CoreUnreachableError, StatsUnavailableError, fetch_provider_stats
+from vibedpn.api import client as core_api
+from vibedpn.api.client import (
+    CoreUnreachableError,
+    PeerRequestError,
+    StatsUnavailableError,
+    fetch_provider_stats,
+)
+from vibedpn.api.models import PeerFile
 from vibedpn.bootstrap import (
     DEFAULT_BOX_DIR,
+    SECRET_FILE_MODE,
     Answers,
     BootstrapError,
     HostFacts,
@@ -21,6 +31,7 @@ from vibedpn.bootstrap import (
     ensure_replaceable,
     public_address,
     write_box,
+    write_file,
 )
 from vibedpn.compose import (
     DEFAULT_LOG_TAIL,
@@ -39,8 +50,10 @@ from vibedpn.config import Config, Role, Upstream, check_endpoint
 from vibedpn.detect import DetectError, HostProbe
 from vibedpn.doctor import evaluate, gather, has_failures, render, to_json
 from vibedpn.engine.myst import render_stats
+from vibedpn.tunnel_view import qr_code, render_peers
 
 EXIT_USER_ERROR = 1
+T = TypeVar("T")
 PANEL_PASSWORD_PROMPT = "Password for the panels (VibeDPN UI and the node's NodeUI)"
 
 BoxDir = Annotated[
@@ -379,3 +392,111 @@ def doctor(
     typer.echo(to_json(results) if as_json else render(results))
     if has_failures(results):
         raise typer.Exit(EXIT_USER_ERROR)
+
+
+peer_app = typer.Typer(
+    help="Tunnel peers of this VPS: the home boxes that connect to it.",
+    no_args_is_help=True,
+)
+app.add_typer(peer_app, name="peer")
+
+PeerName = Annotated[
+    str, typer.Argument(help="Peer name: 1-32 lowercase letters, digits and hyphens.")
+]
+OutFile = Annotated[
+    Path | None,
+    typer.Option(
+        "--out", dir_okay=False, help="Write the peer file here (mode 600) instead of printing it."
+    ),
+]
+Force = Annotated[bool, typer.Option("--force", help="Overwrite the --out file if it exists.")]
+
+
+def _vps_box(box_dir: Path) -> Config:
+    try:
+        config = check_box(box_dir)
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+    if config.wg_server is None:
+        raise _fail(f"tunnel peers live on the VPS; this box has role {config.role.value}")
+    return config
+
+
+def _core_call(call: Callable[[], T]) -> T:
+    """Peers are kept by core (secrets/ is root-only): translate its failures into one line."""
+    try:
+        return call()
+    except CoreUnreachableError:
+        raise _fail("core is not running; start the box with `vibedpn up`") from None
+    except PeerRequestError as exc:
+        raise _fail(str(exc)) from None
+
+
+def _deliver(peer: PeerFile, out: Path | None, *, force: bool) -> None:
+    """Print the file with its QR code, or write it for `init --peer-config`."""
+    if out is None:
+        typer.echo(peer.config, nl=False)
+        typer.echo(qr_code(peer.config), nl=False)
+        target = "FILE"
+        typer.echo("Save the text above as FILE on the home box (mode 600), then run:")
+    else:
+        if out.exists() and not force:
+            raise _fail(f"{out} already exists; pass --force to overwrite it")
+        try:
+            write_file(out, peer.config, SECRET_FILE_MODE)
+        except OSError as exc:
+            raise _fail(f"cannot write {out}: {exc.strerror}") from None
+        target = str(out)
+        typer.echo(
+            f"wrote {out} (peer {peer.name}, {peer.address}); copy it to the home box, then:"
+        )
+    typer.echo(f"  sudo vibedpn init --role client --peer-config {target}")
+
+
+@peer_app.command("add")
+def peer_add(
+    name: PeerName,
+    out: OutFile = None,
+    force: Force = False,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Register a home box: a key pair and a tunnel address, applied to the running server."""
+    config = _vps_box(box_dir)
+    peer = _core_call(lambda: core_api.add_peer(config.api.port, name))
+    _deliver(peer, out, force=force)
+
+
+@peer_app.command("export")
+def peer_export(
+    name: PeerName,
+    out: OutFile = None,
+    force: Force = False,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Print a peer's WireGuard file again with its QR code, or write it with --out."""
+    config = _vps_box(box_dir)
+    peer = _core_call(lambda: core_api.export_peer(config.api.port, name))
+    _deliver(peer, out, force=force)
+
+
+@peer_app.command("list")
+def peer_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Every peer with its address and the live state of its tunnel."""
+    config = _vps_box(box_dir)
+    peers = _core_call(lambda: core_api.list_peers(config.api.port))
+    for line in render_peers(peers, time.time()):
+        typer.echo(line)
+
+
+@peer_app.command("rm")
+def peer_rm(
+    name: PeerName,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask for confirmation.")] = False,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Remove a peer: its home box loses the tunnel at once."""
+    config = _vps_box(box_dir)
+    if not yes and not typer.confirm(f"Remove peer {name}? Its home box loses the tunnel"):
+        raise typer.Exit(EXIT_USER_ERROR)
+    _core_call(lambda: core_api.remove_peer(config.api.port, name))
+    typer.echo(f"removed peer {name}")

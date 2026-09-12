@@ -17,7 +17,7 @@
 
 | Слой | Технологии | Версии |
 |---|---|---|
-| `core/` | Python, FastAPI, Pydantic v2, Typer, httpx, Jinja2, ruamel.yaml (YAML 1.2), uvicorn, cryptography (X25519 для ключей WireGuard) | `requires-python >= 3.11`: CLI на коробке работает на системном Python (bookworm 3.11.2, trixie 3.13.5), образ `core` — 3.12; fastapi 0.141, pydantic 2.13, typer 0.27, uvicorn 0.52 — точные версии в `core/uv.lock`, для установки без uv — `core/requirements.txt` с sha256 |
+| `core/` | Python, FastAPI, Pydantic v2, Typer, httpx, Jinja2, ruamel.yaml (YAML 1.2), uvicorn, cryptography (X25519 для ключей WireGuard), segno (QR-код файла пира в терминале) | `requires-python >= 3.11`: CLI на коробке работает на системном Python (bookworm 3.11.2, trixie 3.13.5), образ `core` — 3.12; fastapi 0.141, pydantic 2.13, typer 0.27, uvicorn 0.52 — точные версии в `core/uv.lock`, для установки без uv — `core/requirements.txt` с sha256 |
 | Тулчейн core | uv, ruff, mypy strict + плагин pydantic, pytest | uv 0.12.13, ruff 0.16.7, mypy 2.3.1, pytest 9.1.1 |
 | `images/wg/` | Alpine + `wireguard-tools-wg` + `iproute2` + `nftables` | alpine 3.24 |
 | `ui/` | React + TypeScript strict + Vite + Tailwind + shadcn/ui + Zustand, отдаёт nginx | react 19.3, vite 8.3, TypeScript **6.0.x** (typescript-eslint не поддерживает 7), tailwind 4.3, node 24 (Active LTS) — Stage 6 |
@@ -27,7 +27,7 @@
 
 | Образ | Откуда | Тег |
 |---|---|---|
-| `ghcr.io/borodatych/vibedpn-core` | `core/Dockerfile`, `python:3.12-slim-trixie`, зависимости из `uv.lock` | `${VIBEDPN_TAG}` (`latest` = main, `next`, `sha-…`, semver из тегов `v*`) |
+| `ghcr.io/borodatych/vibedpn-core` | `core/Dockerfile`, `python:3.12-slim-trixie`, зависимости из `uv.lock`; из Debian `nftables` и `wireguard-tools` | `${VIBEDPN_TAG}` (`latest` = main, `next`, `sha-…`, semver из тегов `v*`) |
 | `ghcr.io/borodatych/vibedpn-wg` | `images/wg/Dockerfile`, `alpine:3.24` | `${VIBEDPN_TAG}` |
 | `ghcr.io/borodatych/vibedpn-ui` | `ui/Dockerfile`, `nginx:1.31-alpine` (mainline) | `${VIBEDPN_TAG}` |
 | `mysteriumnetwork/myst` | Docker Hub, multi-arch amd64/arm64/arm-v7 | `1.39.5-alpine` (`${MYST_TAG}`) |
@@ -37,7 +37,7 @@
 
 | Сервис | Профиль | Сеть | Порты и особенности |
 |---|---|---|---|
-| `core` | всегда | host, `NET_ADMIN` | API на `127.0.0.1:${VIBEDPN_API_PORT}` (4480): `GET /health`, `GET /provider/stats` (сводка ноды из TequilAPI `127.0.0.1:4050`; 404 без провайдера в роли, 503 когда нода не отвечает); монтирует `config.yaml` (ro), `secrets/`, `data/core`; healthcheck `GET /health`; на vps при старте применяет nftables-таблицу `inet vibedpn` |
+| `core` | всегда | host, `NET_ADMIN` | API на `127.0.0.1:${VIBEDPN_API_PORT}` (4480): `GET /health`, `GET /provider/stats` (сводка ноды из TequilAPI `127.0.0.1:4050`; 404 без провайдера в роли, 503 когда нода не отвечает), `GET /peers`, `POST /peers`, `GET /peers/{name}/config`, `DELETE /peers/{name}` (пиры туннеля на vps: 404 без сервера, 409 повтор имени или кончилась подсеть, 422 плохое имя; закрытый ключ пира — только в выгрузке его файла; живое состояние пиров — из `wg show wg0 dump` хоста); монтирует `config.yaml` (ro), `secrets/`, `data/core`; healthcheck `GET /health`; на vps при старте применяет nftables-таблицу `inet vibedpn` |
 | `ui` | `ui` | host | nginx на `${VIBEDPN_LAN_IP}:${VIBEDPN_UI_PORT}` (80), `/api/` → core; зависит от здорового `core`. Авторизация `/api/` (auth_basic, пароль из `init`) — Stage 4, до первого изменяющего эндпоинта |
 | `myst-provider` | `provider` | bridge | `127.0.0.1:4449` NodeUI, `127.0.0.1:4050` TequilAPI, UDP `${VIBEDPN_MYST_UDP_FROM}-${VIBEDPN_MYST_UDP_TO}` (56000-56100); `myst --udp.ports=… --traversal=… --tequilapi.* service --agreed-terms-and-conditions` (глобальные флаги — до команды); том `data/myst-provider` |
 | `myst-consumer` | `consumer` | `vibedpn-upstreams` 10.77.0.20, `NET_ADMIN`, `ip_forward=1` | `myst --firewall.killSwitch.always --ui.enable=false --tequilapi.* daemon`; том `data/myst-consumer` |
@@ -57,7 +57,7 @@
 |---|---|---|
 | `config.yaml` | единственный источник правды ([manuals/configSpec.md](manuals/configSpec.md)) | да |
 | `.env` | производные для compose + `VIBEDPN_TAG`; пишет `init` | да |
-| `secrets/` | `htpasswd` (bcrypt пароля UI), `wg-client.conf` (peer-файл), на vps — `wg-server/server.key` (ключ сервера туннеля, генерирует `core` один раз) и `wg-server/wg0.conf` (рендер из `config.yaml`); всё 600 внутри 700 | да — `server.key` обязательно: без него все домашние коробки придётся переподключать |
+| `secrets/` | `htpasswd` (bcrypt пароля UI), `wg-client.conf` (peer-файл), на vps — `wg-server/server.key` (ключ сервера туннеля, генерирует `core` один раз) и `wg-server/wg0.conf` (рендер из `config.yaml` и реестра пиров), `wg-server/peers.json` (реестр пиров с их ключами, пишет только `core`); всё 600 внутри 700 | да — `server.key` обязательно: без него все домашние коробки придётся переподключать |
 | `config.yaml.bak` | предыдущий конфиг после `init --force` | нет |
 | `data/` | keystore ноды и `myst-provider/nodeui-pass` (bcrypt пароля панели), данные AdGuard, SQLite ядра | keystore и `nodeui-pass` — да |
 

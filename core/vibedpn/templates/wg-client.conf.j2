@@ -1,0 +1,12 @@
+# VibeDPN tunnel peer "{{ peer.name }}": a home box (role client) of this VPS.
+# Install it on the box: sudo vibedpn init --role client --peer-config <this file>
+# Keep it private — it holds the box's key.
+[Interface]
+PrivateKey = {{ peer.private_key }}
+Address = {{ peer.address }}/32
+
+[Peer]
+PublicKey = {{ server_public_key }}
+Endpoint = {{ endpoint }}
+AllowedIPs = {{ allowed_ips }}
+PersistentKeepalive = {{ keepalive }}

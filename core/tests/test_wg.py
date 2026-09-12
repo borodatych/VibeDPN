@@ -2,12 +2,17 @@
 
 import base64
 import os
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from ipaddress import IPv4Address, IPv4Interface
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from vibedpn.bootstrap import read_peer_config
 from vibedpn.config import Config, parse_yaml
 from vibedpn.engine import wg
 from vibedpn.engine.wg import (
@@ -45,6 +50,16 @@ def vps(**wg_server: object) -> Config:
 
 def mode(path: Path) -> int:
     return path.stat().st_mode & 0o777
+
+
+def peer(name: str, address: str) -> Peer:
+    return Peer(
+        name=name,
+        address=IPv4Address(address),
+        public_key=RFC_PUBLIC,
+        private_key=RFC_PRIVATE,
+        created=datetime(2026, 9, 12, tzinfo=UTC),
+    )
 
 
 def test_public_key_matches_rfc_7748_vector() -> None:
@@ -89,10 +104,7 @@ def test_render_without_peers() -> None:
 
 
 def test_render_with_peers() -> None:
-    peers = [
-        Peer("dacha", RFC_PUBLIC, IPv4Address("10.78.0.2")),
-        Peer("flat", RFC_PUBLIC, IPv4Address("10.78.0.3")),
-    ]
+    peers = [peer("dacha", "10.78.0.2"), peer("flat", "10.78.0.3")]
     text = render_server_conf(vps(), RFC_PRIVATE, peers)
     assert text.count("[Peer]") == 2
     assert f"[Peer]\n# dacha\nPublicKey = {RFC_PUBLIC}\nAllowedIPs = 10.78.0.2/32\n" in text
@@ -225,3 +237,139 @@ def test_write_private_flushes_the_file_and_the_directory(
     synced.clear()
     write_private(tmp_path / "server.key", "key\n")
     assert synced == []  # unchanged content: nothing written, nothing to flush
+
+
+# --- the peer registry --------------------------------------------------------------------
+
+
+def registry_file(tmp_path: Path) -> Path:
+    return tmp_path / SERVER_DIR / wg.PEERS_FILE
+
+
+def test_first_peer_takes_the_address_after_the_server(tmp_path: Path) -> None:
+    added = wg.add_peer(vps(), tmp_path, "dacha")
+    assert added.address == IPv4Address("10.78.0.2")
+    assert public_key(added.private_key) == added.public_key
+    assert mode(registry_file(tmp_path)) == 0o600
+    conf = (tmp_path / SERVER_DIR / SERVER_CONF_FILE).read_text(encoding="utf-8")
+    assert f"[Peer]\n# dacha\nPublicKey = {added.public_key}\nAllowedIPs = 10.78.0.2/32\n" in conf
+
+
+@pytest.mark.parametrize("name", ["", "Dacha", "-box", "box_2", "x/y", "a" * 33, "дача"])
+def test_bad_peer_names_are_refused(tmp_path: Path, name: str) -> None:
+    with pytest.raises(wg.PeerNameError, match="not a peer name"):
+        wg.add_peer(vps(), tmp_path, name)
+    assert not registry_file(tmp_path).exists()
+
+
+@pytest.mark.parametrize("name", ["dacha", "box-2", "7", "a" * 32])
+def test_good_peer_names_are_accepted(tmp_path: Path, name: str) -> None:
+    assert wg.add_peer(vps(), tmp_path, name).name == name
+
+
+def test_a_name_is_registered_once(tmp_path: Path) -> None:
+    wg.add_peer(vps(), tmp_path, "dacha")
+    with pytest.raises(wg.PeerExistsError, match="already exists"):
+        wg.add_peer(vps(), tmp_path, "dacha")
+    assert [p.name for p in wg.list_peers(vps(), tmp_path)] == ["dacha"]
+
+
+def test_a_full_subnet_is_a_clear_error(tmp_path: Path) -> None:
+    small = vps(subnet="10.78.0.0/30")  # hosts .1 (server) and .2
+    assert wg.add_peer(small, tmp_path, "only").address == IPv4Address("10.78.0.2")
+    with pytest.raises(wg.SubnetFullError, match="every address"):
+        wg.add_peer(small, tmp_path, "second")
+
+
+def test_a_removed_peer_frees_its_address(tmp_path: Path) -> None:
+    wg.add_peer(vps(), tmp_path, "first")
+    wg.add_peer(vps(), tmp_path, "second")
+    removed = wg.remove_peer(vps(), tmp_path, "first")
+    assert removed.address == IPv4Address("10.78.0.2")
+    assert wg.add_peer(vps(), tmp_path, "third").address == IPv4Address("10.78.0.2")
+    conf = (tmp_path / SERVER_DIR / SERVER_CONF_FILE).read_text(encoding="utf-8")
+    assert "# first" not in conf and "# second" in conf and "# third" in conf
+
+
+def test_removing_an_unknown_peer_is_an_error(tmp_path: Path) -> None:
+    with pytest.raises(wg.PeerNotFoundError, match="no peer named 'ghost'"):
+        wg.remove_peer(vps(), tmp_path, "ghost")
+
+
+def test_a_damaged_registry_is_never_reset(tmp_path: Path) -> None:
+    ensure_server(vps(), tmp_path)
+    registry_file(tmp_path).write_text("{not json", encoding="utf-8")
+    with pytest.raises(WgError, match="restore it from a backup"):
+        ensure_server(vps(), tmp_path)
+    with pytest.raises(WgError, match="restore it from a backup"):
+        wg.add_peer(vps(), tmp_path, "dacha")
+    assert registry_file(tmp_path).read_text(encoding="utf-8") == "{not json"
+
+
+def test_registry_refuses_duplicate_names_or_addresses() -> None:
+    twin = peer("dacha", "10.78.0.2")
+    with pytest.raises(ValueError, match="appears twice"):
+        wg.PeerRegistry(peers=[twin, twin])
+
+
+def test_concurrent_adds_get_distinct_addresses(tmp_path: Path) -> None:
+    """The API serves requests from a thread pool; the registry must not lose or share writes."""
+    ensure_server(vps(), tmp_path)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        added = list(pool.map(lambda i: wg.add_peer(vps(), tmp_path, f"box-{i}"), range(12)))
+    assert len({p.address for p in added}) == 12
+    assert len(wg.list_peers(vps(), tmp_path)) == 12
+
+
+def test_client_conf_is_what_a_home_box_installs(tmp_path: Path) -> None:
+    added = wg.add_peer(vps(), tmp_path, "dacha")
+    text = wg.peer_config(vps(), tmp_path, "dacha")
+    server_key = (tmp_path / SERVER_DIR / SERVER_KEY_FILE).read_text(encoding="utf-8").strip()
+    assert "[Interface]\n" in text
+    assert f"PrivateKey = {added.private_key}\nAddress = 10.78.0.2/32\n" in text
+    assert f"PublicKey = {public_key(server_key)}\n" in text
+    assert "Endpoint = vps.example.com:51820\n" in text
+    assert "AllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n" in text
+    assert server_key not in text  # the server's own key never leaves the VPS
+    peer_file = tmp_path / "dacha.conf"
+    peer_file.write_text(text, encoding="utf-8")
+    assert read_peer_config(peer_file) == text
+
+
+def test_exporting_an_unknown_peer_is_an_error(tmp_path: Path) -> None:
+    with pytest.raises(wg.PeerNotFoundError):
+        wg.peer_config(vps(), tmp_path, "ghost")
+
+
+# --- the live interface ------------------------------------------------------------------
+
+DUMP = (Path(__file__).parent / "fixtures" / "wg" / "show_dump.txt").read_text(encoding="utf-8")
+
+
+def test_dump_is_parsed_without_keeping_the_interface_line() -> None:
+    links = wg.parse_wg_dump(DUMP)
+    assert sorted(links) == [
+        "3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=",
+        "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=",
+    ]
+    idle = links["hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo="]
+    assert idle == wg.PeerLink(endpoint=None, latest_handshake=0, rx_bytes=0, tx_bytes=0)
+    busy = links["3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08="]
+    assert busy == wg.PeerLink("203.0.113.7:40312", 1789236372, 15432, 9876)
+    interface_private_key = DUMP.split("\t", 1)[0]
+    assert all(interface_private_key not in str(link) for link in links.values())
+
+
+def test_read_wg_dump_degrades_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(wg, "find_tool", lambda _name: None)
+    assert wg.read_wg_dump() is None
+    monkeypatch.setattr(wg, "find_tool", lambda _name: "/usr/bin/wg")
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=1, stdout="", stderr="")
+    )
+    assert wg.read_wg_dump() is None
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=0, stdout=DUMP, stderr="")
+    )
+    links = wg.read_wg_dump()
+    assert links is not None and len(links) == 2

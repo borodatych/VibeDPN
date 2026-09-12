@@ -34,7 +34,8 @@
   wireguard-go, `src_valid_mark`, пакеты Alpine (`wg` без wg-quick); что делает entrypoint
   вместо wg-quick: ключи мимо `wg setconf`, fwmark-маршрутизация при `AllowedIPs 0.0.0.0/0`,
   kill-switch в netns контейнера, «упал» = удалён или down; ключи X25519 из `cryptography`
-  с clamping как у `wg genkey` (вектор RFC 7748)
+  с clamping как у `wg genkey` (вектор RFC 7748); пиры на работающем сервере через `wg syncconf`,
+  синхронизация маршрутов, формат `wg show dump`, QR-код через `segno`
 
 ## platform
 
