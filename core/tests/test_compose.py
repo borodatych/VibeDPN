@@ -43,8 +43,10 @@ def test_compose_argv_roots_at_box_dir() -> None:
 
 
 def test_check_box_requires_checkout_and_config(tmp_path: Path) -> None:
-    with pytest.raises(ComposeError, match=r"install\.sh"):
+    with pytest.raises(ComposeError, match=r"install\.sh") as excinfo:
         check_box(tmp_path)
+    assert excinfo.value.hint == "run install.sh"
+    assert "checkout" in excinfo.value.message and "install.sh" not in excinfo.value.message
     (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
     with pytest.raises(ComposeError, match="vibedpn init"):
         check_box(tmp_path)

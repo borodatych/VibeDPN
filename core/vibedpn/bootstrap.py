@@ -80,7 +80,7 @@ class HostFacts:
     """What the wizard detected."""
 
     interface: Interface | None
-    wireguard_module: bool
+    wireguard_module: bool | None  # None: could not check (no modprobe on PATH)
 
 
 @dataclass(frozen=True)

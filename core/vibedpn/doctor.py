@@ -1,8 +1,8 @@
 """Host and box diagnostics for ``vibedpn doctor``: gather facts, evaluate, report — never fix.
 
 ``gather`` is the only function with side effects; ``evaluate`` and the parsers are pure and
-unit-tested on fixtures. Every check yields a verdict with a detail and, when something is
-wrong, a hint naming the command to run.
+unit-tested on fixtures. A fact that could not be collected is ``None`` (or carries an error
+text) and turns into a ``warn`` that names what to run — never into a false ``ok`` or ``fail``.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from pathlib import Path
 from vibedpn.bootstrap import (
     ENV_FILE,
     HTPASSWD_FILE,
+    KNOWN_SECRETS,
     SECRETS_DIR,
     WG_CLIENT_CONF,
 )
@@ -29,14 +30,22 @@ from vibedpn.compose import (
     parse_ps,
     preflight,
 )
-from vibedpn.config import Config, Role
+from vibedpn.config import Config, Profile, Role, parse_port_range
 from vibedpn.detect import WIREGUARD_MODULE, module_present
 
 NFTABLES_MODULE = "nf_tables"
 IP_FORWARD_SYSCTL = Path("/proc/sys/net/ipv4/ip_forward")
+SS_ARGV = ["ss", "-H", "-lntup"]
 API_HOST = "127.0.0.1"
+# Ports compose.yaml publishes for myst-provider on loopback; keep equal to compose.yaml.
+NODEUI_PORT = 4449
+TEQUILAPI_PORT = 4050
+DNS_PORT = 53
 ANY_ADDRESSES = frozenset({"0.0.0.0", "*", "::", "[::]"})
 WILDCARD = "*"
+RUNNING_STATE = "running"
+NEVER_STARTED_STATE = "created"
+SUDO_HINT = "sudo vibedpn doctor"
 
 
 class Verdict(StrEnum):
@@ -63,26 +72,37 @@ class Listener:
 
 @dataclass(frozen=True)
 class PortNeed:
-    """A port a service of this box must be able to bind."""
+    """A port (or range) a service of this box must be able to bind."""
 
     service: str
     proto: str
     address: str  # a concrete address or WILDCARD
     port: int
+    port_end: int | None = None
+
+    @property
+    def label(self) -> str:
+        span = f"{self.port}-{self.port_end}" if self.port_end else str(self.port)
+        return f"{self.proto}/{span}"
+
+    def covers(self, port: int) -> bool:
+        return self.port <= port <= (self.port_end or self.port)
 
 
 @dataclass(frozen=True)
 class DoctorFacts:
     config: Config | None
     config_error: str
+    config_hint: str
     env_current: bool | None  # None: no .env yet
-    secrets: dict[str, bool]
-    wireguard: bool
-    nf_tables: bool
+    secrets: dict[str, bool] | None  # None: secrets/ is root-only and we are not root
+    wireguard: bool | None  # None: could not check
+    nf_tables: bool | None
     ip_forward: bool | None  # None: unreadable
-    listeners: list[Listener]
+    listeners: list[Listener] | None  # None: ss unavailable, see listeners_error
     is_root: bool
     docker_error: str
+    listeners_error: str = ""
     services: list[ServiceStatus] = field(default_factory=list)
     active_services: list[str] = field(default_factory=list)
 
@@ -119,12 +139,19 @@ def port_needs(config: Config) -> list[PortNeed]:
         lan = str(config.network.lan_address)
         if config.dns.enabled:
             needs += [
-                PortNeed("adguard", "udp", lan, 53),
-                PortNeed("adguard", "tcp", lan, 53),
+                PortNeed("adguard", "udp", lan, DNS_PORT),
+                PortNeed("adguard", "tcp", lan, DNS_PORT),
                 PortNeed("adguard", "tcp", lan, config.dns.web_port),
             ]
         if config.ui.enabled:
             needs.append(PortNeed("ui", "tcp", lan, config.ui.port))
+    if config.provider.enabled:
+        start, end = parse_port_range(config.provider.udp_ports)
+        needs += [
+            PortNeed("myst-provider", "tcp", API_HOST, NODEUI_PORT),
+            PortNeed("myst-provider", "tcp", API_HOST, TEQUILAPI_PORT),
+            PortNeed("myst-provider", "udp", WILDCARD, start, end),
+        ]
     if config.wg_server is not None:
         needs.append(PortNeed("wg-server", "udp", WILDCARD, config.wg_server.listen_port))
     return needs
@@ -133,7 +160,7 @@ def port_needs(config: Config) -> list[PortNeed]:
 def holder_of(need: PortNeed, listeners: list[Listener]) -> Listener | None:
     """The listener that would collide with ``need``, if any."""
     for listener in listeners:
-        if listener.proto != need.proto or listener.port != need.port:
+        if listener.proto != need.proto or not need.covers(listener.port):
             continue
         overlap = (
             need.address == WILDCARD
@@ -145,73 +172,29 @@ def holder_of(need: PortNeed, listeners: list[Listener]) -> Listener | None:
     return None
 
 
-def tunnels_configured(config: Config) -> bool:
-    return (
-        config.wg_server is not None or config.upstreams.vps.enabled or config.upstreams.dpn.enabled
-    )
+def wireguard_required(config: Config) -> bool:
+    """Only the WireGuard containers use the host module; myst brings its own tunnel."""
+    profiles = set(config.compose_profiles())
+    return Profile.WG_SERVER in profiles or Profile.WG_CLIENT in profiles
 
 
-def evaluate(facts: DoctorFacts) -> list[CheckResult]:  # noqa: PLR0912 - one flat table of checks
+def evaluate(facts: DoctorFacts) -> list[CheckResult]:
     results: list[CheckResult] = []
     config = facts.config
     if config is None:
-        results.append(CheckResult("config", Verdict.FAIL, facts.config_error, "vibedpn init"))
+        results.append(CheckResult("config", Verdict.FAIL, facts.config_error, facts.config_hint))
     else:
         profiles = ",".join(profile.value for profile in config.compose_profiles())
         results.append(
             CheckResult("config", Verdict.OK, f"role {config.role.value}, profiles {profiles}")
         )
-        if facts.env_current is None:
-            results.append(CheckResult("env", Verdict.WARN, ".env not written yet", "vibedpn up"))
-        elif not facts.env_current:
-            results.append(
-                CheckResult("env", Verdict.WARN, ".env is behind config.yaml", "vibedpn up")
-            )
-        else:
-            results.append(CheckResult("env", Verdict.OK, ".env matches config.yaml"))
-        results.extend(_secrets_results(config, facts.secrets))
-
-    if facts.wireguard:
-        results.append(CheckResult("wireguard", Verdict.OK, "kernel module available"))
-    elif config is not None and tunnels_configured(config):
-        results.append(
-            CheckResult(
-                "wireguard",
-                Verdict.FAIL,
-                "kernel module missing; tunnels cannot start",
-                "use a stock Debian 12/13 or Raspberry Pi OS kernel (wireguard is built in)",
-            )
-        )
-    else:
-        results.append(
-            CheckResult(
-                "wireguard", Verdict.WARN, "kernel module missing (no tunnel configured yet)"
-            )
-        )
-    if facts.nf_tables:
-        results.append(CheckResult("nf_tables", Verdict.OK, "kernel module available"))
-    else:
-        results.append(
-            CheckResult(
-                "nf_tables",
-                Verdict.FAIL,
-                "kernel module missing; the router engine and Docker need it",
-            )
-        )
-    if facts.ip_forward is None:
-        results.append(CheckResult("ip_forward", Verdict.WARN, f"cannot read {IP_FORWARD_SYSCTL}"))
-    elif facts.ip_forward:
-        results.append(CheckResult("ip_forward", Verdict.OK, "net.ipv4.ip_forward=1"))
-    else:
-        results.append(
-            CheckResult(
-                "ip_forward",
-                Verdict.FAIL,
-                "net.ipv4.ip_forward=0; Docker normally enables it at start",
-                "sysctl -w net.ipv4.ip_forward=1 and persist it in /etc/sysctl.d/",
-            )
-        )
-
+        results.append(_env_result(facts.env_current))
+        results.append(_secrets_result(config, facts.secrets))
+    results.append(_wireguard_result(config, facts.wireguard))
+    results.append(
+        _module_result("nf_tables", facts.nf_tables, "the router engine and Docker need it")
+    )
+    results.append(_ip_forward_result(facts.ip_forward))
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -223,43 +206,112 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:  # noqa: PLR0912 - one fl
     return results
 
 
-def _secrets_results(config: Config, secrets: dict[str, bool]) -> list[CheckResult]:
+def _env_result(env_current: bool | None) -> CheckResult:
+    if env_current is None:
+        return CheckResult("env", Verdict.WARN, ".env not written yet", "vibedpn up")
+    if not env_current:
+        return CheckResult("env", Verdict.WARN, ".env is behind config.yaml", "vibedpn up")
+    return CheckResult("env", Verdict.OK, ".env matches config.yaml")
+
+
+def _secrets_result(config: Config, secrets: dict[str, bool] | None) -> CheckResult:
     needed = []
     if config.role is not Role.VPS:
         needed.append(HTPASSWD_FILE)
     if config.role is Role.CLIENT:
         needed.append(WG_CLIENT_CONF)
+    if not needed:
+        return CheckResult("secrets", Verdict.OK, "none needed for this role")
+    if secrets is None:
+        return CheckResult(
+            "secrets",
+            Verdict.WARN,
+            f"{SECRETS_DIR}/ is root-only; cannot check {', '.join(needed)}",
+            SUDO_HINT,
+        )
     missing = [name for name in needed if not secrets.get(name)]
     if missing:
-        return [
-            CheckResult(
-                "secrets", Verdict.FAIL, f"missing {', '.join(missing)}", "vibedpn init --force"
-            )
-        ]
-    return [
-        CheckResult(
-            "secrets", Verdict.OK, ", ".join(needed) if needed else "none needed for this role"
+        return CheckResult(
+            "secrets", Verdict.FAIL, f"missing {', '.join(missing)}", "vibedpn init --force"
         )
-    ]
+    return CheckResult("secrets", Verdict.OK, ", ".join(needed))
+
+
+def _module_result(name: str, present: bool | None, why: str) -> CheckResult:
+    if present is None:
+        return CheckResult(
+            name, Verdict.WARN, "cannot tell: modprobe not found on this PATH", SUDO_HINT
+        )
+    if present:
+        return CheckResult(name, Verdict.OK, "kernel module available")
+    return CheckResult(name, Verdict.FAIL, f"kernel module missing; {why}")
+
+
+def _wireguard_result(config: Config | None, present: bool | None) -> CheckResult:
+    if present is None or present:
+        return _module_result("wireguard", present, "")
+    if config is not None and wireguard_required(config):
+        return CheckResult(
+            "wireguard",
+            Verdict.FAIL,
+            "kernel module missing; tunnels cannot start",
+            "use a stock Debian 12/13 or Raspberry Pi OS kernel (wireguard is built in)",
+        )
+    return CheckResult(
+        "wireguard",
+        Verdict.WARN,
+        "kernel module missing; this role runs no WireGuard container (myst brings its own tunnel)",
+    )
+
+
+def _ip_forward_result(ip_forward: bool | None) -> CheckResult:
+    if ip_forward is None:
+        return CheckResult("ip_forward", Verdict.WARN, f"cannot read {IP_FORWARD_SYSCTL}")
+    if ip_forward:
+        return CheckResult("ip_forward", Verdict.OK, "net.ipv4.ip_forward=1")
+    return CheckResult(
+        "ip_forward",
+        Verdict.FAIL,
+        "net.ipv4.ip_forward=0; Docker normally enables it at start",
+        "sysctl -w net.ipv4.ip_forward=1 and persist it in /etc/sysctl.d/",
+    )
 
 
 def _port_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
-    running = {item.service for item in facts.services if item.state == "running"}
+    if facts.listeners is None:
+        return [
+            CheckResult(
+                f"port {need.label}", Verdict.WARN, f"cannot check: {facts.listeners_error}"
+            )
+            for need in port_needs(config)
+        ]
+    services_known = not facts.docker_error
+    running = {item.service for item in facts.services if item.state == RUNNING_STATE}
     results = []
     for need in port_needs(config):
-        label = f"{need.proto}/{need.port}"
+        name = f"port {need.label}"
         holder = holder_of(need, facts.listeners)
         if holder is None:
-            results.append(CheckResult(f"port {label}", Verdict.OK, f"free for {need.service}"))
-        elif need.service in running:
-            results.append(CheckResult(f"port {label}", Verdict.OK, f"held by our {need.service}"))
-        else:
-            who = holder.process or (
-                "unknown process" + ("" if facts.is_root else "; run with sudo to see it")
-            )
+            results.append(CheckResult(name, Verdict.OK, f"free for {need.service}"))
+            continue
+        who = holder.process or (
+            "unknown process" + ("" if facts.is_root else "; run with sudo to see it")
+        )
+        if services_known and need.service in running:
+            results.append(CheckResult(name, Verdict.OK, f"held by our {need.service}"))
+        elif not services_known:
             results.append(
                 CheckResult(
-                    f"port {label}",
+                    name,
+                    Verdict.WARN,
+                    f"held by {who} on {holder.address}; cannot tell whether it is our"
+                    f" {need.service} until Docker is reachable",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    name,
                     Verdict.FAIL,
                     f"taken by {who} on {holder.address}, needed by {need.service}",
                     "stop that service or change the port in config.yaml",
@@ -271,24 +323,28 @@ def _port_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
 def _service_results(facts: DoctorFacts) -> list[CheckResult]:
     by_name = {item.service: item for item in facts.services}
     unhealthy = [name for name, item in by_name.items() if item.health == "unhealthy"]
-    missing = [
-        name
-        for name in facts.active_services
-        if by_name.get(name) is None or by_name[name].state != "running"
-    ]
-    if unhealthy:
-        return [
-            CheckResult(
-                "services",
-                Verdict.FAIL,
-                f"unhealthy: {', '.join(unhealthy)}",
-                "vibedpn logs <service>",
+    not_started: list[str] = []
+    broken: list[str] = []
+    for name in facts.active_services:
+        item = by_name.get(name)
+        if item is None or item.state == NEVER_STARTED_STATE:
+            not_started.append(name)
+        elif item.state != RUNNING_STATE:
+            broken.append(f"{name} ({item.status or item.state})")
+    if unhealthy or broken:
+        detail = "; ".join(
+            part
+            for part in (
+                f"unhealthy: {', '.join(unhealthy)}" if unhealthy else "",
+                f"not running: {', '.join(broken)}" if broken else "",
             )
-        ]
-    if missing:
+            if part
+        )
+        return [CheckResult("services", Verdict.FAIL, detail, "vibedpn logs <service>")]
+    if not_started:
         return [
             CheckResult(
-                "services", Verdict.WARN, f"not running: {', '.join(missing)}", "vibedpn up"
+                "services", Verdict.WARN, f"not started: {', '.join(not_started)}", "vibedpn up"
             )
         ]
     return [CheckResult("services", Verdict.OK, f"{len(facts.active_services)} running")]
@@ -297,18 +353,15 @@ def _service_results(facts: DoctorFacts) -> list[CheckResult]:
 def gather(box_dir: Path) -> DoctorFacts:
     """Collect every fact the checks need; failures become facts, not exceptions."""
     config: Config | None = None
-    config_error = ""
+    config_error = config_hint = ""
     try:
         config = check_box(box_dir)
     except ComposeError as exc:
-        config_error = str(exc)
+        config_error, config_hint = exc.message, exc.hint
     env_current: bool | None = None
     env_path = box_dir / ENV_FILE
     if config is not None and env_path.is_file():
         env_current = _env_matches(env_path, config)
-    secrets = {
-        name: (box_dir / SECRETS_DIR / name).is_file() for name in (HTPASSWD_FILE, WG_CLIENT_CONF)
-    }
     docker_error = ""
     try:
         preflight()
@@ -326,17 +379,20 @@ def gather(box_dir: Path) -> DoctorFacts:
             ]
         except ComposeError as exc:
             docker_error = str(exc)
+    listeners, listeners_error = _listeners()
     return DoctorFacts(
         config=config,
         config_error=config_error,
+        config_hint=config_hint,
         env_current=env_current,
-        secrets=secrets,
+        secrets=_secrets(box_dir),
         wireguard=module_present(WIREGUARD_MODULE),
         nf_tables=module_present(NFTABLES_MODULE),
         ip_forward=_read_ip_forward(),
-        listeners=_listeners(),
+        listeners=listeners,
         is_root=os.geteuid() == 0,
         docker_error=docker_error,
+        listeners_error=listeners_error,
         services=services,
         active_services=active,
     )
@@ -351,6 +407,17 @@ def _env_matches(env_path: Path, config: Config) -> bool:
     return all(current.get(key) == value for key, value in config.env_vars().items())
 
 
+def _secrets(box_dir: Path) -> dict[str, bool] | None:
+    """Which known secrets exist; ``None`` when secrets/ (root-only, 0700) cannot be searched.
+
+    ``Path.is_file`` raises ``PermissionError`` on Python < 3.14 when the directory is closed.
+    """
+    try:
+        return {name: (box_dir / SECRETS_DIR / name).is_file() for name in KNOWN_SECRETS}
+    except OSError:
+        return None
+
+
 def _read_ip_forward() -> bool | None:
     try:
         return parse_sysctl_flag(IP_FORWARD_SYSCTL.read_text(encoding="ascii"))
@@ -358,17 +425,21 @@ def _read_ip_forward() -> bool | None:
         return None
 
 
-def _listeners() -> list[Listener]:
+def _listeners() -> tuple[list[Listener] | None, str]:
     try:
-        probe = subprocess.run(["ss", "-H", "-lntup"], check=False, capture_output=True, text=True)
+        probe = subprocess.run(SS_ARGV, check=False, capture_output=True, text=True)
     except FileNotFoundError:
-        return []
-    return parse_ss(probe.stdout)
+        return None, "`ss` not found (install iproute2)"
+    except OSError as exc:
+        return None, f"`ss` failed: {exc.strerror}"
+    if probe.returncode != 0:
+        return None, f"`ss` exited {probe.returncode}: {probe.stderr.strip()}"
+    return parse_ss(probe.stdout), ""
 
 
 def render(results: list[CheckResult]) -> str:
     badge = {Verdict.OK: "[ ok ]", Verdict.WARN: "[warn]", Verdict.FAIL: "[FAIL]"}
-    width = max(len(item.name) for item in results)
+    width = max((len(item.name) for item in results), default=0)
     lines = []
     for item in results:
         line = f"{badge[item.verdict]} {item.name.ljust(width)}  {item.detail}"

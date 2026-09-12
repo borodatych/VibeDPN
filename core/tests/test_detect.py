@@ -3,6 +3,7 @@
 import subprocess
 from ipaddress import IPv4Address, IPv4Network
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -44,15 +45,30 @@ def test_probe_reports_missing_ip(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_wireguard_module_detection(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    def missing(*_args: object, **_kwargs: object) -> None:
-        raise FileNotFoundError("modprobe")
-
-    monkeypatch.setattr(subprocess, "run", missing)
     monkeypatch.setattr(detect, "SYSFS_MODULES", tmp_path / "absent")
+    monkeypatch.setattr(detect, "find_modprobe", lambda: None)
+    assert HostProbe().wireguard_module_present() is None  # cannot tell without modprobe
+
+    def says_no(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(detect, "find_modprobe", lambda: "/usr/sbin/modprobe")
+    monkeypatch.setattr(subprocess, "run", says_no)
     assert HostProbe().wireguard_module_present() is False
     (tmp_path / "wireguard").mkdir()
     monkeypatch.setattr(detect, "SYSFS_MODULES", tmp_path)
     assert HostProbe().wireguard_module_present() is True
+
+
+def test_find_modprobe_looks_in_sbin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    sbin = tmp_path / "sbin"
+    sbin.mkdir()
+    fake = sbin / "modprobe"
+    fake.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    monkeypatch.setattr(detect, "SBIN_DIRS", (str(sbin),))
+    assert detect.find_modprobe() == str(fake)
 
 
 def test_probe_reports_failing_ip(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -225,9 +225,15 @@ def init(
         typer.echo(f"wrote {path}")
     for path in written.retired:
         typer.echo(f"set aside a secret of the previous role: {path}")
-    if not facts.wireguard_module:
+    if facts.wireguard_module is False:
         typer.secho(
             "warning: the wireguard kernel module is not available; tunnels will not start",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+    elif facts.wireguard_module is None:
+        typer.secho(
+            "warning: could not check the wireguard kernel module (modprobe not found)",
             fg=typer.colors.YELLOW,
             err=True,
         )

@@ -30,7 +30,12 @@ DEFAULT_LOG_TAIL = 100
 
 
 class ComposeError(RuntimeError):
-    """A user-facing reason why Compose cannot be driven."""
+    """A user-facing reason why Compose cannot be driven, with the command that fixes it."""
+
+    def __init__(self, message: str, hint: str = "") -> None:
+        super().__init__(f"{message}; {hint}" if hint else message)
+        self.message = message
+        self.hint = hint
 
 
 @dataclass(frozen=True)
@@ -53,14 +58,17 @@ def check_box(box_dir: Path) -> Config:
     """The box directory must be a checkout with a valid ``config.yaml``."""
     if not (box_dir / COMPOSE_FILE).is_file():
         raise ComposeError(
-            f"{box_dir} is not a VibeDPN checkout (no {COMPOSE_FILE}); run install.sh"
+            f"{box_dir} is not a VibeDPN checkout (no {COMPOSE_FILE})", "run install.sh"
         )
     if not (box_dir / CONFIG_FILE).is_file():
-        raise ComposeError(f"no {CONFIG_FILE} in {box_dir}; run `vibedpn init` first")
+        raise ComposeError(f"no {CONFIG_FILE} in {box_dir}", "run `vibedpn init` first")
     try:
         return load_config(box_dir / CONFIG_FILE)
     except (ConfigError, ValidationError) as exc:
-        raise ComposeError(f"{CONFIG_FILE} is invalid: {exc}") from None
+        raise ComposeError(
+            f"{CONFIG_FILE} is invalid: {exc}",
+            f"fix that key in {CONFIG_FILE} (docs/manuals/configSpec.md)",
+        ) from None
 
 
 def refresh_env(box_dir: Path, config: Config) -> Path:

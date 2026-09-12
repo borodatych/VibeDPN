@@ -15,12 +15,12 @@ runner = CliRunner()
 
 class FakeProbe:
     interface: Interface | None = Interface("eth0", IPv4Address("192.168.1.50"), 24)
-    wireguard = True
+    wireguard: bool | None = True
 
     def default_interface(self) -> Interface | None:
         return self.interface
 
-    def wireguard_module_present(self) -> bool:
+    def wireguard_module_present(self) -> bool | None:
         return self.wireguard
 
 
@@ -174,6 +174,17 @@ def test_init_refuses_second_run_without_force_before_asking(tmp_path: Path) -> 
     forced = runner.invoke(cli.app, [*args, "--force"])
     assert forced.exit_code == 0, forced.output
     assert (tmp_path / "config.yaml.bak").is_file()
+
+
+def test_init_warns_when_wireguard_cannot_be_checked(
+    tmp_path: Path, fake_probe: type[FakeProbe]
+) -> None:
+    fake_probe.wireguard = None
+    result = runner.invoke(
+        cli.app, ["init", "--role", "vps", "--endpoint", "203.0.113.7", "--dir", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.output
+    assert "could not check the wireguard kernel module" in result.output
 
 
 def test_init_warns_without_wireguard_module(tmp_path: Path, fake_probe: type[FakeProbe]) -> None:
