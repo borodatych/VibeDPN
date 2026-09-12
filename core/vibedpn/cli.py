@@ -10,6 +10,7 @@ import click
 import typer
 
 from vibedpn import __version__
+from vibedpn.api.client import CoreUnreachableError, StatsUnavailableError, fetch_provider_stats
 from vibedpn.bootstrap import (
     DEFAULT_BOX_DIR,
     Answers,
@@ -37,6 +38,7 @@ from vibedpn.compose import (
 from vibedpn.config import Config, Role, Upstream, check_endpoint
 from vibedpn.detect import DetectError, HostProbe
 from vibedpn.doctor import evaluate, gather, has_failures, render, to_json
+from vibedpn.engine.myst import render_stats
 
 EXIT_USER_ERROR = 1
 PANEL_PASSWORD_PROMPT = "Password for the panels (VibeDPN UI and the node's NodeUI)"
@@ -325,6 +327,21 @@ def status(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     width = max(len(item.service) for item in services)
     for item in services:
         typer.echo(f"{item.service.ljust(width)}  {item.state:<8} {item.health:<9} {item.status}")
+    for line in _node_lines(config):
+        typer.echo(line)
+
+
+def _node_lines(config: Config) -> list[str]:
+    """The node block: statistics through ``core``, or one line saying why there are none."""
+    if not config.provider.enabled:
+        return []
+    try:
+        stats = fetch_provider_stats(config.api.port)
+    except CoreUnreachableError:
+        return ["node: core is not running (run `vibedpn up`, then `vibedpn doctor`)"]
+    except StatsUnavailableError as exc:
+        return [f"node: unavailable ({exc})"]
+    return render_stats(stats)
 
 
 @app.command()

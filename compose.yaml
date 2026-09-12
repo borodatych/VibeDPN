@@ -74,8 +74,8 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     ports:
-      - 127.0.0.1:4449:4449
-      - 127.0.0.1:4050:4050
+      - 127.0.0.1:4449:4449  # NodeUI; keep equal to NODEUI_PORT in core/vibedpn/engine/myst.py
+      - 127.0.0.1:4050:4050  # TequilAPI; keep equal to TEQUILAPI_PORT there
       - ${VIBEDPN_MYST_UDP_FROM:-56000}-${VIBEDPN_MYST_UDP_TO:-56100}:${VIBEDPN_MYST_UDP_FROM:-56000}-${VIBEDPN_MYST_UDP_TO:-56100}/udp
     volumes:
       - ./data/myst-provider:/var/lib/mysterium-node

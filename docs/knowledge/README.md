@@ -6,7 +6,8 @@
 ## myst
 
 - [node.md](myst/node.md) — образ и теги, каталог данных, актуальные флаги (`--udp.ports`,
-  `--traversal` вместо устаревших из kickoff), TequilAPI и NodeUI, что известно о consumer в
+  `--traversal` вместо устаревших из kickoff), TequilAPI без аутентификации и `nodeui-pass`,
+  пять GET TequilAPI для статистики и ответы свежей ноды, что известно о consumer в
   контейнере, открытый вопрос bridge vs host для provider
 
 ## adguard
@@ -44,7 +45,9 @@
 - [doctorProbes.md](linux/doctorProbes.md) — формат `ss -lntup`, модуль через sysfs или `modprobe -n`,
   Docker включает `ip_forward` и одновременно ставит DROP на FORWARD (важно для Stage 4)
 - [nftables.md](linux/nftables.md) — атомарная идемпотентная загрузка таблицы, `nft -c` требует
-  NET_ADMIN, JSON-листинг для `doctor`, published-порты идут через FORWARD, `Port` в sshd — список
+  NET_ADMIN, JSON-листинг для `doctor`, published-порты идут через FORWARD, `Port` в sshd — список;
+  токенизация sshd_config как у sshd, `ListenAddress host:port`, `sshd -T`; DHCPv6 мимо conntrack,
+  снятие таблицы парой `add table` + `delete table`
 
 ## security
 

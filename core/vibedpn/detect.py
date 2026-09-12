@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -21,6 +22,11 @@ SBIN_DIRS = ("/usr/local/sbin", "/usr/sbin", "/sbin")  # Debian keeps sbin off a
 SSHD_CONFIG = Path("/etc/ssh/sshd_config")
 SSHD_CONFIG_ROOT = Path("/etc/ssh")  # relative Include paths resolve here (sshd_config(5))
 DEFAULT_SSH_PORT = 22
+SSHD = "sshd"
+# sshd tokenizes a config line at whitespace or at a single "=" (OpenSSH misc.c, strdelim);
+# values may be double-quoted.
+SSHD_DELIMITER = re.compile(r"[ \t]*=[ \t]*|[ \t]+")
+SSHD_INCLUDE_DEPTH = 16  # sshd refuses deeper nesting (servconf.c, "Include nested too deep")
 
 
 class DetectError(RuntimeError):
@@ -59,10 +65,14 @@ def parse_interface(text: str, name: str) -> Interface | None:
     return None
 
 
-def find_modprobe() -> str | None:
-    """``modprobe`` lives in sbin, which a non-root Debian PATH does not include."""
+def find_tool(name: str) -> str | None:
+    """Locate an admin binary: sbin is off a non-root Debian PATH, so it is searched too."""
     search = os.pathsep.join([*os.get_exec_path(), *SBIN_DIRS])
-    return shutil.which("modprobe", path=search)
+    return shutil.which(name, path=search)
+
+
+def find_modprobe() -> str | None:
+    return find_tool("modprobe")
 
 
 def module_present(name: str) -> bool | None:
@@ -81,62 +91,126 @@ def module_present(name: str) -> bool | None:
     return probe.returncode == 0
 
 
-def parse_sshd_ports(text: str) -> list[int]:
-    """``Port`` values of one sshd_config text, outside ``Match`` blocks, in order."""
-    ports: list[int] = []
-    in_match = False
+def sshd_directives(text: str) -> list[tuple[str, str]]:
+    """``(keyword, value)`` pairs of one sshd_config text as sshd reads them, outside ``Match``.
+
+    Keywords are lowercased; the value keeps its own tokens but loses surrounding quotes.
+    Comments and blank lines are skipped; the same parser reads ``sshd -T`` output.
+    """
+    directives: list[tuple[str, str]] = []
     for raw in text.splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
-        keyword, _, value = line.partition(" ")
+        keyword, *rest = SSHD_DELIMITER.split(line, maxsplit=1)
         keyword = keyword.lower()
         if keyword == "match":
-            in_match = True
-            continue
-        if in_match:
-            continue
-        if keyword == "port" and value.strip().isdigit():
-            port = int(value.strip())
-            if port not in ports:
-                ports.append(port)
-    return ports
+            break
+        value = rest[0].strip() if rest else ""
+        directives.append((keyword, value.strip('"')))
+    return directives
+
+
+def listen_address_port(value: str) -> int | None:
+    """Port of a ``ListenAddress`` value (``host:port``, ``[v6]:port``), ``None`` without one.
+
+    The optional ``rdomain`` tail is dropped; a bare IPv4, hostname or unbracketed IPv6 has no
+    port and means "all Port values" (sshd_config(5)).
+    """
+    tokens = value.split(maxsplit=1)
+    address = tokens[0] if tokens else ""
+    if address.startswith("["):
+        _, bracket, port = address.partition("]:")
+        return int(port) if bracket and port.isdigit() else None
+    if address.count(":") == 1:
+        _, _, port = address.partition(":")
+        return int(port) if port.isdigit() else None
+    return None
+
+
+def ports_from_directives(directives: list[tuple[str, str]]) -> list[int]:
+    """Ports sshd listens on given its directives, in order.
+
+    ``ListenAddress`` with a port pins that port; a ``ListenAddress`` without one, or none at
+    all, listens on every ``Port`` (22 when there is no ``Port`` either).
+    """
+    port_values: list[int] = []
+    pinned: list[int] = []
+    listen_without_port = False
+    listen_seen = False
+    for keyword, value in directives:
+        if keyword == "port" and value.isdigit():
+            port_values.append(int(value))
+        elif keyword == "listenaddress":
+            listen_seen = True
+            port = listen_address_port(value)
+            if port is None:
+                listen_without_port = True
+            else:
+                pinned.append(port)
+    ports = list(pinned)
+    if not listen_seen or listen_without_port:
+        ports.extend(port_values or [DEFAULT_SSH_PORT])
+    return list(dict.fromkeys(ports))
+
+
+def parse_sshd_ports(text: str) -> list[int]:
+    """Ports sshd listens on per one config text (or ``sshd -T`` output)."""
+    return ports_from_directives(sshd_directives(text))
 
 
 def parse_sshd_includes(text: str) -> list[str]:
     """``Include`` patterns of one sshd_config text, in order."""
-    patterns: list[str] = []
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0].strip()
-        keyword, _, value = line.partition(" ")
-        if keyword.lower() == "include":
-            patterns.extend(value.split())
-    return patterns
+    return [
+        pattern
+        for keyword, value in sshd_directives(text)
+        if keyword == "include"
+        for pattern in value.split()
+    ]
+
+
+def expand_includes(text: str, root: Path, depth: int = 0) -> list[tuple[str, str]]:
+    """Directives of one file with every ``Include`` replaced, in place, by the directives of
+    the files it names (lexical order, relative to ``root``) — the way sshd reads them, so a
+    ``Match`` block at the end of the main file hides nothing from ``sshd_config.d/``."""
+    directives: list[tuple[str, str]] = []
+    for keyword, value in sshd_directives(text):
+        if keyword != "include" or depth >= SSHD_INCLUDE_DEPTH:
+            directives.append((keyword, value))
+            continue
+        for pattern in value.split():
+            base = Path(pattern) if pattern.startswith("/") else root / pattern
+            for path in sorted(base.parent.glob(base.name)):
+                try:
+                    included = path.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                directives.extend(expand_includes(included, root, depth + 1))
+    return directives
 
 
 def sshd_ports(main: Path = SSHD_CONFIG, root: Path = SSHD_CONFIG_ROOT) -> list[int]:
-    """Every port sshd listens on per its config (all ``Port`` lines count), default 22.
-
-    Included files are read in lexical order; a missing config means a stock sshd on 22.
-    """
-    texts: list[str] = []
+    """Ports sshd listens on per its config files; a missing config means a stock sshd on 22."""
     try:
-        texts.append(main.read_text(encoding="utf-8"))
+        text = main.read_text(encoding="utf-8")
     except OSError:
         return [DEFAULT_SSH_PORT]
-    for pattern in parse_sshd_includes(texts[0]):
-        base = Path(pattern) if pattern.startswith("/") else root / pattern
-        for path in sorted(base.parent.glob(base.name)):
-            try:
-                texts.append(path.read_text(encoding="utf-8"))
-            except OSError:
-                continue
-    ports: list[int] = []
-    for text in texts:
-        for port in parse_sshd_ports(text):
-            if port not in ports:
-                ports.append(port)
-    return ports or [DEFAULT_SSH_PORT]
+    return ports_from_directives(expand_includes(text, root))
+
+
+def sshd_effective_ports() -> list[int] | None:
+    """Ports from ``sshd -T`` — the daemon's own view (Include, ``=``, quotes, defaults all
+    resolved); ``None`` when sshd is absent or refuses (needs root: it loads the host keys)."""
+    sshd = find_tool(SSHD)
+    if sshd is None:
+        return None
+    try:
+        probe = subprocess.run([sshd, "-T"], check=False, capture_output=True, text=True)
+    except OSError:
+        return None
+    if probe.returncode != 0:
+        return None
+    return parse_sshd_ports(probe.stdout)
 
 
 class HostProbe:
@@ -152,7 +226,8 @@ class HostProbe:
         return module_present(WIREGUARD_MODULE)
 
     def ssh_ports(self) -> list[int]:
-        return sshd_ports()
+        """The daemon's own answer when it gives one, else its config files."""
+        return sshd_effective_ports() or sshd_ports()
 
     @staticmethod
     def _ip(*args: str) -> str:

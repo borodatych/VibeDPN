@@ -159,15 +159,32 @@ jobs:
             python - <<"PY" > /tmp/vibedpn.nft
           from vibedpn.config import Config
           from vibedpn.engine.router import firewall_ruleset
-          config = Config.model_validate({"version": 1, "role": "vps", "provider": {"enabled": True}, "wg_server": {"endpoint": "203.0.113.7"}, "firewall": {"ssh_ports": [22, 2222], "allow_tcp": [443]}})
-          print(firewall_ruleset(config), end="")
+          base = {"version": 1, "role": "vps", "provider": {"enabled": True}, "wg_server": {"endpoint": "203.0.113.7"}, "firewall": {"ssh_ports": [22, 2222], "allow_tcp": [443]}}
+          print(firewall_ruleset(Config.model_validate(base)), end="")
+          narrowed = {**base, "provider": {"enabled": True, "udp_ports": "56000-56050"}}
+          with open("/tmp/narrowed.nft", "w") as out:
+              out.write(firewall_ruleset(Config.model_validate(narrowed)))
           PY
             nft -c -f - < /tmp/vibedpn.nft
             nft -f - < /tmp/vibedpn.nft
             nft -f - < /tmp/vibedpn.nft
             nft list table inet vibedpn | tee /tmp/loaded.nft
             grep -q "tcp dport { 22, 2222 } accept" /tmp/loaded.nft
+            grep -q "dhcpv6 client" /tmp/loaded.nft
             grep -q "policy drop" /tmp/loaded.nft
+            # An overlapping UDP range must replace the old set elements, not clash with them.
+            nft -f - < /tmp/narrowed.nft
+            nft list set inet vibedpn myst_udp | tee /tmp/set.nft
+            grep -q "56000-56050" /tmp/set.nft
+            if grep -q "56100" /tmp/set.nft; then echo "old range survived re-apply"; exit 1; fi
+            python - <<"PY"
+          from vibedpn.config import Config
+          from vibedpn.engine.router import apply_firewall
+          disabled = Config.model_validate({"version": 1, "role": "vps", "provider": {"enabled": True}, "wg_server": {"endpoint": "203.0.113.7"}, "firewall": {"enabled": False}})
+          assert apply_firewall(disabled) is False
+          assert apply_firewall(disabled) is False  # idempotent on a missing table
+          PY
+            if nft list tables | grep -q vibedpn; then echo "table survived teardown"; exit 1; fi
           '
 
   images:

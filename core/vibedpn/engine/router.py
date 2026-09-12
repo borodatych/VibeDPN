@@ -20,6 +20,9 @@ NFT = "nft"
 NFT_TABLE = "inet vibedpn"
 WG_INTERFACE = "wg0"
 FIREWALL_TEMPLATE = "firewall.nft.j2"
+# One transaction that ends without the table whether or not it was loaded: ``delete`` alone
+# fails on a missing table, ``add`` of an existing one is a no-op.
+FIREWALL_TEARDOWN = f"add table {NFT_TABLE}\ndelete table {NFT_TABLE}\n"
 
 
 class RouterError(RuntimeError):
@@ -61,7 +64,8 @@ def firewall_ruleset(config: Config) -> str | None:
 
 
 def ssh_rule_present(ruleset: str, ssh_ports: list[int]) -> bool:
-    """The guard against locking the operator out: every ssh port must be accepted."""
+    """A guard against a template regression: the rendered text must accept every configured
+    ssh port. Whether sshd really listens there is ``doctor``'s check, not this one's."""
     return f"tcp dport {{ {', '.join(str(p) for p in ssh_ports)} }} accept" in ruleset
 
 
@@ -93,14 +97,21 @@ def check_ruleset(ruleset: str) -> None:
 
 
 def apply_ruleset(ruleset: str) -> None:
-    """Load the ruleset atomically; the file itself makes the operation idempotent."""
+    """Load the ruleset atomically; the file replaces the whole table, so it is idempotent."""
     _nft(["-f", "-"], ruleset)
 
 
+def remove_firewall() -> None:
+    """Drop the table if it is loaded, so a disabled or changed configuration is the truth."""
+    _nft(["-f", "-"], FIREWALL_TEARDOWN)
+
+
 def apply_firewall(config: Config) -> bool:
-    """Render, check and apply the VPS firewall; ``False`` when the role has none."""
+    """Render, check and apply the VPS firewall; ``False`` when this configuration has none
+    (a leftover table from an earlier configuration is removed then)."""
     ruleset = firewall_ruleset(config)
     if ruleset is None:
+        remove_firewall()
         return False
     if not ssh_rule_present(ruleset, config.firewall.ssh_ports):
         raise RouterError("rendered firewall does not open ssh; refusing to apply it")

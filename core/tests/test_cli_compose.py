@@ -6,8 +6,12 @@ import pytest
 from typer.testing import CliRunner
 
 from vibedpn import cli
+from vibedpn.api.client import CoreUnreachableError, StatsUnavailableError
 from vibedpn.bootstrap import Answers, HostFacts, build_config, render_config
-from vibedpn.config import Role
+from vibedpn.config import Config, Role
+from vibedpn.engine.myst import ProviderStats, SessionTotals
+
+from .conftest import client_config
 
 runner = CliRunner()
 
@@ -127,6 +131,75 @@ def test_status_without_containers(box: tuple[Path, Recorder]) -> None:
     box_dir, _ = box
     result = runner.invoke(cli.app, ["status", "--dir", str(box_dir)])
     assert "containers: none (run `vibedpn up`)" in result.output
+    assert "node:" not in result.output
+
+
+CORE_UP = '{"Service":"core","State":"running","Health":"healthy","Status":"Up 9s (healthy)"}\n'
+
+
+def test_status_prints_the_node_block_from_core(
+    box: tuple[Path, Recorder], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    box_dir, recorder = box
+    recorder.ps_output = CORE_UP
+    ports: list[int] = []
+
+    def fake_fetch(port: int) -> ProviderStats:
+        ports.append(port)
+        return ProviderStats(
+            node_version="1.39.5",
+            node_uptime="1m",
+            monitoring_status="unknown",
+            identity=None,
+            services=[],
+            sessions=SessionTotals(),
+        )
+
+    monkeypatch.setattr(cli, "fetch_provider_stats", fake_fetch)
+    result = runner.invoke(cli.app, ["status", "--dir", str(box_dir)])
+    assert result.exit_code == 0, result.output
+    assert ports == [4480]
+    assert "node: myst 1.39.5, up 1m, monitoring unknown" in result.output
+    assert "identity: none yet" in result.output
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (CoreUnreachableError("ConnectError: refused"), "node: core is not running"),
+        (StatsUnavailableError("TequilAPI /healthcheck: HTTP 500"), "node: unavailable (TequilAPI"),
+    ],
+)
+def test_status_explains_a_missing_node_block(
+    box: tuple[Path, Recorder], monkeypatch: pytest.MonkeyPatch, error: Exception, expected: str
+) -> None:
+    box_dir, recorder = box
+    recorder.ps_output = CORE_UP
+
+    def fail(port: int) -> ProviderStats:
+        raise error
+
+    monkeypatch.setattr(cli, "fetch_provider_stats", fail)
+    result = runner.invoke(cli.app, ["status", "--dir", str(box_dir)])
+    assert result.exit_code == 0, result.output
+    assert expected in result.output
+
+
+def test_status_skips_the_node_block_without_a_provider(
+    box: tuple[Path, Recorder], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    box_dir, recorder = box
+    recorder.ps_output = CORE_UP
+    config = Config.model_validate(client_config())
+    (box_dir / "config.yaml").write_text(render_config(config), encoding="utf-8")
+
+    def fail(port: int) -> ProviderStats:
+        raise AssertionError("core must not be asked")
+
+    monkeypatch.setattr(cli, "fetch_provider_stats", fail)
+    result = runner.invoke(cli.app, ["status", "--dir", str(box_dir)])
+    assert result.exit_code == 0, result.output
+    assert "node:" not in result.output
 
 
 def test_compose_exit_code_is_propagated(box: tuple[Path, Recorder]) -> None:

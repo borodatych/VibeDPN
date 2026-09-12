@@ -30,16 +30,14 @@ from vibedpn.compose import (
     preflight,
 )
 from vibedpn.config import Config, Profile, Role, parse_port_range
-from vibedpn.detect import WIREGUARD_MODULE, module_present
+from vibedpn.detect import SSHD, WIREGUARD_MODULE, module_present
+from vibedpn.engine.myst import NODEUI_PORT, TEQUILAPI_PORT
 from vibedpn.engine.router import NFT_TABLE, find_nft
 
 NFTABLES_MODULE = "nf_tables"
 IP_FORWARD_SYSCTL = Path("/proc/sys/net/ipv4/ip_forward")
 SS_ARGV = ["ss", "-H", "-lntup"]
 API_HOST = "127.0.0.1"
-# Ports compose.yaml publishes for myst-provider on loopback; keep equal to compose.yaml.
-NODEUI_PORT = 4449
-TEQUILAPI_PORT = 4050
 DNS_PORT = 53
 ANY_ADDRESSES = frozenset({"0.0.0.0", "*", "::", "[::]"})
 WILDCARD = "*"
@@ -105,7 +103,8 @@ class DoctorFacts:
     listeners_error: str = ""
     services: list[ServiceStatus] = field(default_factory=list)
     active_services: list[str] = field(default_factory=list)
-    firewall_table: bool | None = None  # None: could not list tables (not root / no nft)
+    firewall_table: bool | None = None  # None: could not list tables, see firewall_error
+    firewall_error: str = ""
 
 
 def parse_ss(output: str) -> list[Listener]:
@@ -196,8 +195,8 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
         _module_result("nf_tables", facts.nf_tables, "the router engine and Docker need it")
     )
     results.append(_ip_forward_result(facts.ip_forward))
-    if config is not None and config.role is Role.VPS and config.firewall.enabled:
-        results.append(_firewall_result(facts.firewall_table))
+    if config is not None and config.role is Role.VPS:
+        results.extend(_firewall_results(config, facts))
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -262,17 +261,61 @@ def _wireguard_result(config: Config | None, present: bool | None) -> CheckResul
     )
 
 
-def _firewall_result(table_present: bool | None) -> CheckResult:
-    if table_present is None:
-        return CheckResult("firewall", Verdict.WARN, "cannot list nftables tables", SUDO_HINT)
-    if table_present:
-        return CheckResult("firewall", Verdict.OK, f"table {NFT_TABLE} is loaded")
-    return CheckResult(
-        "firewall",
-        Verdict.FAIL,
-        f"table {NFT_TABLE} is not loaded; core applies it at start",
-        "vibedpn up, then vibedpn logs core",
+def _firewall_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
+    """The table must match ``firewall.enabled``, and sshd must fit through it."""
+    present = facts.firewall_table
+    if not config.firewall.enabled:
+        if present:
+            return [
+                CheckResult(
+                    "firewall",
+                    Verdict.WARN,
+                    f"firewall.enabled is false but table {NFT_TABLE} is still loaded",
+                    "vibedpn restart (core removes it at start)",
+                )
+            ]
+        if present is None:
+            return []
+        return [CheckResult("firewall", Verdict.OK, "disabled in config.yaml, no table loaded")]
+    if present is None:
+        hint = "" if facts.is_root else SUDO_HINT  # as root the reason names the fix itself
+        return [CheckResult("firewall", Verdict.WARN, facts.firewall_error, hint)]
+    if not present:
+        return [
+            CheckResult(
+                "firewall",
+                Verdict.FAIL,
+                f"table {NFT_TABLE} is not loaded; core applies it at start",
+                "vibedpn up, then vibedpn logs core",
+            )
+        ]
+    results = [CheckResult("firewall", Verdict.OK, f"table {NFT_TABLE} is loaded")]
+    ssh = _ssh_result(config.firewall.ssh_ports, facts.listeners)
+    if ssh is not None:
+        results.append(ssh)
+    return results
+
+
+def _ssh_result(ssh_ports: list[int], listeners: list[Listener] | None) -> CheckResult | None:
+    """Every port sshd actually listens on must be in ``firewall.ssh_ports``; the config-file
+    reading of ``init`` is not the daemon (socket activation, a later edit), so ``ss`` decides."""
+    if listeners is None:
+        return None
+    listening = sorted(
+        {item.port for item in listeners if item.process == SSHD and item.proto == "tcp"}
     )
+    if not listening:
+        return None
+    missing = ", ".join(str(port) for port in listening if port not in ssh_ports)
+    if missing:
+        return CheckResult(
+            "ssh",
+            Verdict.FAIL,
+            f"sshd listens on {missing}, which firewall.ssh_ports does not open",
+            "add the port to firewall.ssh_ports in config.yaml, then vibedpn restart",
+        )
+    heard = ", ".join(str(port) for port in listening)
+    return CheckResult("ssh", Verdict.OK, f"sshd listens on {heard}, open in the firewall")
 
 
 def _ip_forward_result(ip_forward: bool | None) -> CheckResult:
@@ -391,9 +434,9 @@ def gather(box_dir: Path) -> DoctorFacts:
         except ComposeError as exc:
             docker_error = str(exc)
     listeners, listeners_error = _listeners()
-    firewall_table = None
+    firewall_table, firewall_error = None, ""
     if config is not None and config.role is Role.VPS:
-        firewall_table = _firewall_table_present()
+        firewall_table, firewall_error = _firewall_table_present()
     return DoctorFacts(
         config=config,
         config_error=config_error,
@@ -410,33 +453,35 @@ def gather(box_dir: Path) -> DoctorFacts:
         services=services,
         active_services=active,
         firewall_table=firewall_table,
+        firewall_error=firewall_error,
     )
 
 
-def _firewall_table_present() -> bool | None:
-    """Whether ``inet vibedpn`` is loaded; ``None`` when nft is missing or netlink is closed."""
+def _firewall_table_present() -> tuple[bool | None, str]:
+    """Whether ``inet vibedpn`` is loaded; ``None`` plus the reason when nft cannot tell."""
     nft = find_nft()
     if nft is None:
-        return None
+        return None, "nft not found on the host (apt install nftables)"
     try:
         probe = subprocess.run(
             [nft, "-j", "list", "tables"], check=False, capture_output=True, text=True
         )
-    except OSError:
-        return None
+    except OSError as exc:
+        return None, f"cannot run nft: {exc.strerror}"
     if probe.returncode != 0:
-        return None
+        return None, f"nft cannot list tables: {probe.stderr.strip() or 'not root'}"
     family, name = NFT_TABLE.split()
     try:
         entries = json.loads(probe.stdout).get("nftables", [])
     except json.JSONDecodeError:
-        return None
-    return any(
+        return None, "nft returned no JSON"
+    present = any(
         isinstance(entry, dict)
         and entry.get("table", {}).get("family") == family
         and entry.get("table", {}).get("name") == name
         for entry in entries
     )
+    return present, ""
 
 
 def _env_matches(env_path: Path, config: Config) -> bool:

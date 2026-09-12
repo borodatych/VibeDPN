@@ -12,7 +12,7 @@ from typer.testing import CliRunner
 from vibedpn import cli, doctor
 from vibedpn.bootstrap import Answers, HostFacts, build_config, render_config, secrets_present
 from vibedpn.compose import ServiceStatus
-from vibedpn.config import Config, Role
+from vibedpn.config import Config, FirewallConfig, Role
 from vibedpn.detect import Interface
 from vibedpn.doctor import (
     CheckResult,
@@ -221,8 +221,55 @@ def test_firewall_verdicts_only_for_vps() -> None:
     assert loaded.verdict is Verdict.OK
     missing = by_name(evaluate(facts(config=vps_config(), firewall_table=False)))["firewall"]
     assert missing.verdict is Verdict.FAIL and "vibedpn up" in missing.hint
-    unknown = by_name(evaluate(facts(config=vps_config(), firewall_table=None)))["firewall"]
+    unknown = by_name(
+        evaluate(
+            facts(
+                config=vps_config(),
+                firewall_table=None,
+                firewall_error="nft cannot list tables: not root",
+                is_root=False,
+            )
+        )
+    )["firewall"]
     assert unknown.verdict is Verdict.WARN and unknown.hint == "sudo vibedpn doctor"
+    no_nft = by_name(
+        evaluate(
+            facts(
+                config=vps_config(),
+                firewall_table=None,
+                firewall_error="nft not found on the host (apt install nftables)",
+            )
+        )
+    )["firewall"]
+    assert no_nft.verdict is Verdict.WARN
+    assert "apt install nftables" in no_nft.detail and no_nft.hint == ""
+
+
+def disabled_vps() -> Config:
+    return vps_config().model_copy(update={"firewall": FirewallConfig(enabled=False)})
+
+
+def test_disabled_firewall_must_not_stay_loaded() -> None:
+    stale = by_name(evaluate(facts(config=disabled_vps(), firewall_table=True)))["firewall"]
+    assert stale.verdict is Verdict.WARN and "vibedpn restart" in stale.hint
+    clean = by_name(evaluate(facts(config=disabled_vps(), firewall_table=False)))["firewall"]
+    assert clean.verdict is Verdict.OK
+    assert "firewall" not in by_name(evaluate(facts(config=disabled_vps(), firewall_table=None)))
+
+
+def test_sshd_ports_must_be_open_in_the_firewall() -> None:
+    sshd = [Listener("tcp", "0.0.0.0", 22, "sshd"), Listener("tcp", "0.0.0.0", 2222, "sshd")]
+    names = by_name(evaluate(facts(config=vps_config(), firewall_table=True, listeners=sshd)))
+    assert names["ssh"].verdict is Verdict.FAIL
+    assert names["ssh"].detail == "sshd listens on 2222, which firewall.ssh_ports does not open"
+    assert "firewall.ssh_ports" in names["ssh"].hint
+    fine = facts(config=vps_config(), firewall_table=True, listeners=sshd[:1])
+    assert by_name(evaluate(fine))["ssh"].verdict is Verdict.OK
+    # No sshd visible (not root, or socket-activated): nothing to compare against.
+    anonymous = facts(config=vps_config(), firewall_table=True, listeners=[])
+    assert "ssh" not in by_name(evaluate(anonymous))
+    unknown = facts(config=vps_config(), firewall_table=True, listeners=None)
+    assert "ssh" not in by_name(evaluate(unknown))
 
 
 def test_env_verdicts() -> None:

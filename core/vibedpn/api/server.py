@@ -11,6 +11,7 @@ from pathlib import Path
 import uvicorn
 from pydantic import ValidationError
 
+from vibedpn.api.app import create_app
 from vibedpn.config import ConfigError, load_config
 from vibedpn.engine.router import RouterError, apply_firewall
 
@@ -33,7 +34,12 @@ def main() -> None:
     try:
         if apply_firewall(config):
             sys.stderr.write("vibedpn-core: host firewall applied (table inet vibedpn)\n")
+        else:
+            sys.stderr.write(
+                "vibedpn-core: no host firewall in this configuration;"
+                " table inet vibedpn removed if it was loaded\n"
+            )
     except RouterError as exc:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None
-    uvicorn.run("vibedpn.api.app:app", host=API_HOST, port=config.api.port, log_level="info")
+    uvicorn.run(create_app(config), host=API_HOST, port=config.api.port, log_level="info")

@@ -105,6 +105,48 @@ https://github.com/mysteriumnetwork/node/blob/master/core/auth/credentials.go (C
 https://raw.githubusercontent.com/mysteriumnetwork/node/master/config/flags_ui.go ,
 https://github.com/mysteriumnetwork/node/releases/download/1.39.5/swagger.json .
 
+## [провайдер] TequilAPI как источник статистики: шесть запросов и что отвечает свежая нода
+
+**Контекст:** Stage 2, чекбокс 3 — `GET /provider/stats` ядра и блок `node` в `vibedpn status`.
+**Суть:** сводка собирается из шести GET без аутентификации: `/healthcheck` (`version`, `uptime`
+как Go-duration `6.194346087s` — для вывода дробь секунд режем), `/identities`
+(`{"identities": [IdentityRefDTO]}` — **только `id`**, ничего больше: `NewIdentityListResponse`
+кладёт в список `IdentityRefDTO{Address}`), `/identities/{id}` (полный IdentityDTO:
+`registration_status`, `balance_tokens` / `earnings_tokens` / `earnings_total_tokens` — объекты
+`Tokens {wei, ether, human}`, `wei` — строка, точное значение; 1 MYST = 10^18 wei; хендлер
+`Get` при `Registered` ходит в блокчейн за каналом и может ответить 500 — тогда у identity
+остаётся один `id`, причина уходит в `problems`), `/services` (массив ServiceInfoDTO: `type`,
+`status`, `proposal`), `/sessions/stats-aggregated` (`{"stats": SessionStatsDTO}`: `count`,
+`count_consumers`, `sum_bytes_received/sent`, `sum_duration`, `sum_tokens`),
+`/node/monitoring-status` (`{"status": …}` — синхронно спрашивает quality-оракул MORQA с
+минутным кэшем и 60-секундным таймаутом у ноды, поэтому обязателен только `/healthcheck`:
+остальные вопросы при ошибке или таймауте 2 с деградируют к дефолтам, а причина попадает в
+`problems` ответа и в строку `problems:` блока `node`). Свежая нода 1.39.5 (`daemon`, минуты после старта)
+отвечает: identities `[]`, services `[]`, все суммы нулями, причём `sum_tokens` приходит
+JSON-числом `0`, хотя swagger объявляет строку (`x-go-type: math/big.Int` — big.Int
+сериализуется числом); Python читает такое число точно, клиент принимает и строку wei, и
+число, мониторинг `unknown`. Эндпоинты `/node/provider/*` считают по identity провайдера и
+до её появления бесполезны: `sessions-count` без `range` — 400 «Invalid time range»,
+`transferred-data?range=1d` и `service-earnings` — 500 «identity not found» (ошибки — JSON
+`{"error": {"code", "message"}, "status", "path"}`); в сводку их не берём —
+`/sessions/stats-aggregated` даёт те же итоги и отвечает всегда. `uptime` из `/healthcheck` не
+равен времени жизни процесса: на контейнере, поднятом 9 с назад, нода вернула `192.854845ms`
+(и `321.095µs` секундами раньше) — показываем как есть, доли секунды сворачиваем в `<1s`.
+Identity после `service --agreed-terms-and-conditions` появляется не сразу: через ~10 с
+`/identities` всё ещё `[]`. Ответы записаны в `core/tests/fixtures/tequilapi/` и служат тестами
+сборки; «занятая» нода в тестах собрана по DTO из swagger.
+**Применение:** `core/vibedpn/engine/myst.py` (клиент, `ProviderStats`, рендер блока `node`),
+`core/vibedpn/api/app.py` (`/provider/stats`), `core/vibedpn/api/client.py` (CLI ходит в core, а
+не в ноду — одна точка входа, которая в Stage 3 уедет за туннель).
+**Источники:** https://github.com/mysteriumnetwork/node/releases/download/1.39.5/swagger.json
+(definitions IdentityRefDTO, IdentityDTO, Tokens, ServiceInfoDTO, SessionStatsDTO, paths `/node/*`);
+https://github.com/mysteriumnetwork/node/blob/1.39.5/tequilapi/contract/identity.go
+(IdentityRefDTO — одно поле `id`; `NewIdentityListResponse`),
+https://github.com/mysteriumnetwork/node/blob/1.39.5/tequilapi/endpoints/identities.go
+(`List` против `Get`), https://github.com/mysteriumnetwork/node/blob/1.39.5/core/quality/mysterium_morqa.go
+(`MonitoringStatus`: кэш на минуту); исполнение 2026-09-12 (`mysteriumnetwork/myst:1.39.5-alpine
+daemon`, busybox wget к 127.0.0.1:4050; ревью 2 линзы + скептики).
+
 ## [провайдер] Consumer в контейнере — что известно (для Stage 8)
 
 **Суть:** команда контейнера `daemon`; kill-switch — флаг `--firewall.killSwitch.always`
