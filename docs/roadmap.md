@@ -43,7 +43,7 @@
 
 ## Stage 3 — Приватный туннель
 
-- [ ] Образ `vibedpn/wg`, entrypoint `server|client`, kill-switch в режиме client
+- [x] **Образ `vibedpn/wg`, entrypoint `server|client`, kill-switch в режиме client** — ✅ (2026-09-12, `next`) entrypoint вместо wg-quick: вырезает ключи, которых не знает `wg setconf` (`Address`, `MTU`, `DNS`, `Table`, хуки), поднимает wg0 через netlink, раздаёт адреса и маршруты по `AllowedIPs`, при `0.0.0.0/0` — fwmark 51820 с таблицей 51820 и `suppress_prefixlength 0`; в режиме client — kill-switch и MASQUERADE таблицей `inet vibedpn_wg` в netns самого контейнера (хост не трогаем); интерфейс упал (удалён или down) — контейнер выходит ненулевым кодом и `restart: unless-stopped` поднимает туннель заново, утечки в промежутке нет; healthcheck `entrypoint.sh health` (client — свежий handshake, server — поднятый wg0); тест `tests/wg/tunnel.sh` — два контейнера, живой handshake, трафик в туннеле, kill-switch и самовосстановление; в CI задача `tunnel`, образы публикуются только после неё
 - [ ] `wg-server` на VPS (wg0 10.78.0.1/24), ключи в `core`, персист в volume
 - [ ] `vibedpn peer add|rm|list|export` → `.conf` + QR в терминале
 - [ ] NodeUI 4449 и `core` API доступны с домашней стороны через wg0 и больше ниоткуда

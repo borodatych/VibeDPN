@@ -187,9 +187,23 @@ jobs:
             if nft list tables | grep -q vibedpn; then echo "table survived teardown"; exit 1; fi
           '
 
+  tunnel:
+    name: tunnel · wg handshake and kill switch
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Load the WireGuard module of the runner kernel
+        run: |
+          sudo modprobe wireguard
+          lsmod | grep -q '^wireguard'
+      - name: Two containers, a real tunnel between them and a kill switch that holds
+        run: |
+          docker build -t ghcr.io/borodatych/vibedpn-wg:test images/wg
+          VIBEDPN_WG_IMAGE=ghcr.io/borodatych/vibedpn-wg:test tests/wg/tunnel.sh
+
   images:
     name: image · ${{ matrix.image.name }}
-    needs: [python, shell, compose, install, firewall]
+    needs: [python, shell, compose, install, firewall, tunnel]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

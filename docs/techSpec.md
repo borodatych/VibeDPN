@@ -41,8 +41,8 @@
 | `ui` | `ui` | host | nginx на `${VIBEDPN_LAN_IP}:${VIBEDPN_UI_PORT}` (80), `/api/` → core; зависит от здорового `core`. Авторизация `/api/` (auth_basic, пароль из `init`) — Stage 4, до первого изменяющего эндпоинта |
 | `myst-provider` | `provider` | bridge | `127.0.0.1:4449` NodeUI, `127.0.0.1:4050` TequilAPI, UDP `${VIBEDPN_MYST_UDP_FROM}-${VIBEDPN_MYST_UDP_TO}` (56000-56100); `myst --udp.ports=… --traversal=… --tequilapi.* service --agreed-terms-and-conditions` (глобальные флаги — до команды); том `data/myst-provider` |
 | `myst-consumer` | `consumer` | `vibedpn-upstreams` 10.77.0.20, `NET_ADMIN`, `ip_forward=1` | `myst --firewall.killSwitch.always --ui.enable=false --tequilapi.* daemon`; том `data/myst-consumer` |
-| `wg-client` | `wg-client` | `vibedpn-upstreams` 10.77.0.10, `NET_ADMIN`, `ip_forward=1`, `src_valid_mark=1` | `secrets/wg-client.conf` (кладёт `init --peer-config`) → `/etc/wireguard/wg0.conf`; entrypoint `client` (Stage 3) |
-| `wg-server` | `wg-server` | host, `NET_ADMIN` | `secrets/wg-server/` → `/etc/wireguard`; UDP 51820 открывает nft-baseline core; entrypoint `server` (Stage 3) |
+| `wg-client` | `wg-client` | `vibedpn-upstreams` 10.77.0.10, `NET_ADMIN`, `ip_forward=1`, `src_valid_mark=1` | `secrets/wg-client.conf` (кладёт `init --peer-config`) → `/etc/wireguard/wg0.conf`; entrypoint `client`: wg0 + маршруты по `AllowedIPs`, при `0.0.0.0/0` — fwmark 51820 и таблица 51820, kill-switch и MASQUERADE в netns контейнера; healthcheck — свежий handshake |
+| `wg-server` | `wg-server` | host, `NET_ADMIN` | `secrets/wg-server/` → `/etc/wireguard`; UDP 51820 открывает nft-baseline core; entrypoint `server`: wg0, адрес и маршруты пиров, файрвола нет; healthcheck — интерфейс поднят |
 | `adguard` | `dns` | host | тома `data/adguard/{work,conf}`; `AdGuardHome.yaml` рендерит core (Stage 4), веб-панель на `${VIBEDPN_LAN_IP}:3000` |
 
 Сеть `vibedpn-upstreams` — `10.77.0.0/24`, bridge со статическими адресами шлюзов в режиме

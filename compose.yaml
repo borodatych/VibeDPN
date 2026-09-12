@@ -141,6 +141,13 @@ services:
           create_host_path: false
     command:
       - client
+    healthcheck:
+      # The interface is up and the peer answered recently; a dead tunnel is not "running".
+      test: ["CMD", "/usr/local/bin/entrypoint.sh", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # WireGuard server of the VPS (wg0 10.78.0.1/24 by default). Host network: no port mapping,
   # the UDP port is opened by the nftables baseline core applies (Stage 2/3).
@@ -158,6 +165,13 @@ services:
       - ./secrets/wg-server:/etc/wireguard:ro
     command:
       - server
+    healthcheck:
+      # A server with no peer connected yet is healthy; only a missing wg0 is not.
+      test: ["CMD", "/usr/local/bin/entrypoint.sh", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # AdGuard Home on port 53 of the LAN address. Host network (needed for DHCP later and for real
   # client IPs); core renders AdGuardHome.yaml into ./data/adguard/conf so the setup wizard on

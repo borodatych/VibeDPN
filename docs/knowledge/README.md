@@ -31,7 +31,9 @@
 ## wireguard
 
 - [container.md](wireguard/container.md) — модуль ядра хоста, `/dev/net/tun` только для
-  wireguard-go, `src_valid_mark`, пакеты Alpine (`wg` без wg-quick)
+  wireguard-go, `src_valid_mark`, пакеты Alpine (`wg` без wg-quick); что делает entrypoint
+  вместо wg-quick: ключи мимо `wg setconf`, fwmark-маршрутизация при `AllowedIPs 0.0.0.0/0`,
+  kill-switch в netns контейнера, «упал» = удалён или down
 
 ## platform
 
