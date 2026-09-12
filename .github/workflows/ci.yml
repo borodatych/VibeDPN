@@ -61,7 +61,7 @@ jobs:
         debian: [bookworm, trixie]
     steps:
       - uses: actions/checkout@v7
-      - name: Run the installer twice, then `vibedpn init`, in a clean Debian container (docker CLI stubbed)
+      - name: Run the installer twice, then `vibedpn init` and `vibedpn doctor`, in a clean Debian container (docker CLI stubbed)
         run: |
           docker run --rm -v "$PWD:/src:ro" "debian:${{ matrix.debian }}-slim" bash -eu -c '
             export DEBIAN_FRONTEND=noninteractive
@@ -85,6 +85,10 @@ jobs:
             test ! -e /opt/vibedpn/config.yaml.bak
             vibedpn init --role vps --endpoint 203.0.113.7 --force
             test -f /opt/vibedpn/config.yaml.bak
+            if vibedpn doctor > /tmp/doctor.txt; then echo "doctor must fail with a stubbed docker" >&2; exit 1; fi
+            cat /tmp/doctor.txt
+            grep -q "^\[FAIL\] docker" /tmp/doctor.txt
+            grep -q "^\[ ok \] config" /tmp/doctor.txt
           '
 
   ui:

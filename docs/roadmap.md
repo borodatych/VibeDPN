@@ -31,7 +31,7 @@
       ранние отказы до вопросов, флаги чужой роли, `~` в промпте, секреты прежней роли в `.bak`,
       честная негативная проверка в CI
 - [x] **`vibedpn up|down|restart|status|logs`** — ✅ (2026-09-12, `next`) поверх `docker compose --project-directory`; `up -d --remove-orphans` с пересборкой `.env` из `config.yaml`, `down` со всеми профилями, `restart` = up + restart (bind-mount конфига пересоздание не вызывает), `status` из конфига и `ps --format json`, `logs` с `-f`/`--tail`; preflight переводит ошибки Docker (нет CLI, нет демона, нет прав на сокет) в одну строку; smoke на colima: up только `core` → healthy → logs → restart → down. Ревью (2 линзы + скептик): `init` под sudo отдаёт `config.yaml`/`.env` пользователю (иначе `up` без sudo падал), `up`/`restart` гасят контейнеры выпавших профилей (`--remove-orphans` их не трогает — проверено), тег образов из ветки чекаута (`next` → `:next`, а не несуществующий `latest`)
-- [ ] `vibedpn doctor` v1: wg-модуль, ip_forward, занятые порты 53/51820, docker жив
+- [x] **`vibedpn doctor` v1** — ✅ (2026-09-12, `next`) таблица проверок с вердиктом, деталью и подсказкой: config/.env/secrets, модули `wireguard` (fail только при настроенном туннеле) и `nf_tables`, `ip_forward`, порты роли по `ss -H -lntup` с учётом своих контейнеров и заглушки resolved, Docker и сервисы; `--json`; exit 1 при fail; парсеры на реальных фикстурах, CI-тест установки гоняет `doctor`; только проверяет, не чинит (§11.2)
 
 ## Stage 2 — Роль vps: нода
 
@@ -54,7 +54,8 @@
 - [ ] `engine/router.py`: nft-шаблоны, fwmark, `ip rule`, таблица `vps`; режимы `off` и `full`;
       идемпотентный apply
 - [ ] nft: LAN не достигает адресов `10.77.0.0/24` напрямую (только транзит через шлюзы) — обязательное
-      следствие режима `nat-unprotected` сети шлюзов ([knowledge/docker/directRouting.md](knowledge/docker/directRouting.md))
+      следствие режима `nat-unprotected` сети шлюзов ([knowledge/docker/directRouting.md](knowledge/docker/directRouting.md));
+      транзит через FORWARD разрешён явно (Docker ставит DROP на пересылку — [knowledge/linux/doctorProbes.md](knowledge/linux/doctorProbes.md))
 - [ ] Авторизация `/api/` в `ui` (nginx `auth_basic`, пароль из `init`) — до появления `PUT /mode`;
       перенесено из Stage 6, где остаётся экран входа
 - [ ] `vibedpn mode off|full`, `vibedpn upstream vps`

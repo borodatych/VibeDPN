@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from ipaddress import IPv4Address, IPv4Interface, IPv4Network
 from pathlib import Path
 
-WIREGUARD_MODULE_SYSFS = Path("/sys/module/wireguard")
+SYSFS_MODULES = Path("/sys/module")
+WIREGUARD_MODULE = "wireguard"
 
 
 class DetectError(RuntimeError):
@@ -52,6 +53,21 @@ def parse_interface(text: str, name: str) -> Interface | None:
     return None
 
 
+def module_present(name: str) -> bool:
+    """A kernel module is usable when it is loaded (sysfs) or loadable (``modprobe -n``).
+
+    A built-in or not-yet-loaded module has no sysfs entry, so sysfs alone would say "no" on a
+    host that is perfectly fine; ``modprobe -n`` answers for both cases.
+    """
+    if (SYSFS_MODULES / name).exists():
+        return True
+    try:
+        probe = subprocess.run(["modprobe", "-n", "-q", name], check=False, capture_output=True)
+    except FileNotFoundError:
+        return False
+    return probe.returncode == 0
+
+
 class HostProbe:
     """Reads host facts through ``ip`` and ``/sys``; replaced by a fake in tests."""
 
@@ -62,15 +78,7 @@ class HostProbe:
         return parse_interface(self._ip("addr", "show", "dev", name), name)
 
     def wireguard_module_present(self) -> bool:
-        if WIREGUARD_MODULE_SYSFS.exists():
-            return True
-        try:
-            probe = subprocess.run(
-                ["modprobe", "-n", "-q", "wireguard"], check=False, capture_output=True
-            )
-        except FileNotFoundError:
-            return False
-        return probe.returncode == 0
+        return module_present(WIREGUARD_MODULE)
 
     @staticmethod
     def _ip(*args: str) -> str:

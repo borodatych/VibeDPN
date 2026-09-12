@@ -48,9 +48,10 @@ def test_wireguard_module_detection(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         raise FileNotFoundError("modprobe")
 
     monkeypatch.setattr(subprocess, "run", missing)
-    monkeypatch.setattr(detect, "WIREGUARD_MODULE_SYSFS", tmp_path / "absent")
+    monkeypatch.setattr(detect, "SYSFS_MODULES", tmp_path / "absent")
     assert HostProbe().wireguard_module_present() is False
-    monkeypatch.setattr(detect, "WIREGUARD_MODULE_SYSFS", tmp_path)
+    (tmp_path / "wireguard").mkdir()
+    monkeypatch.setattr(detect, "SYSFS_MODULES", tmp_path)
     assert HostProbe().wireguard_module_present() is True
 
 

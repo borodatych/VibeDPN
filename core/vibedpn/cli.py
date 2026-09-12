@@ -35,6 +35,7 @@ from vibedpn.compose import (
 )
 from vibedpn.config import Config, Role, Upstream, check_endpoint
 from vibedpn.detect import DetectError, HostProbe
+from vibedpn.doctor import evaluate, gather, has_failures, render, to_json
 
 EXIT_USER_ERROR = 1
 
@@ -333,3 +334,18 @@ def logs(
     if service:
         args.append(service)
     _compose(box_dir, *args, all_profiles=True)
+
+
+@app.command()
+def doctor(
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
+) -> None:
+    """Check the host and the box: kernel modules, forwarding, ports, Docker, services.
+
+    Reports and hints only; nothing is changed. Exit code 1 when any check fails.
+    """
+    results = evaluate(gather(box_dir))
+    typer.echo(to_json(results) if as_json else render(results))
+    if has_failures(results):
+        raise typer.Exit(EXIT_USER_ERROR)

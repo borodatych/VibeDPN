@@ -41,6 +41,8 @@
 
 - [iproute2Json.md](linux/iproute2Json.md) — поля `ip -j route/addr`, фикстуры для парсеров, проверка
   модуля wireguard, `is_global` против TEST-NET и CGNAT
+- [doctorProbes.md](linux/doctorProbes.md) — формат `ss -lntup`, модуль через sysfs или `modprobe -n`,
+  Docker включает `ip_forward` и одновременно ставит DROP на FORWARD (важно для Stage 4)
 
 ## security
 
