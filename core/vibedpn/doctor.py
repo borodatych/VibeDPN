@@ -41,6 +41,7 @@ IP_FORWARD_SYSCTL = Path("/proc/sys/net/ipv4/ip_forward")
 SS_ARGV = ["ss", "-H", "-lntup"]
 API_HOST = "127.0.0.1"
 DNS_PORT = 53
+CORE_PROCESS_NAMES = frozenset({"vibedpn-core"})  # comm of the console script in `ss -p`
 ANY_ADDRESSES = frozenset({"0.0.0.0", "*", "::", "[::]"})
 WILDCARD = "*"
 RUNNING_STATE = "running"
@@ -208,7 +209,7 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
         results.extend(_firewall_results(config, facts))
         if facts.tunnel:
             results.append(_tunnel_result(facts.tunnel))
-        access = _tunnel_access_result(config, facts.listeners)
+        access = _tunnel_access_result(config, facts)
         if access is not None:
             results.append(access)
     if facts.docker_error:
@@ -301,24 +302,32 @@ def _tunnel_result(files: dict[str, FileFact]) -> CheckResult:
     return CheckResult("tunnel", Verdict.OK, f"{names} in {SECRETS_DIR}/{WG_SERVER_DIR}, mode 600")
 
 
-def _tunnel_access_result(config: Config, listeners: list[Listener] | None) -> CheckResult | None:
-    """Core has to listen on the tunnel address: the node panel and the API for home boxes."""
-    if config.wg_server is None or listeners is None:
+def _tunnel_access_result(config: Config, facts: DoctorFacts) -> CheckResult | None:
+    """Core itself listens on the tunnel address: the node panel and the API for home boxes."""
+    if config.wg_server is None:
         return None
     address = str(server_address(config).ip)
-    missing = [
-        str(port)
-        for port in (NODEUI_PORT, config.api.port)
-        if not any(
-            item.proto == "tcp" and item.address == address and item.port == port
-            for item in listeners
+    if facts.listeners is None:
+        return CheckResult("tunnel access", Verdict.WARN, f"cannot check: {facts.listeners_error}")
+    problems: list[str] = []
+    for port in (NODEUI_PORT, config.api.port):
+        holder = next(
+            (
+                item
+                for item in facts.listeners
+                if item.proto == "tcp" and item.address == address and item.port == port
+            ),
+            None,
         )
-    ]
-    if missing:
+        if holder is None:
+            problems.append(f"nothing listens on {address}:{port}")
+        elif holder.process and holder.process not in CORE_PROCESS_NAMES:
+            problems.append(f"{address}:{port} is held by {holder.process}, not core")
+    if problems:
         return CheckResult(
             "tunnel access",
             Verdict.FAIL,
-            f"core does not listen on {address} port {', '.join(missing)}",
+            "; ".join(problems),
             "vibedpn restart, then vibedpn logs core",
         )
     return CheckResult(

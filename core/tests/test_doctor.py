@@ -389,17 +389,29 @@ def test_tunnel_files_are_read_from_the_box(tmp_path: Path) -> None:
 
 
 def test_core_must_listen_on_the_tunnel_address() -> None:
-    both = [Listener("tcp", "10.78.0.1", 4449, ""), Listener("tcp", "10.78.0.1", 4480, "")]
-    ok = by_name(evaluate(facts(config=vps_config(), listeners=both)))["tunnel access"]
+    def verdict(listeners: list[Listener] | None, **extra: object) -> doctor.CheckResult:
+        checked = facts(config=vps_config(), listeners=listeners, **extra)
+        return by_name(evaluate(checked))["tunnel access"]
+
+    core = [
+        Listener("tcp", "10.78.0.1", 4449, "vibedpn-core"),
+        Listener("tcp", "10.78.0.1", 4480, "vibedpn-core"),
+    ]
+    ok = verdict(core)
     assert ok.verdict is Verdict.OK
     assert ok.detail == "node panel 10.78.0.1:4449 and core API 10.78.0.1:4480 for home boxes"
-    loopback_only = [Listener("tcp", "127.0.0.1", 4480, ""), Listener("tcp", "10.78.0.1", 4449, "")]
-    missing = by_name(evaluate(facts(config=vps_config(), listeners=loopback_only)))[
-        "tunnel access"
-    ]
+    anonymous = verdict(
+        [Listener("tcp", "10.78.0.1", 4449, ""), Listener("tcp", "10.78.0.1", 4480, "")]
+    )
+    assert anonymous.verdict is Verdict.OK  # not root: ss cannot name the process
+    missing = verdict([Listener("tcp", "127.0.0.1", 4480, "vibedpn-core"), core[0]])
     assert missing.verdict is Verdict.FAIL
-    assert missing.detail == "core does not listen on 10.78.0.1 port 4480"
+    assert missing.detail == "nothing listens on 10.78.0.1:4480"
     assert "vibedpn logs core" in missing.hint
-    unknown = by_name(evaluate(facts(config=vps_config(), listeners=None)))
-    assert "tunnel access" not in unknown
-    assert "tunnel access" not in by_name(evaluate(facts(listeners=both)))  # a home box
+    stranger = verdict([core[0], Listener("tcp", "10.78.0.1", 4480, "nginx")])
+    assert stranger.verdict is Verdict.FAIL
+    assert stranger.detail == "10.78.0.1:4480 is held by nginx, not core"
+    unknown = verdict(None, listeners_error="`ss` not found (install iproute2)")
+    assert unknown.verdict is Verdict.WARN
+    assert unknown.detail == "cannot check: `ss` not found (install iproute2)"
+    assert "tunnel access" not in by_name(evaluate(facts(listeners=core)))  # a home box
