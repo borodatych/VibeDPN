@@ -19,7 +19,7 @@
 
 ## Stage 1 — CLI и install
 
-- [ ] `install.sh`: детект arch/OS, docker + compose plugin, clone в `/opt/vibedpn`, venv, симлинк
+- [x] **`install.sh`** — ✅ (2026-09-12, `next`) детект ОС/арх (Debian 12/13, Raspberry Pi OS 64-bit, amd64/arm64), Docker Engine + Compose из официального apt-репо (deb822), clone в `/opt/vibedpn`, venv на системном Python (floor опущен до 3.11 ради bookworm), зависимости по `core/requirements.txt` с sha256, симлинк, группа `docker`; идемпотентен; тест в CI дважды в чистых bookworm/trixie-контейнерах, матрица Python 3.11/3.12/3.13; мануал [manuals/installation.md](manuals/installation.md)
 - [ ] `vibedpn init`: детект интерфейсов/подсети/wg-модуля, вопросы только роль + пароль
       (+ peer-config), запись `config.yaml`, `.env`, `COMPOSE_PROFILES`
 - [ ] `vibedpn up|down|restart|status|logs` поверх compose

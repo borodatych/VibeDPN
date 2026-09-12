@@ -11,13 +11,13 @@
 | ОС | Debian 12 (bookworm, ядро 6.1) / Debian 13 (trixie, ядро 6.12) / Raspberry Pi OS 64-bit (trixie) |
 | Архитектуры | amd64, arm64 (Raspberry Pi 4/5, N100, любой Debian-хост или VPS) |
 | Требования | Docker Engine + Compose v2 (проверено на 5.5.1), модули ядра `wireguard` и `nf_tables` (в стоковых ядрах есть) |
-| Каталог | `/opt/vibedpn` — клон репозитория; рядом `config.yaml`, `.env`, `secrets/`, `data/` |
+| Каталог | `/opt/vibedpn` — клон репозитория (`install.sh`); там же `venv/` с CLI, симлинк `/usr/local/bin/vibedpn`; рядом `config.yaml`, `.env`, `secrets/`, `data/` |
 
 ## Стек
 
 | Слой | Технологии | Версии |
 |---|---|---|
-| `core/` | Python, FastAPI, Pydantic v2, Typer, httpx, Jinja2, ruamel.yaml (YAML 1.2), uvicorn | Python 3.12.14 (security-only до 2028-10), fastapi 0.141, pydantic 2.13, typer 0.27, uvicorn 0.52 — точные версии в `core/uv.lock` |
+| `core/` | Python, FastAPI, Pydantic v2, Typer, httpx, Jinja2, ruamel.yaml (YAML 1.2), uvicorn | `requires-python >= 3.11`: CLI на коробке работает на системном Python (bookworm 3.11.2, trixie 3.13.5), образ `core` — 3.12; fastapi 0.141, pydantic 2.13, typer 0.27, uvicorn 0.52 — точные версии в `core/uv.lock`, для установки без uv — `core/requirements.txt` с sha256 |
 | Тулчейн core | uv, ruff, mypy strict + плагин pydantic, pytest | uv 0.12.13, ruff 0.16.7, mypy 2.3.1, pytest 9.1.1 |
 | `images/wg/` | Alpine + `wireguard-tools-wg` + `iproute2` + `nftables` | alpine 3.24 |
 | `ui/` | React + TypeScript strict + Vite + Tailwind + shadcn/ui + Zustand, отдаёт nginx | react 19.3, vite 8.3, TypeScript **6.0.x** (typescript-eslint не поддерживает 7), tailwind 4.3, node 24 (Active LTS) — Stage 6 |

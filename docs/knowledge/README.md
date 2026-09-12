@@ -33,7 +33,7 @@
 ## platform
 
 - [debianPi.md](platform/debianPi.md) — ядра Debian 12/13 и Raspberry Pi с `CONFIG_WIREGUARD=m`,
-  Raspberry Pi OS на trixie
+  Raspberry Pi OS на trixie; системный Python 3.11/3.13 и установка Docker из deb822-репозитория
 
 ## ci
 

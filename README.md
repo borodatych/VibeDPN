@@ -5,9 +5,8 @@ Open-source «DPN-коробка» для своих: одна кодовая б
 своём железе (Raspberry Pi 4/5, мини-ПК на N100, любой Debian-хост) и с открытым dVPN-бэкендом
 (Mysterium) вместо закрытого AtomOS.
 
-> **Статус:** в разработке, Stage 0 из 12 — каркас репозитория. Ничего из описанного ниже ещё
-> не работает: это целевая картина, стадии закрываются по [docs/roadmap.md](docs/roadmap.md);
-> установочная строка появится в Stage 1.
+> **Статус:** в разработке, Stage 1 из 12 — установка и CLI. Из описанного ниже работает пока только
+> установка; остальное — целевая картина, стадии закрываются по [docs/roadmap.md](docs/roadmap.md).
 
 ## Что делает коробка
 
@@ -42,6 +41,18 @@ VPS и гонит через него трафик LAN — бесплатно и
 
 Подробно о ролях — [docs/roles.md](docs/roles.md); концепт и архитектура —
 [docs/idea.md](docs/idea.md).
+
+## Установка
+
+Debian 12/13 или Raspberry Pi OS 64-bit, amd64/arm64:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/borodatych/VibeDPN/main/install.sh | sudo bash
+```
+
+До релиза ветка `main` пуста — ставить с `VIBEDPN_BRANCH=next` по
+[docs/manuals/installation.md](docs/manuals/installation.md). Скрипт ставит Docker, клонирует репозиторий
+в `/opt/vibedpn` и собирает CLI `vibedpn`; дальше — `sudo vibedpn init` (следующий шаг плана).
 
 ## Безопасность коротко
 

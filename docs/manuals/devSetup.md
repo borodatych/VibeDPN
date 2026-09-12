@@ -18,6 +18,11 @@
 3. Compose: из корня `docker compose --profile '*' config -q` — валидирует файл со всеми профилями
    без `.env` (дефолты в `compose.yaml` не открывают ничего наружу).
 4. Скрипты и workflow: `git ls-files -z '*.sh' | xargs -0 shellcheck` и `actionlint`.
+   Поменяли зависимости (`uv add`/`uv lock`) — пересоздать `core/requirements.txt`, иначе CI-гейт
+   красный: `cd core && uv export --frozen --no-dev --group build --no-emit-project -o requirements.txt`
+   (гейт сравнивает файлы без комментариев: заголовок с путём вывода в них отличается).
+   Установку целиком можно прогнать как в CI: `install.sh` в контейнере `debian:trixie-slim` с заглушкой
+   `tests/install/docker-stub.sh` (команда — в `.github/workflows/ci.yml`, задача `install`).
 5. Образы: `docker compose --profile '*' build` — собирает `core`, `wg`, `ui` локально.
 
 Все команды одной строкой — в `CLAUDE.md`, раздел «Проверки перед завершением задачи»; CI

@@ -20,13 +20,17 @@ concurrency:
 
 env:
   UV_VERSION: "0.12.13"
-  PYTHON_VERSION: "3.12"
   ACTIONLINT_VERSION: "1.7.12"
 
 jobs:
   python:
-    name: core · ruff, mypy, pytest
+    name: core · ruff, mypy, pytest (${{ matrix.python }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 = Debian 12 system Python (the CLI on the box), 3.12 = the core image, 3.13 = Debian 13.
+        python: ["3.11", "3.12", "3.13"]
     defaults:
       run:
         working-directory: core
@@ -37,12 +41,40 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: core/uv.lock
-      - run: uv python install ${{ env.PYTHON_VERSION }}
-      - run: uv sync --locked
+      - run: uv python install ${{ matrix.python }}
+      - run: uv sync --locked --python ${{ matrix.python }}
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy
       - run: uv run pytest
+      - name: requirements.txt is in sync with uv.lock
+        run: |
+          uv export --frozen --no-dev --group build --no-emit-project --no-header > /tmp/requirements.txt
+          diff -u <(grep -v '^#' requirements.txt) /tmp/requirements.txt
+
+  install:
+    name: install.sh · ${{ matrix.debian }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        debian: [bookworm, trixie]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run the installer twice in a clean Debian container (docker CLI stubbed)
+        run: |
+          docker run --rm -v "$PWD:/src:ro" "debian:${{ matrix.debian }}-slim" bash -eu -c '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates >/dev/null
+            git config --global --add safe.directory /src
+            git clone -q /src /tmp/repo && git -C /tmp/repo checkout -q -b ci-install
+            install -m 755 /src/tests/install/docker-stub.sh /usr/local/bin/docker
+            export VIBEDPN_REPO=/tmp/repo VIBEDPN_BRANCH=ci-install
+            bash /src/install.sh
+            test -L /usr/local/bin/vibedpn
+            vibedpn --version
+            bash /src/install.sh
+          '
 
   ui:
     name: ui · lint
@@ -97,7 +129,7 @@ jobs:
 
   images:
     name: image · ${{ matrix.image.name }}
-    needs: [python, shell, compose]
+    needs: [python, shell, compose, install]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
