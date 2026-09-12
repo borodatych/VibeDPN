@@ -17,6 +17,8 @@ from vibedpn.bootstrap import (
     CONFIG_FILE,
     ENV_FILE,
     PUBLIC_FILE_MODE,
+    checkout_image_tag,
+    give_to_invoker,
     preserved_env,
     render_env,
     write_file,
@@ -64,10 +66,22 @@ def check_box(box_dir: Path) -> Config:
 def refresh_env(box_dir: Path, config: Config) -> Path:
     """Re-derive ``.env`` from ``config.yaml`` so hand edits to the config take effect."""
     env_path = box_dir / ENV_FILE
+    preserved = preserved_env(env_path, checkout_image_tag(box_dir))
     try:
-        return write_file(env_path, render_env(config, preserved_env(env_path)), PUBLIC_FILE_MODE)
+        write_file(env_path, render_env(config, preserved), PUBLIC_FILE_MODE)
+        give_to_invoker(env_path)
     except OSError as exc:
         raise ComposeError(f"cannot write {env_path}: {exc.strerror}; run with sudo?") from exc
+    return env_path
+
+
+def stale_services(all_services: str, active_services: str) -> list[str]:
+    """Services of profiles that are no longer active (``config --services`` with and without
+    ``--profile '*'``). ``up --remove-orphans`` leaves their containers alone: Compose treats a
+    disabled service as known, not as an orphan."""
+    active = {line.strip() for line in active_services.splitlines() if line.strip()}
+    every = {line.strip() for line in all_services.splitlines() if line.strip()}
+    return sorted(every - active)
 
 
 def parse_ps(output: str) -> list[ServiceStatus]:
@@ -79,7 +93,12 @@ def parse_ps(output: str) -> list[ServiceStatus]:
         loaded = json.loads(text)
         records = loaded if isinstance(loaded, list) else [loaded]
     except json.JSONDecodeError:
-        records = [json.loads(line) for line in text.splitlines() if line.strip()]
+        try:
+            records = [json.loads(line) for line in text.splitlines() if line.strip()]
+        except json.JSONDecodeError:
+            raise ComposeError(f"unexpected `docker compose ps` output: {text[:200]!r}") from None
+    if not all(isinstance(record, dict) for record in records):
+        raise ComposeError(f"unexpected `docker compose ps` output: {text[:200]!r}")
     return [
         ServiceStatus(
             service=str(record.get("Service", "?")),
@@ -104,15 +123,17 @@ def preflight() -> None:
         raise ComposeError("docker not found; run install.sh") from exc
     if probe.returncode == 0:
         return
-    stderr = probe.stderr.strip()
-    if "permission denied" in stderr.lower():
+    # Match the dial error, which is the same across CLI versions, not the surrounding prose
+    # (Docker 29 says "failed to connect to the docker API", older ones "Cannot connect").
+    stderr = probe.stderr.strip().lower()
+    if "permission denied" in stderr:
         raise ComposeError(
             "no access to the Docker socket: log out and in again after install.sh added you"
             " to the docker group, or run with sudo"
         )
-    if "cannot connect" in stderr.lower():
+    if "no such file or directory" in stderr or "connection refused" in stderr:
         raise ComposeError("the Docker daemon is not running: sudo systemctl start docker")
-    raise ComposeError(f"docker is not usable: {stderr}")
+    raise ComposeError(f"docker is not usable: {probe.stderr.strip()}")
 
 
 def run(argv: list[str]) -> int:

@@ -16,6 +16,7 @@ from vibedpn.compose import (
     parse_ps,
     preflight,
     refresh_env,
+    stale_services,
 )
 from vibedpn.config import Role
 
@@ -64,6 +65,17 @@ def test_check_box_and_refresh_env(tmp_path: Path) -> None:
     assert "stale" not in text
 
 
+def test_refresh_env_needs_only_the_file_to_be_writable(tmp_path: Path) -> None:
+    box = make_box(tmp_path)
+    (box / ".env").write_text("VIBEDPN_TAG=v1\n", encoding="utf-8")
+    box.chmod(0o555)  # directory read-only, file still ours
+    try:
+        refresh_env(box, check_box(box))
+        assert "COMPOSE_PROFILES=provider,wg-server" in (box / ".env").read_text(encoding="utf-8")
+    finally:
+        box.chmod(0o755)
+
+
 def test_parse_ps_accepts_ndjson_and_arrays() -> None:
     ndjson = (
         '{"Service":"core","State":"running","Health":"healthy","Status":"Up 5s (healthy)"}\n'
@@ -79,11 +91,34 @@ def test_parse_ps_accepts_ndjson_and_arrays() -> None:
     assert parse_ps("") == []
 
 
+@pytest.mark.parametrize("garbage", ["not json at all", "null", "[1, 2]", '{"a":1}\n<html>'])
+def test_parse_ps_rejects_garbage_readably(garbage: str) -> None:
+    with pytest.raises(ComposeError, match="unexpected"):
+        parse_ps(garbage)
+
+
+def test_stale_services_is_the_difference_of_profiles() -> None:
+    every = "core\nadguard\nmyst-provider\nui\n"
+    active = "core\nui\n"
+    assert stale_services(every, active) == ["adguard", "myst-provider"]
+    assert stale_services(every, every) == []
+
+
 @pytest.mark.parametrize(
     ("stderr", "expected"),
     [
         ("permission denied while trying to connect to the Docker daemon socket", "docker group"),
-        ("Cannot connect to the Docker daemon at unix:///var/run/docker.sock", "systemctl start"),
+        ("dial unix /var/run/docker.sock: connect: permission denied", "docker group"),
+        (
+            "failed to connect to the docker API at unix:///var/run/docker.sock; check if the path"
+            " is correct and if the daemon is running: dial unix /var/run/docker.sock: connect:"
+            " no such file or directory",
+            "systemctl start",
+        ),
+        (
+            "Cannot connect to the Docker daemon: dial tcp 127.0.0.1:2375: connection refused",
+            "systemctl start",
+        ),
         ("something odd", "not usable"),
     ],
 )

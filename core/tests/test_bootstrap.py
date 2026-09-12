@@ -1,18 +1,22 @@
 """Building and writing a box configuration from answers and host facts."""
 
+import os
 import stat
+import subprocess
 from ipaddress import IPv4Address
 from pathlib import Path
 
 import bcrypt
 import pytest
 
+from vibedpn import bootstrap
 from vibedpn.bootstrap import (
     Answers,
     BootstrapError,
     HostFacts,
     build_config,
     check_password,
+    checkout_image_tag,
     preserved_env,
     public_address,
     read_peer_config,
@@ -209,3 +213,67 @@ def test_write_box_reports_unwritable_directory(tmp_path: Path) -> None:
             write_box(locked / "box", build_config(answers, LAN), answers, force=False)
     finally:
         locked.chmod(0o700)
+
+
+def git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+def test_checkout_image_tag_follows_the_branch(tmp_path: Path) -> None:
+    assert checkout_image_tag(tmp_path) == "latest"  # not a checkout at all
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    git(
+        repo,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "x",
+    )
+    assert checkout_image_tag(repo) == "latest"
+    git(repo, "switch", "-q", "-c", "next")
+    assert checkout_image_tag(repo) == "next"
+    git(repo, "switch", "-q", "-c", "feature/wifi")
+    assert checkout_image_tag(repo) == "feature-wifi"
+    git(repo, "switch", "-q", "--detach")
+    assert checkout_image_tag(repo) == "latest"
+
+
+def test_preserved_env_takes_the_default_tag(tmp_path: Path) -> None:
+    assert preserved_env(tmp_path / ".env", "next") == {"VIBEDPN_TAG": "next"}
+
+
+def test_init_under_sudo_hands_top_level_files_to_the_invoker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chowned: list[tuple[Path, int, int]] = []
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(os, "chown", lambda path, uid, gid: chowned.append((Path(path), uid, gid)))
+    monkeypatch.setenv("SUDO_UID", "1000")
+    monkeypatch.setenv("SUDO_GID", "1000")
+    answers = Answers(Role.HOME, password="secret123")
+    box = tmp_path / "box"
+    write_box(box, build_config(answers, LAN), answers, force=False)
+    assert sorted(p.name for p, _, _ in chowned) == [".env", "config.yaml"]
+    assert all((uid, gid) == (1000, 1000) for _, uid, gid in chowned)
+
+
+def test_no_ownership_change_without_sudo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    called = []
+    monkeypatch.setattr(os, "chown", lambda *a: called.append(a))
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    assert bootstrap.invoker_ids() is None
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    monkeypatch.setenv("SUDO_UID", "1000")
+    monkeypatch.setenv("SUDO_GID", "1000")
+    assert bootstrap.invoker_ids() is None
+    answers = Answers(Role.VPS, endpoint="vps.example.com")
+    write_box(tmp_path / "box", build_config(answers, LAN), answers, force=False)
+    assert called == []

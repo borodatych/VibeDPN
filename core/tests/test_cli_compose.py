@@ -17,6 +17,8 @@ class Recorder:
         self.calls: list[list[str]] = []
         self.exit_code = 0
         self.ps_output = ""
+        self.all_services = "core\nmyst-provider\nwg-server\n"
+        self.active_services = "core\nmyst-provider\nwg-server\n"
 
     def run(self, argv: list[str]) -> int:
         self.calls.append(argv)
@@ -24,6 +26,8 @@ class Recorder:
 
     def capture(self, argv: list[str]) -> str:
         self.calls.append(argv)
+        if argv[-2:] == ["config", "--services"]:
+            return self.all_services if "--profile" in argv else self.active_services
         return self.ps_output
 
 
@@ -47,8 +51,30 @@ def test_up_refreshes_env_and_starts(box: tuple[Path, Recorder]) -> None:
     box_dir, recorder = box
     result = runner.invoke(cli.app, ["up", "--dir", str(box_dir)])
     assert result.exit_code == 0, result.output
-    assert tail(recorder.calls[0]) == ["up", "-d", "--remove-orphans"]
+    assert [tail(c) for c in recorder.calls] == [
+        ["--profile", "*", "config", "--services"],
+        ["config", "--services"],
+        ["up", "-d", "--remove-orphans"],
+    ]
     assert "COMPOSE_PROFILES=provider,wg-server" in (box_dir / ".env").read_text(encoding="utf-8")
+
+
+def test_up_retires_containers_of_dropped_profiles(box: tuple[Path, Recorder]) -> None:
+    box_dir, recorder = box
+    recorder.all_services = "core\nmyst-provider\nmyst-consumer\nwg-server\nadguard\n"
+    recorder.active_services = "core\nmyst-provider\nwg-server\n"
+    result = runner.invoke(cli.app, ["up", "--dir", str(box_dir)])
+    assert result.exit_code == 0, result.output
+    assert tail(recorder.calls[2]) == [
+        "--profile",
+        "*",
+        "rm",
+        "--stop",
+        "--force",
+        "adguard",
+        "myst-consumer",
+    ]
+    assert tail(recorder.calls[3]) == ["up", "-d", "--remove-orphans"]
 
 
 def test_down_covers_every_profile(box: tuple[Path, Recorder]) -> None:
@@ -61,7 +87,7 @@ def test_down_covers_every_profile(box: tuple[Path, Recorder]) -> None:
 def test_restart_recreates_then_restarts(box: tuple[Path, Recorder]) -> None:
     box_dir, recorder = box
     assert runner.invoke(cli.app, ["restart", "--dir", str(box_dir)]).exit_code == 0
-    assert [tail(c) for c in recorder.calls] == [["up", "-d", "--remove-orphans"], ["restart"]]
+    assert [tail(c) for c in recorder.calls][2:] == [["up", "-d", "--remove-orphans"], ["restart"]]
 
 
 def test_logs_passes_service_follow_and_tail(box: tuple[Path, Recorder]) -> None:

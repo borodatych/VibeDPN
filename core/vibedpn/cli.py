@@ -31,6 +31,7 @@ from vibedpn.compose import (
     preflight,
     refresh_env,
     run,
+    stale_services,
 )
 from vibedpn.config import Config, Role, Upstream, check_endpoint
 from vibedpn.detect import DetectError, HostProbe
@@ -254,10 +255,24 @@ def _compose(box_dir: Path, *args: str, all_profiles: bool = False) -> None:
         raise typer.Exit(code)
 
 
+def _retire_stale(box_dir: Path) -> None:
+    """Stop and remove containers of profiles the (fresh) .env no longer activates."""
+    try:
+        stale = stale_services(
+            capture(compose_argv(box_dir, "config", "--services", all_profiles=True)),
+            capture(compose_argv(box_dir, "config", "--services")),
+        )
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+    if stale:
+        _compose(box_dir, "rm", "--stop", "--force", *stale, all_profiles=True)
+
+
 @app.command()
 def up(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     """Start the box: derive .env from config.yaml and bring the role's services up."""
     _prepare(box_dir, refresh=True)
+    _retire_stale(box_dir)
     _compose(box_dir, "up", "-d", "--remove-orphans")
 
 
@@ -272,6 +287,7 @@ def down(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
 def restart(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     """Apply config.yaml changes: refresh .env, recreate what changed, restart the rest."""
     _prepare(box_dir, refresh=True)
+    _retire_stale(box_dir)
     _compose(box_dir, "up", "-d", "--remove-orphans")
     _compose(box_dir, "restart")
 

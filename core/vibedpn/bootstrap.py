@@ -8,7 +8,9 @@ it gathers every byte it will write before creating a single file.
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,8 +35,11 @@ from vibedpn.config import (
 from vibedpn.detect import Interface
 
 DEFAULT_BOX_DIR = Path("/opt/vibedpn")  # install.sh has the same default; keep them equal
-DEFAULT_IMAGE_TAG = "latest"
+DEFAULT_IMAGE_TAG = "latest"  # what CI publishes from main
+RELEASE_BRANCH = "main"
 IMAGE_TAG_VAR = "VIBEDPN_TAG"
+# docker/metadata-action turns a branch name into a tag by replacing anything else with '-'.
+TAG_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
 # Lines of an existing .env that survive a re-run of init: the image tag and the two optional
 # overrides of third-party image pins that .env.example documents.
 PRESERVED_ENV_VARS = (IMAGE_TAG_VAR, "MYST_TAG", "ADGUARD_TAG")
@@ -184,9 +189,30 @@ def render_config(config: Config) -> str:
     return template.render(config=config, lan=config.role is not Role.VPS)
 
 
-def preserved_env(env_path: Path) -> dict[str, str]:
+def checkout_image_tag(box_dir: Path) -> str:
+    """The image tag CI publishes for the checked-out branch: ``latest`` for main, else the branch.
+
+    A box installed with ``VIBEDPN_BRANCH=next`` must pull ``:next``; ``:latest`` does not exist
+    until the first release, and Compose would silently build the images locally instead.
+    """
+    try:
+        probe = subprocess.run(
+            ["git", "-C", str(box_dir), "symbolic-ref", "--short", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return DEFAULT_IMAGE_TAG
+    branch = probe.stdout.strip()
+    if probe.returncode != 0 or not branch or branch == RELEASE_BRANCH:
+        return DEFAULT_IMAGE_TAG
+    return TAG_UNSAFE.sub("-", branch)
+
+
+def preserved_env(env_path: Path, default_tag: str = DEFAULT_IMAGE_TAG) -> dict[str, str]:
     """Values of an existing ``.env`` that a re-run keeps; the image tag always has a value."""
-    kept = {IMAGE_TAG_VAR: DEFAULT_IMAGE_TAG}
+    kept = {IMAGE_TAG_VAR: default_tag}
     if not env_path.is_file():
         return kept
     for line in env_path.read_text(encoding="utf-8").splitlines():
@@ -248,7 +274,7 @@ def write_box(box_dir: Path, config: Config, answers: Answers, *, force: bool) -
     text = render_config(config)
     if Config.model_validate(parse_yaml(text)) != config:
         raise BootstrapError("rendered config.yaml does not round-trip; this is a template bug")
-    env_text = render_env(config, preserved_env(env_path))
+    env_text = render_env(config, preserved_env(env_path, checkout_image_tag(box_dir)))
     secrets: dict[str, str] = {}
     if answers.password is not None:
         secrets[HTPASSWD_FILE] = htpasswd_line(UI_USER, answers.password)
@@ -261,6 +287,11 @@ def write_box(box_dir: Path, config: Config, answers: Answers, *, force: bool) -
             shutil.copy2(config_path, box_dir / CONFIG_BACKUP)
         result.files.append(write_file(config_path, text, PUBLIC_FILE_MODE))
         result.files.append(write_file(env_path, env_text, PUBLIC_FILE_MODE))
+        # The top-level files belong to the person, not to root: `vibedpn up` rewrites .env and
+        # later commands edit config.yaml without sudo. secrets/ stays root-only.
+        for path in (config_path, env_path, box_dir / CONFIG_BACKUP):
+            if path.exists():
+                give_to_invoker(path)
         secrets_dir.mkdir(mode=SECRET_DIR_MODE, exist_ok=True)
         secrets_dir.chmod(SECRET_DIR_MODE)
         for name, content in secrets.items():
@@ -276,6 +307,23 @@ def write_box(box_dir: Path, config: Config, answers: Answers, *, force: bool) -
         target = exc.filename or box_dir
         raise BootstrapError(f"cannot write {target}: {exc.strerror}; run with sudo?") from exc
     return result
+
+
+def invoker_ids() -> tuple[int, int] | None:
+    """uid/gid of the person behind ``sudo``, when running as root through sudo."""
+    if os.geteuid() != 0:
+        return None
+    uid, gid = os.environ.get("SUDO_UID"), os.environ.get("SUDO_GID")
+    if uid is None or gid is None or not uid.isdigit() or not gid.isdigit():
+        return None
+    return int(uid), int(gid)
+
+
+def give_to_invoker(path: Path) -> None:
+    """Hand a file written under sudo back to the invoking user (no-op otherwise)."""
+    ids = invoker_ids()
+    if ids is not None:
+        os.chown(path, *ids)
 
 
 def write_file(path: Path, text: str, mode: int) -> Path:

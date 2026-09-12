@@ -30,7 +30,7 @@
       ошибкой, все отказы через `error:` без трассировок, сборка содержимого до первой записи,
       ранние отказы до вопросов, флаги чужой роли, `~` в промпте, секреты прежней роли в `.bak`,
       честная негативная проверка в CI
-- [x] **`vibedpn up|down|restart|status|logs`** — ✅ (2026-09-12, `next`) поверх `docker compose --project-directory`; `up -d --remove-orphans` с пересборкой `.env` из `config.yaml`, `down` со всеми профилями, `restart` = up + restart (bind-mount конфига пересоздание не вызывает), `status` из конфига и `ps --format json`, `logs` с `-f`/`--tail`; preflight переводит ошибки Docker (нет CLI, нет демона, нет прав на сокет) в одну строку; smoke на colima: up только `core` → healthy → logs → restart → down
+- [x] **`vibedpn up|down|restart|status|logs`** — ✅ (2026-09-12, `next`) поверх `docker compose --project-directory`; `up -d --remove-orphans` с пересборкой `.env` из `config.yaml`, `down` со всеми профилями, `restart` = up + restart (bind-mount конфига пересоздание не вызывает), `status` из конфига и `ps --format json`, `logs` с `-f`/`--tail`; preflight переводит ошибки Docker (нет CLI, нет демона, нет прав на сокет) в одну строку; smoke на colima: up только `core` → healthy → logs → restart → down. Ревью (2 линзы + скептик): `init` под sudo отдаёт `config.yaml`/`.env` пользователю (иначе `up` без sudo падал), `up`/`restart` гасят контейнеры выпавших профилей (`--remove-orphans` их не трогает — проверено), тег образов из ветки чекаута (`next` → `:next`, а не несуществующий `latest`)
 - [ ] `vibedpn doctor` v1: wg-модуль, ip_forward, занятые порты 53/51820, docker жив
 
 ## Stage 2 — Роль vps: нода
