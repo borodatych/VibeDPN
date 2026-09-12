@@ -20,9 +20,15 @@ Compose 5.3.1 «сирота» это сервис, которого нет в �
 `VIBEDPN_TAG=latest` получала «manifest unknown», и Compose из-за `build:` молча собирал три
 образа на месте (на Pi — десятки минут). `init` выводит тег из `git symbolic-ref --short HEAD`
 (`main` → `latest`, иначе имя ветки с заменой недопустимых символов на `-`, как у
-docker/metadata-action); записанный тег сильнее. `restart` двухшаговый: `up -d` применяет
-изменения `.env`/compose (пересоздание), но `config.yaml` смонтирован bind-mount'ом и его правка
-пересоздание не вызывает — поэтому следом `compose restart`, чтобы контейнеры перечитали конфиг.
+docker/metadata-action); записанный тег сильнее. `restart` — это `compose stop` и затем
+`up -d --remove-orphans`, а не `compose restart`: правка `config.yaml` (bind-mount) пересоздания
+не вызывает, поэтому контейнеры надо именно перезапустить, но **`compose restart` перезапускает
+всё разом и не соблюдает `depends_on: condition: service_healthy`** (проверено на Compose 5.3.1:
+после смены `wg_server.listen_port` `core` и `wg-server` стартовали в одну секунду, `wg0.conf` на
+диске уже с новым портом, а сервер слушал старый — прочёл файл до перерендера). Условие здоровья
+документировано для старта через `up`: «Compose waits for healthchecks to pass on dependencies
+marked with service_healthy» — поэтому остановленная коробка поднимается через `up`, который
+заодно пересоздаёт изменившееся.
 `.env` — производная и пересобирается перед `up`/`restart` из `config.yaml` (`render_env` +
 сохранённые `VIBEDPN_TAG`, `MYST_TAG`, `ADGUARD_TAG`): правка конфига руками работает без
 `init --force`. `ps --format json` отдаёт объект на строку (поля `Service`, `State`, `Health`,
@@ -35,6 +41,8 @@ API … dial unix …: connect: no such file or directory», старые — «
 **Источники:** https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/
 (`.env` из project directory), https://docs.docker.com/compose/how-tos/profiles/ (`--profile "*"`),
 https://docs.docker.com/reference/cli/docker/compose/up/ (`--remove-orphans`),
+https://docs.docker.com/compose/how-tos/startup-order/ (`service_healthy` при старте),
+https://docs.docker.com/reference/cli/docker/compose/restart/ ,
 https://docs.docker.com/reference/cli/docker/compose/rm/ , https://docs.docker.com/reference/cli/docker/compose/ps/
 (`--format json`), https://github.com/docker/metadata-action (`type=ref,event=branch`),
 https://www.sudo.ws/docs/man/sudo.man/ (`SUDO_UID`, `SUDO_GID`, `env_reset`).

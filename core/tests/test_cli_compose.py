@@ -101,10 +101,13 @@ def test_down_covers_every_profile(box: tuple[Path, Recorder]) -> None:
     assert not (box_dir / ".env").exists()  # down does not derive .env
 
 
-def test_restart_recreates_then_restarts(box: tuple[Path, Recorder]) -> None:
+def test_restart_stops_then_brings_up_in_dependency_order(box: tuple[Path, Recorder]) -> None:
+    """`compose restart` ignores `condition: service_healthy`; `up` after `stop` honours it."""
     box_dir, recorder = box
     assert runner.invoke(cli.app, ["restart", "--dir", str(box_dir)]).exit_code == 0
-    assert [tail(c) for c in recorder.calls][2:] == [["up", "-d", "--remove-orphans"], ["restart"]]
+    calls = [tail(c) for c in recorder.calls][2:]
+    assert calls == [["stop"], ["up", "-d", "--remove-orphans"]]
+    assert ["restart"] not in calls
 
 
 def test_logs_passes_service_follow_and_tail(box: tuple[Path, Recorder]) -> None:

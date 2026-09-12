@@ -1,5 +1,6 @@
 """VPS firewall: rendering, the lock-out guard, nft invocation and core start-up."""
 
+import os
 import subprocess
 from ipaddress import IPv4Address
 from pathlib import Path
@@ -147,7 +148,13 @@ def test_core_reports_a_configuration_without_firewall(
         encoding="utf-8",
     )
     with (
-        patch.dict("os.environ", {server.CONFIG_PATH_ENV: str(config)}),
+        patch.dict(
+            "os.environ",
+            {
+                server.CONFIG_PATH_ENV: str(config),
+                server.SECRETS_DIR_ENV: str(tmp_path / "secrets"),
+            },
+        ),
         patch("vibedpn.api.server.apply_firewall", return_value=False),
         patch("vibedpn.api.server.uvicorn.run"),
     ):
@@ -162,7 +169,10 @@ def test_core_applies_the_firewall_before_serving(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with (
-        patch.dict("os.environ", {server.CONFIG_PATH_ENV: str(good)}),
+        patch.dict(
+            "os.environ",
+            {server.CONFIG_PATH_ENV: str(good), server.SECRETS_DIR_ENV: str(tmp_path / "secrets")},
+        ),
         patch("vibedpn.api.server.apply_firewall", return_value=True) as applied,
         patch("vibedpn.api.server.uvicorn.run") as run,
     ):
@@ -170,11 +180,66 @@ def test_core_applies_the_firewall_before_serving(tmp_path: Path) -> None:
     applied.assert_called_once()
     run.assert_called_once()
     with (
-        patch.dict("os.environ", {server.CONFIG_PATH_ENV: str(good)}),
+        patch.dict(
+            "os.environ",
+            {server.CONFIG_PATH_ENV: str(good), server.SECRETS_DIR_ENV: str(tmp_path / "secrets")},
+        ),
         patch("vibedpn.api.server.apply_firewall", side_effect=RouterError("nft failed")),
         patch("vibedpn.api.server.uvicorn.run") as run,
         pytest.raises(SystemExit) as excinfo,
     ):
         server.main()
     assert excinfo.value.code == 78
+    run.assert_not_called()
+
+
+VPS_CONFIG = (
+    "version: 1\nrole: vps\nprovider: {enabled: true}\nwg_server: {endpoint: 203.0.113.7}\n"
+)
+
+
+def test_core_renders_the_tunnel_after_the_firewall_and_before_serving(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(VPS_CONFIG, encoding="utf-8")
+    order: list[str] = []
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                server.CONFIG_PATH_ENV: str(config),
+                server.SECRETS_DIR_ENV: str(tmp_path / "secrets"),
+            },
+        ),
+        patch("vibedpn.api.server.apply_firewall", side_effect=lambda _c: order.append("firewall")),
+        patch("vibedpn.api.server.uvicorn.run", side_effect=lambda *_a, **_k: order.append("api")),
+    ):
+        server.main()
+    assert order == ["firewall", "api"]
+    conf = tmp_path / "secrets" / "wg-server" / "wg0.conf"
+    assert conf.is_file() and "ListenPort = 51820" in conf.read_text(encoding="utf-8")
+
+
+def test_core_refuses_to_start_on_a_broken_tunnel_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(VPS_CONFIG, encoding="utf-8")
+    directory = tmp_path / "secrets" / "wg-server"
+    directory.mkdir(parents=True)
+    (directory / "server.key").write_text("garbage\n", encoding="utf-8")
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                server.CONFIG_PATH_ENV: str(config),
+                server.SECRETS_DIR_ENV: str(tmp_path / "secrets"),
+            },
+        ),
+        patch("vibedpn.api.server.apply_firewall", return_value=True),
+        patch("vibedpn.api.server.uvicorn.run") as run,
+        pytest.raises(SystemExit) as exit_info,
+    ):
+        server.main()
+    assert exit_info.value.code == os.EX_CONFIG
+    assert "restore it from a backup" in capsys.readouterr().err
     run.assert_not_called()

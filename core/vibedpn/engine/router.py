@@ -11,10 +11,9 @@ import os
 import shutil
 import subprocess
 
-from jinja2 import Environment, PackageLoader, StrictUndefined
-
 from vibedpn.config import Config, Role, parse_port_range
 from vibedpn.detect import SBIN_DIRS
+from vibedpn.templating import template_environment
 
 NFT = "nft"
 NFT_TABLE = "inet vibedpn"
@@ -29,17 +28,6 @@ class RouterError(RuntimeError):
     """A user-facing reason why host rules could not be rendered or applied."""
 
 
-def _environment() -> Environment:
-    return Environment(
-        loader=PackageLoader("vibedpn", "templates"),
-        undefined=StrictUndefined,
-        autoescape=False,  # nftables syntax, not HTML
-        trim_blocks=True,
-        lstrip_blocks=True,
-        keep_trailing_newline=True,
-    )
-
-
 def firewall_ruleset(config: Config) -> str | None:
     """The nftables ruleset of a VPS, or ``None`` when this box has no host firewall."""
     if config.role is not Role.VPS or not config.firewall.enabled:
@@ -48,7 +36,7 @@ def firewall_ruleset(config: Config) -> str | None:
     if config.provider.enabled:
         udp_from, udp_to = parse_port_range(config.provider.udp_ports)
     return (
-        _environment()
+        template_environment()
         .get_template(FIREWALL_TEMPLATE)
         .render(
             ssh_ports=config.firewall.ssh_ports,

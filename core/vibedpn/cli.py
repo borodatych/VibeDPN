@@ -296,11 +296,16 @@ def down(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
 
 @app.command()
 def restart(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
-    """Apply config.yaml changes: refresh .env, recreate what changed, restart the rest."""
+    """Apply config.yaml changes: refresh .env, stop the box, bring it up again.
+
+    Not `compose restart`: it restarts every container at once and ignores
+    `depends_on: condition: service_healthy`, so wg-server would read the wg0.conf that core has
+    not re-rendered yet. `up` honours the conditions, and recreates what changed on the way.
+    """
     _prepare(box_dir, refresh=True)
     _retire_stale(box_dir)
+    _compose(box_dir, "stop")
     _compose(box_dir, "up", "-d", "--remove-orphans")
-    _compose(box_dir, "restart")
 
 
 @app.command()

@@ -1,0 +1,13 @@
+# VibeDPN WireGuard server, role vps. Rendered by core from config.yaml at every start;
+# edits here are overwritten. The private key lives in server.key next to this file.
+[Interface]
+Address = {{ address }}
+ListenPort = {{ listen_port }}
+PrivateKey = {{ private_key }}
+{% for peer in peers %}
+
+[Peer]
+# {{ peer.name }}
+PublicKey = {{ peer.public_key }}
+AllowedIPs = {{ peer.address }}/32
+{% endfor %}

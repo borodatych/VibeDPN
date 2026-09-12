@@ -361,7 +361,13 @@ def test_server_exits_cleanly_on_bad_config(
     assert "not found" in capsys.readouterr().err
     bad = tmp_path / "bad.yaml"
     bad.write_text("version: 1\nrole: vps\n", encoding="utf-8")
-    with patch.dict("os.environ", {server.CONFIG_PATH_ENV: str(bad)}), pytest.raises(SystemExit):
+    with (
+        patch.dict(
+            "os.environ",
+            {server.CONFIG_PATH_ENV: str(bad), server.SECRETS_DIR_ENV: str(tmp_path / "secrets")},
+        ),
+        pytest.raises(SystemExit),
+    ):
         server.main()
     assert "wg_server: required" in capsys.readouterr().err
 
@@ -374,7 +380,10 @@ def test_server_serves_on_loopback_and_config_port(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with (
-        patch.dict("os.environ", {server.CONFIG_PATH_ENV: str(good)}),
+        patch.dict(
+            "os.environ",
+            {server.CONFIG_PATH_ENV: str(good), server.SECRETS_DIR_ENV: str(tmp_path / "secrets")},
+        ),
         patch("vibedpn.api.server.apply_firewall", return_value=True),
         patch("vibedpn.api.server.uvicorn.run") as run,
     ):

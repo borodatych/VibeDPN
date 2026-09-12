@@ -14,10 +14,13 @@ from pydantic import ValidationError
 from vibedpn.api.app import create_app
 from vibedpn.config import ConfigError, load_config
 from vibedpn.engine.router import RouterError, apply_firewall
+from vibedpn.engine.wg import WgError, ensure_server
 
 API_HOST = "127.0.0.1"
 CONFIG_PATH_ENV = "VIBEDPN_CONFIG"
 DEFAULT_CONFIG_PATH = Path("/etc/vibedpn/config.yaml")
+SECRETS_DIR_ENV = "VIBEDPN_SECRETS"
+DEFAULT_SECRETS_DIR = Path("/etc/vibedpn/secrets")  # compose.yaml mounts ./secrets here
 
 
 def main() -> None:
@@ -42,4 +45,14 @@ def main() -> None:
     except RouterError as exc:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None
+    # Before the API: compose starts wg-server only once core is healthy, so the file it reads
+    # is always the one rendered from the current config.
+    secrets_dir = Path(os.environ.get(SECRETS_DIR_ENV, DEFAULT_SECRETS_DIR))
+    try:
+        conf = ensure_server(config, secrets_dir)
+    except WgError as exc:
+        sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
+        raise SystemExit(os.EX_CONFIG) from None
+    if conf is not None:
+        sys.stderr.write(f"vibedpn-core: WireGuard server config rendered ({conf.name})\n")
     uvicorn.run(create_app(config), host=API_HOST, port=config.api.port, log_level="info")

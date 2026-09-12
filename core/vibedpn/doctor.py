@@ -33,6 +33,8 @@ from vibedpn.config import Config, Profile, Role, parse_port_range
 from vibedpn.detect import SSHD, WIREGUARD_MODULE, module_present
 from vibedpn.engine.myst import NODEUI_PORT, TEQUILAPI_PORT
 from vibedpn.engine.router import NFT_TABLE, find_nft
+from vibedpn.engine.wg import SERVER_CONF_FILE, SERVER_KEY_FILE
+from vibedpn.engine.wg import SERVER_DIR as WG_SERVER_DIR
 
 NFTABLES_MODULE = "nf_tables"
 IP_FORWARD_SYSCTL = Path("/proc/sys/net/ipv4/ip_forward")
@@ -58,6 +60,12 @@ class CheckResult:
     verdict: Verdict
     detail: str
     hint: str = ""
+
+
+@dataclass(frozen=True)
+class FileFact:
+    present: bool | None  # None: cannot stat (root-only directory, not root)
+    mode: int | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +113,7 @@ class DoctorFacts:
     active_services: list[str] = field(default_factory=list)
     firewall_table: bool | None = None  # None: could not list tables, see firewall_error
     firewall_error: str = ""
+    tunnel: dict[str, FileFact] = field(default_factory=dict)  # role vps: files core renders
 
 
 def parse_ss(output: str) -> list[Listener]:
@@ -197,6 +206,8 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
     results.append(_ip_forward_result(facts.ip_forward))
     if config is not None and config.role is Role.VPS:
         results.extend(_firewall_results(config, facts))
+        if facts.tunnel:
+            results.append(_tunnel_result(facts.tunnel))
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -259,6 +270,32 @@ def _wireguard_result(config: Config | None, present: bool | None) -> CheckResul
         Verdict.WARN,
         "kernel module missing; this role runs no WireGuard container (myst brings its own tunnel)",
     )
+
+
+def _tunnel_result(files: dict[str, FileFact]) -> CheckResult:
+    """The server key and wg0.conf that core writes at start: present and closed to others."""
+    names = ", ".join(files) or "tunnel files"
+    if any(fact.present is None for fact in files.values()):
+        return CheckResult(
+            "tunnel", Verdict.WARN, f"cannot check {names} ({SECRETS_DIR}/ is root-only)", SUDO_HINT
+        )
+    missing = [name for name, fact in files.items() if not fact.present]
+    if missing:
+        return CheckResult(
+            "tunnel",
+            Verdict.WARN,
+            f"{', '.join(missing)} not written yet; core creates them at start",
+            "vibedpn up",
+        )
+    loose = [name for name, fact in files.items() if fact.mode is not None and fact.mode & 0o077]
+    if loose:
+        return CheckResult(
+            "tunnel",
+            Verdict.FAIL,
+            f"{', '.join(loose)} readable by other users",
+            "vibedpn restart (core resets the mode to 600)",
+        )
+    return CheckResult("tunnel", Verdict.OK, f"{names} in {SECRETS_DIR}/{WG_SERVER_DIR}, mode 600")
 
 
 def _firewall_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
@@ -435,8 +472,10 @@ def gather(box_dir: Path) -> DoctorFacts:
             docker_error = str(exc)
     listeners, listeners_error = _listeners()
     firewall_table, firewall_error = None, ""
+    tunnel: dict[str, FileFact] = {}
     if config is not None and config.role is Role.VPS:
         firewall_table, firewall_error = _firewall_table_present()
+        tunnel = tunnel_files(box_dir)
     return DoctorFacts(
         config=config,
         config_error=config_error,
@@ -454,7 +493,23 @@ def gather(box_dir: Path) -> DoctorFacts:
         active_services=active,
         firewall_table=firewall_table,
         firewall_error=firewall_error,
+        tunnel=tunnel,
     )
+
+
+def tunnel_files(box_dir: Path) -> dict[str, FileFact]:
+    directory = box_dir / SECRETS_DIR / WG_SERVER_DIR
+    facts: dict[str, FileFact] = {}
+    for name in (SERVER_KEY_FILE, SERVER_CONF_FILE):
+        try:
+            mode = (directory / name).stat().st_mode & 0o777
+        except FileNotFoundError:
+            facts[name] = FileFact(present=False)
+        except OSError:
+            facts[name] = FileFact(present=None)
+        else:
+            facts[name] = FileFact(present=True, mode=mode)
+    return facts
 
 
 def _firewall_table_present() -> tuple[bool | None, str]:

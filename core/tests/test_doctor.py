@@ -343,3 +343,46 @@ def test_doctor_command_exit_codes(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert result.exit_code == 1
     verdicts = {item["name"]: item["verdict"] for item in json.loads(result.output)}
     assert verdicts["docker"] == "fail"
+
+
+def tunnel_facts(**overrides: object) -> dict[str, doctor.FileFact]:
+    files = {
+        "server.key": doctor.FileFact(present=True, mode=0o600),
+        "wg0.conf": doctor.FileFact(present=True, mode=0o600),
+    }
+    files.update(overrides)  # type: ignore[arg-type]
+    return files
+
+
+def test_tunnel_verdicts_for_vps() -> None:
+    def verdict(files: dict[str, doctor.FileFact], **extra: object) -> doctor.CheckResult:
+        return by_name(evaluate(facts(config=vps_config(), tunnel=files, **extra)))["tunnel"]
+
+    ok = verdict(tunnel_facts())
+    assert ok.verdict is Verdict.OK and "mode 600" in ok.detail
+    fresh = verdict(
+        tunnel_facts(**{"server.key": doctor.FileFact(False), "wg0.conf": doctor.FileFact(False)})
+    )
+    assert fresh.verdict is Verdict.WARN and fresh.hint == "vibedpn up"
+    assert "core creates them at start" in fresh.detail
+    loose = verdict(tunnel_facts(**{"server.key": doctor.FileFact(True, 0o644)}))
+    assert loose.verdict is Verdict.FAIL and loose.detail == "server.key readable by other users"
+    closed = verdict(tunnel_facts(**{"wg0.conf": doctor.FileFact(None)}))
+    assert closed.verdict is Verdict.WARN and closed.hint == "sudo vibedpn doctor"
+
+
+def test_tunnel_verdict_only_for_vps_with_gathered_facts() -> None:
+    assert "tunnel" not in by_name(evaluate(facts(tunnel=tunnel_facts())))
+    assert "tunnel" not in by_name(evaluate(facts(config=vps_config())))
+
+
+def test_tunnel_files_are_read_from_the_box(tmp_path: Path) -> None:
+    assert doctor.tunnel_files(tmp_path) == {
+        "server.key": doctor.FileFact(False),
+        "wg0.conf": doctor.FileFact(False),
+    }
+    directory = tmp_path / "secrets" / "wg-server"
+    directory.mkdir(parents=True)
+    (directory / "server.key").write_text("k\n", encoding="utf-8")
+    (directory / "server.key").chmod(0o640)
+    assert doctor.tunnel_files(tmp_path)["server.key"] == doctor.FileFact(True, 0o640)

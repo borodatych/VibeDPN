@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import bcrypt
-from jinja2 import Environment, PackageLoader, StrictUndefined
 from pydantic import ValidationError
 
 from vibedpn.config import (
@@ -34,6 +33,7 @@ from vibedpn.config import (
     parse_yaml,
 )
 from vibedpn.detect import DEFAULT_SSH_PORT, Interface
+from vibedpn.templating import template_environment
 
 DEFAULT_BOX_DIR = Path("/opt/vibedpn")  # install.sh has the same default; keep them equal
 DEFAULT_IMAGE_TAG = "latest"  # what CI publishes from main
@@ -215,15 +215,7 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
 
 def render_config(config: Config) -> str:
     """``config.yaml`` text with the same comments a hand-written file would carry."""
-    environment = Environment(
-        loader=PackageLoader("vibedpn", "templates"),
-        undefined=StrictUndefined,
-        autoescape=False,  # YAML, not HTML
-        trim_blocks=True,
-        lstrip_blocks=True,
-        keep_trailing_newline=True,
-    )
-    template = environment.get_template(CONFIG_TEMPLATE)
+    template = template_environment().get_template(CONFIG_TEMPLATE)
     return template.render(config=config, lan=config.role is not Role.VPS)
 
 
