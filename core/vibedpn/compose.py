@@ -7,6 +7,7 @@ Pure parts (argv building, precondition checks, ``ps`` parsing) are unit-tested;
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,12 +22,18 @@ from vibedpn.bootstrap import (
     give_to_invoker,
     preserved_env,
     render_env,
+    required_secrets,
+    secrets_present,
     write_file,
 )
 from vibedpn.config import Config, ConfigError, load_config
 
 COMPOSE_FILE = "compose.yaml"
 DEFAULT_LOG_TAIL = 100
+# Before 28.0.0 ports published on 127.0.0.1 were reachable from L2 neighbours (Docker release
+# notes 28.0.0), and nat-unprotected did not exist; the box relies on both.
+MIN_DOCKER_ENGINE = (28, 0, 0)
+ENGINE_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
 
 class ComposeError(RuntimeError):
@@ -69,6 +76,25 @@ def check_box(box_dir: Path) -> Config:
             f"{CONFIG_FILE} is invalid: {exc}",
             f"fix that key in {CONFIG_FILE} (docs/manuals/configSpec.md)",
         ) from None
+
+
+def check_secrets(box_dir: Path, config: Config) -> None:
+    """Refuse to start a box whose secrets are missing: the node would fall back to its public
+    default password. A secret that cannot be stat-ed (root-only dir, not root) is not a failure."""
+    present = secrets_present(box_dir)
+    missing = [name for name in required_secrets(config) if present.get(name) is False]
+    if missing:
+        raise ComposeError(
+            f"missing {', '.join(missing)}", "run `sudo vibedpn init --force` to create it"
+        )
+
+
+def engine_too_old(version: str) -> bool:
+    """``True`` for a parseable Engine version below the floor; unknown strings never block."""
+    match = ENGINE_VERSION.match(version.strip())
+    if match is None:
+        return False
+    return tuple(int(part) for part in match.groups()) < MIN_DOCKER_ENGINE
 
 
 def refresh_env(box_dir: Path, config: Config) -> Path:
@@ -130,6 +156,15 @@ def preflight() -> None:
     except FileNotFoundError as exc:
         raise ComposeError("docker not found; run install.sh") from exc
     if probe.returncode == 0:
+        version = probe.stdout.strip()
+        if engine_too_old(version):
+            floor = ".".join(str(part) for part in MIN_DOCKER_ENGINE)
+            raise ComposeError(
+                f"Docker Engine {version} is older than {floor}: ports published on 127.0.0.1"
+                " are reachable from the LAN on such versions",
+                "remove the distro Docker (apt-get purge docker.io docker-compose) and re-run"
+                " install.sh to get docker-ce from download.docker.com",
+            )
         return
     # Match the dial error, which is the same across CLI versions, not the surrounding prose
     # (Docker 29 says "failed to connect to the docker API", older ones "Cannot connect").

@@ -144,9 +144,35 @@ jobs:
       - uses: actions/checkout@v7
       - run: docker compose --profile '*' config -q
 
+  firewall:
+    name: firewall · nft apply in a NET_ADMIN container
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Render the VPS ruleset with the package, then check it and apply it twice
+        run: |
+          docker run --rm --cap-add NET_ADMIN -v "$PWD:/src:ro" python:3.12-slim-trixie bash -eu -c '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends nftables >/dev/null
+            pip install -q --require-hashes -r /src/core/requirements.txt
+            pip install -q --no-deps --no-build-isolation /src/core
+            python - <<"PY" > /tmp/vibedpn.nft
+          from vibedpn.config import Config
+          from vibedpn.engine.router import firewall_ruleset
+          config = Config.model_validate({"version": 1, "role": "vps", "provider": {"enabled": True}, "wg_server": {"endpoint": "203.0.113.7"}, "firewall": {"ssh_ports": [22, 2222], "allow_tcp": [443]}})
+          print(firewall_ruleset(config), end="")
+          PY
+            nft -c -f - < /tmp/vibedpn.nft
+            nft -f - < /tmp/vibedpn.nft
+            nft -f - < /tmp/vibedpn.nft
+            nft list table inet vibedpn | tee /tmp/loaded.nft
+            grep -q "tcp dport { 22, 2222 } accept" /tmp/loaded.nft
+            grep -q "policy drop" /tmp/loaded.nft
+          '
+
   images:
     name: image · ${{ matrix.image.name }}
-    needs: [python, shell, compose, install]
+    needs: [python, shell, compose, install, firewall]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

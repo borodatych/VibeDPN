@@ -23,6 +23,9 @@ class FakeProbe:
     def wireguard_module_present(self) -> bool | None:
         return self.wireguard
 
+    def ssh_ports(self) -> list[int]:
+        return [22]
+
 
 @pytest.fixture(autouse=True)
 def fake_probe(monkeypatch: pytest.MonkeyPatch) -> type[FakeProbe]:
@@ -252,4 +255,4 @@ def test_init_fails_without_interface_before_asking_password(
     result = runner.invoke(cli.app, ["init", "--role", "home", "--dir", str(tmp_path)])
     assert result.exit_code == 1
     assert "default route" in result.output
-    assert "UI password" not in result.output
+    assert cli.PANEL_PASSWORD_PROMPT not in result.output

@@ -12,7 +12,9 @@ from vibedpn.compose import (
     ComposeError,
     ServiceStatus,
     check_box,
+    check_secrets,
     compose_argv,
+    engine_too_old,
     parse_ps,
     preflight,
     refresh_env,
@@ -133,6 +135,47 @@ def test_preflight_maps_docker_errors(
     monkeypatch.setattr(subprocess, "run", failing)
     with pytest.raises(ComposeError, match=expected):
         preflight()
+
+
+@pytest.mark.parametrize(
+    ("version", "too_old"),
+    [
+        ("26.1.5+dfsg1", True),
+        ("27.5.1", True),
+        ("28.0.0", False),
+        ("29.5.2", False),
+        ("", False),
+        ("dev", False),
+    ],
+)
+def test_engine_floor(version: str, too_old: bool) -> None:
+    assert engine_too_old(version) is too_old
+
+
+def test_preflight_refuses_an_old_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    def old(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(returncode=0, stderr="", stdout="26.1.5+dfsg1\n")
+
+    monkeypatch.setattr(subprocess, "run", old)
+    with pytest.raises(ComposeError, match=r"older than 28\.0\.0") as excinfo:
+        preflight()
+    assert "install.sh" in excinfo.value.hint
+
+
+def test_check_secrets_blocks_only_definitely_missing_ones(tmp_path: Path) -> None:
+    box = make_box(tmp_path)  # vps with provider: needs htpasswd and nodeui-pass
+    config = check_box(box)
+    with pytest.raises(ComposeError, match="missing htpasswd, nodeui-pass"):
+        check_secrets(box, config)
+    (box / "secrets").mkdir()
+    (box / "secrets" / "htpasswd").write_text("admin:x\n", encoding="utf-8")
+    node = box / "data" / "myst-provider"
+    node.mkdir(parents=True)
+    (node / "nodeui-pass").write_text("", encoding="utf-8")  # empty = absent for the node
+    with pytest.raises(ComposeError, match="missing nodeui-pass"):
+        check_secrets(box, config)
+    (node / "nodeui-pass").write_text("$2b$x\n", encoding="utf-8")
+    check_secrets(box, config)
 
 
 def test_preflight_and_run_report_missing_docker(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -73,6 +73,9 @@ def test_vps_config_detects_public_endpoint() -> None:
     assert config.wg_server is not None
     assert config.wg_server.endpoint == "185.199.108.1"
     assert config.network is None and config.routing is None
+    assert config.firewall.ssh_ports == [22]
+    custom = HostFacts(PUBLIC.interface, True, ssh_ports=[2222, 22])
+    assert build_config(Answers(Role.VPS), custom).firewall.ssh_ports == [2222, 22]
 
 
 def test_vps_config_needs_endpoint_behind_nat() -> None:
@@ -217,6 +220,12 @@ def test_force_with_a_new_role_sets_old_secrets_aside(tmp_path: Path) -> None:
     assert sorted(p.name for p in written.retired) == ["htpasswd.bak", "wg-client.conf.bak"]
     assert not (box / "secrets" / "wg-client.conf").exists()
     assert stat.S_IMODE((box / "secrets" / "wg-client.conf.bak").stat().st_mode) == 0o600
+    # A node password left behind by a provider role is set aside the same way.
+    node = Answers(Role.VPS, password="secret123", endpoint="vps.example.com")
+    write_box(box, build_config(node, LAN), node, force=True)
+    back = write_box(box, build_config(client, LAN), client, force=True)
+    assert [p.name for p in back.retired] == ["nodeui-pass.bak"]
+    assert not (box / "data" / "myst-provider" / "nodeui-pass").exists()
 
 
 def test_write_box_reports_unwritable_directory(tmp_path: Path) -> None:

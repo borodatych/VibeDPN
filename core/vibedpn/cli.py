@@ -26,6 +26,7 @@ from vibedpn.compose import (
     ComposeError,
     capture,
     check_box,
+    check_secrets,
     compose_argv,
     parse_ps,
     preflight,
@@ -38,6 +39,7 @@ from vibedpn.detect import DetectError, HostProbe
 from vibedpn.doctor import evaluate, gather, has_failures, render, to_json
 
 EXIT_USER_ERROR = 1
+PANEL_PASSWORD_PROMPT = "Password for the panels (VibeDPN UI and the node's NodeUI)"
 
 BoxDir = Annotated[
     Path, typer.Option("--dir", envvar="VIBEDPN_DIR", help="Installation directory.")
@@ -90,9 +92,7 @@ def _ask_role() -> Role:
 def _ask_password() -> str:
     while True:
         password: str = typer.prompt(
-            "Password for the panels (VibeDPN UI and the node's NodeUI)",
-            hide_input=True,
-            confirmation_prompt=True,
+            PANEL_PASSWORD_PROMPT, hide_input=True, confirmation_prompt=True
         )
         try:
             check_password(password)
@@ -209,6 +209,7 @@ def init(
         facts = HostFacts(
             interface=probe.default_interface(),
             wireguard_module=probe.wireguard_module_present(),
+            ssh_ports=probe.ssh_ports(),
         )
     except DetectError as exc:
         raise _fail(str(exc)) from None
@@ -246,6 +247,7 @@ def _prepare(box_dir: Path, *, refresh: bool) -> Config:
         config = check_box(box_dir)
         preflight()
         if refresh:
+            check_secrets(box_dir, config)
             refresh_env(box_dir, config)
     except ComposeError as exc:
         raise _fail(str(exc)) from None

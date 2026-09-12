@@ -83,7 +83,6 @@ services:
       - --udp.ports=${VIBEDPN_MYST_UDP_FROM:-56000}:${VIBEDPN_MYST_UDP_TO:-56100}
       - --traversal=${VIBEDPN_MYST_TRAVERSAL:-manual,upnp,holepunching}
       - --tequilapi.address=0.0.0.0
-      - --tequilapi.allowed-hostnames=.
       - service
       - --agreed-terms-and-conditions
 
@@ -113,7 +112,6 @@ services:
       - --firewall.killSwitch.always
       - --ui.enable=false
       - --tequilapi.address=0.0.0.0
-      - --tequilapi.allowed-hostnames=.
       - daemon
 
   # WireGuard client = uplink `vps`: a gateway container at 10.77.0.10 (role client). Uses the

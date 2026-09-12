@@ -37,7 +37,7 @@
 
 | Сервис | Профиль | Сеть | Порты и особенности |
 |---|---|---|---|
-| `core` | всегда | host, `NET_ADMIN` | API на `127.0.0.1:${VIBEDPN_API_PORT}` (4480); монтирует `config.yaml` (ro), `secrets/`, `data/core`; healthcheck `GET /health` |
+| `core` | всегда | host, `NET_ADMIN` | API на `127.0.0.1:${VIBEDPN_API_PORT}` (4480); монтирует `config.yaml` (ro), `secrets/`, `data/core`; healthcheck `GET /health`; на vps при старте применяет nftables-таблицу `inet vibedpn` |
 | `ui` | `ui` | host | nginx на `${VIBEDPN_LAN_IP}:${VIBEDPN_UI_PORT}` (80), `/api/` → core; зависит от здорового `core`. Авторизация `/api/` (auth_basic, пароль из `init`) — Stage 4, до первого изменяющего эндпоинта |
 | `myst-provider` | `provider` | bridge | `127.0.0.1:4449` NodeUI, `127.0.0.1:4050` TequilAPI, UDP `${VIBEDPN_MYST_UDP_FROM}-${VIBEDPN_MYST_UDP_TO}` (56000-56100); `myst --udp.ports=… --traversal=… --tequilapi.* service --agreed-terms-and-conditions` (глобальные флаги — до команды); том `data/myst-provider` |
 | `myst-consumer` | `consumer` | `vibedpn-upstreams` 10.77.0.20, `NET_ADMIN`, `ip_forward=1` | `myst --firewall.killSwitch.always --ui.enable=false --tequilapi.* daemon`; том `data/myst-consumer` |

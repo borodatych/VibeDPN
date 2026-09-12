@@ -18,6 +18,9 @@ from pathlib import Path
 SYSFS_MODULES = Path("/sys/module")
 WIREGUARD_MODULE = "wireguard"
 SBIN_DIRS = ("/usr/local/sbin", "/usr/sbin", "/sbin")  # Debian keeps sbin off a user's PATH
+SSHD_CONFIG = Path("/etc/ssh/sshd_config")
+SSHD_CONFIG_ROOT = Path("/etc/ssh")  # relative Include paths resolve here (sshd_config(5))
+DEFAULT_SSH_PORT = 22
 
 
 class DetectError(RuntimeError):
@@ -78,6 +81,64 @@ def module_present(name: str) -> bool | None:
     return probe.returncode == 0
 
 
+def parse_sshd_ports(text: str) -> list[int]:
+    """``Port`` values of one sshd_config text, outside ``Match`` blocks, in order."""
+    ports: list[int] = []
+    in_match = False
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        keyword, _, value = line.partition(" ")
+        keyword = keyword.lower()
+        if keyword == "match":
+            in_match = True
+            continue
+        if in_match:
+            continue
+        if keyword == "port" and value.strip().isdigit():
+            port = int(value.strip())
+            if port not in ports:
+                ports.append(port)
+    return ports
+
+
+def parse_sshd_includes(text: str) -> list[str]:
+    """``Include`` patterns of one sshd_config text, in order."""
+    patterns: list[str] = []
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        keyword, _, value = line.partition(" ")
+        if keyword.lower() == "include":
+            patterns.extend(value.split())
+    return patterns
+
+
+def sshd_ports(main: Path = SSHD_CONFIG, root: Path = SSHD_CONFIG_ROOT) -> list[int]:
+    """Every port sshd listens on per its config (all ``Port`` lines count), default 22.
+
+    Included files are read in lexical order; a missing config means a stock sshd on 22.
+    """
+    texts: list[str] = []
+    try:
+        texts.append(main.read_text(encoding="utf-8"))
+    except OSError:
+        return [DEFAULT_SSH_PORT]
+    for pattern in parse_sshd_includes(texts[0]):
+        base = Path(pattern) if pattern.startswith("/") else root / pattern
+        for path in sorted(base.parent.glob(base.name)):
+            try:
+                texts.append(path.read_text(encoding="utf-8"))
+            except OSError:
+                continue
+    ports: list[int] = []
+    for text in texts:
+        for port in parse_sshd_ports(text):
+            if port not in ports:
+                ports.append(port)
+    return ports or [DEFAULT_SSH_PORT]
+
+
 class HostProbe:
     """Reads host facts through ``ip`` and ``/sys``; replaced by a fake in tests."""
 
@@ -89,6 +150,9 @@ class HostProbe:
 
     def wireguard_module_present(self) -> bool | None:
         return module_present(WIREGUARD_MODULE)
+
+    def ssh_ports(self) -> list[int]:
+        return sshd_ports()
 
     @staticmethod
     def _ip(*args: str) -> str:

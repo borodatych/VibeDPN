@@ -43,6 +43,8 @@
   модуля wireguard, `is_global` против TEST-NET и CGNAT
 - [doctorProbes.md](linux/doctorProbes.md) — формат `ss -lntup`, модуль через sysfs или `modprobe -n`,
   Docker включает `ip_forward` и одновременно ставит DROP на FORWARD (важно для Stage 4)
+- [nftables.md](linux/nftables.md) — атомарная идемпотентная загрузка таблицы, `nft -c` требует
+  NET_ADMIN, JSON-листинг для `doctor`, published-порты идут через FORWARD, `Port` в sshd — список
 
 ## security
 

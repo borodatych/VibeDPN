@@ -18,6 +18,7 @@ DEFAULT_DIR="/opt/vibedpn"  # `vibedpn init` has the same default; keep them equ
 VIBEDPN_DIR="${VIBEDPN_DIR:-$DEFAULT_DIR}"
 VIBEDPN_BIN="/usr/local/bin/vibedpn"
 MIN_PYTHON="3.11"
+MIN_DOCKER_ENGINE="28.0.0"  # before 28.0.0 ports published on 127.0.0.1 were reachable from L2 neighbours
 DOCKER_KEYRING="/etc/apt/keyrings/docker.asc"
 DOCKER_SOURCES="/etc/apt/sources.list.d/docker.sources"
 DOCKER_PACKAGES="docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
@@ -59,7 +60,12 @@ install_base_packages() {
 # OS 64-bit follows the same instructions per https://docs.docker.com/engine/install/raspberry-pi-os/.
 install_docker() {
   if docker compose version >/dev/null 2>&1; then
-    log "Docker Compose already present: $(docker compose version --short)"
+    local engine
+    engine="$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)"
+    [ -n "$engine" ] || die "Docker is installed but its daemon is unreachable; start it (or fix the socket permissions) and re-run install.sh"
+    version_at_least "${engine%%[+-]*}" "$MIN_DOCKER_ENGINE" \
+      || die "Docker Engine $engine is older than $MIN_DOCKER_ENGINE: ports published on 127.0.0.1 are reachable from the LAN on such versions (docs.docker.com/engine/release-notes/28/). Remove it (apt-get purge docker.io docker-compose) and re-run install.sh to get docker-ce from download.docker.com"
+    log "Docker Engine $engine and Compose $(docker compose version --short) already present"
     return
   fi
   log "Installing Docker Engine from download.docker.com"

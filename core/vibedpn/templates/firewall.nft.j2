@@ -1,0 +1,37 @@
+# VibeDPN host firewall, role vps. Rendered by core from config.yaml and applied as one
+# transaction: `add table` + `flush table` make a re-apply land on the same result.
+# Docker's own tables and chains are untouched; published container ports are DNATed in
+# prerouting and go through FORWARD, not through this input chain.
+add table inet vibedpn
+flush table inet vibedpn
+table inet vibedpn {
+{% if provider %}
+  set myst_udp {
+    type inet_service
+    flags interval
+    elements = { {{ udp_from }}-{{ udp_to }} }
+  }
+{% endif %}
+  chain input {
+    type filter hook input priority filter; policy drop;
+    ct state established,related accept
+    ct state invalid drop
+    iif "lo" accept
+    icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } accept
+    meta l4proto ipv6-icmp accept
+    tcp dport { {{ ssh_ports | join(", ") }} } accept comment "ssh"
+{% if wg_port %}
+    udp dport {{ wg_port }} accept comment "wireguard server"
+{% endif %}
+{% if provider %}
+    udp dport @myst_udp accept comment "mysterium node"
+{% endif %}
+    iifname "{{ wg_interface }}" accept comment "home boxes over the tunnel"
+{% if allow_tcp %}
+    tcp dport { {{ allow_tcp | join(", ") }} } accept comment "owner"
+{% endif %}
+{% if allow_udp %}
+    udp dport { {{ allow_udp | join(", ") }} } accept comment "owner"
+{% endif %}
+  }
+}

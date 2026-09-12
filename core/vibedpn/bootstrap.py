@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from vibedpn.config import (
     Config,
     DpnUplink,
+    FirewallConfig,
     NetworkConfig,
     ProviderConfig,
     Role,
@@ -32,7 +33,7 @@ from vibedpn.config import (
     check_endpoint,
     parse_yaml,
 )
-from vibedpn.detect import Interface
+from vibedpn.detect import DEFAULT_SSH_PORT, Interface
 
 DEFAULT_BOX_DIR = Path("/opt/vibedpn")  # install.sh has the same default; keep them equal
 DEFAULT_IMAGE_TAG = "latest"  # what CI publishes from main
@@ -88,6 +89,7 @@ class HostFacts:
 
     interface: Interface | None
     wireguard_module: bool | None  # None: could not check (no modprobe on PATH)
+    ssh_ports: list[int] = field(default_factory=lambda: [DEFAULT_SSH_PORT])
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,34 @@ class Written:
 
     files: list[Path] = field(default_factory=list)
     retired: list[Path] = field(default_factory=list)
+
+
+def required_secrets(config: Config) -> list[str]:
+    """Secret files a box of this configuration cannot run without."""
+    needed = [HTPASSWD_FILE]
+    if config.role is Role.CLIENT:
+        needed.append(WG_CLIENT_CONF)
+    if config.provider.enabled:
+        needed.append(NODEUI_PASS_FILE)
+    return needed
+
+
+def _present(path: Path) -> bool | None:
+    """``None`` when the file cannot even be stat-ed (root-only directory, not root)."""
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return None
+
+
+def secrets_present(box_dir: Path) -> dict[str, bool | None]:
+    """Presence of every known secret, checked one by one so a closed secrets/ does not hide
+    the node's password file, which lives in the world-readable data/ tree."""
+    found: dict[str, bool | None] = {
+        name: _present(box_dir / SECRETS_DIR / name) for name in KNOWN_SECRETS
+    }
+    found[NODEUI_PASS_FILE] = _present(box_dir / DATA_DIR / MYST_PROVIDER_DATA / NODEUI_PASS_FILE)
+    return found
 
 
 def public_address(facts: HostFacts) -> str | None:
@@ -154,6 +184,7 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
             role=Role.VPS,
             provider=ProviderConfig(enabled=True),
             wg_server=WgServerConfig(endpoint=endpoint),
+            firewall=FirewallConfig(ssh_ports=facts.ssh_ports),
         )
     if facts.interface is None:
         raise BootstrapError(
@@ -279,13 +310,10 @@ def write_box(box_dir: Path, config: Config, answers: Answers, *, force: bool) -
     never leaves a half-configured directory behind.
     """
     ensure_replaceable(box_dir, force=force)
-    config_path = box_dir / CONFIG_FILE
-    env_path = box_dir / ENV_FILE
-    secrets_dir = box_dir / SECRETS_DIR
     text = render_config(config)
     if Config.model_validate(parse_yaml(text)) != config:
         raise BootstrapError("rendered config.yaml does not round-trip; this is a template bug")
-    env_text = render_env(config, preserved_env(env_path, checkout_image_tag(box_dir)))
+    env_text = render_env(config, preserved_env(box_dir / ENV_FILE, checkout_image_tag(box_dir)))
     secrets: dict[str, str] = {}
     if answers.password is not None:
         secrets[HTPASSWD_FILE] = htpasswd_line(UI_USER, answers.password)
@@ -294,39 +322,53 @@ def write_box(box_dir: Path, config: Config, answers: Answers, *, force: bool) -
     node_pass = None
     if answers.password is not None and config.provider.enabled:
         node_pass = bcrypt_hash(answers.password) + "\n"
-    result = Written()
     try:
-        box_dir.mkdir(parents=True, exist_ok=True)
-        if config_path.exists():
-            shutil.copy2(config_path, box_dir / CONFIG_BACKUP)
-        result.files.append(write_file(config_path, text, PUBLIC_FILE_MODE))
-        result.files.append(write_file(env_path, env_text, PUBLIC_FILE_MODE))
-        if node_pass is not None:
-            node_dir = box_dir / DATA_DIR / MYST_PROVIDER_DATA
-            node_dir.mkdir(mode=DATA_DIR_MODE, parents=True, exist_ok=True)
-            result.files.append(
-                write_file(node_dir / NODEUI_PASS_FILE, node_pass, SECRET_FILE_MODE)
-            )
-        # The top-level files belong to the person, not to root: `vibedpn up` rewrites .env and
-        # later commands edit config.yaml without sudo. secrets/ stays root-only.
-        for path in (config_path, env_path, box_dir / CONFIG_BACKUP):
-            if path.exists():
-                give_to_invoker(path)
-        secrets_dir.mkdir(mode=SECRET_DIR_MODE, exist_ok=True)
-        secrets_dir.chmod(SECRET_DIR_MODE)
-        for name, content in secrets.items():
-            result.files.append(write_file(secrets_dir / name, content, SECRET_FILE_MODE))
-        for name in KNOWN_SECRETS:
-            stale = secrets_dir / name
-            if name not in secrets and stale.exists():
-                retired = stale.with_name(name + BACKUP_SUFFIX)
-                stale.replace(retired)
-                retired.chmod(SECRET_FILE_MODE)
-                result.retired.append(retired)
+        return _write_files(box_dir, text, env_text, secrets, node_pass)
     except OSError as exc:
         target = exc.filename or box_dir
         raise BootstrapError(f"cannot write {target}: {exc.strerror}; run with sudo?") from exc
+
+
+def _write_files(
+    box_dir: Path, text: str, env_text: str, secrets: dict[str, str], node_pass: str | None
+) -> Written:
+    """The only part that touches the disk; every input is already validated."""
+    config_path = box_dir / CONFIG_FILE
+    env_path = box_dir / ENV_FILE
+    secrets_dir = box_dir / SECRETS_DIR
+    node_pass_path = box_dir / DATA_DIR / MYST_PROVIDER_DATA / NODEUI_PASS_FILE
+    result = Written()
+    box_dir.mkdir(parents=True, exist_ok=True)
+    if config_path.exists():
+        shutil.copy2(config_path, box_dir / CONFIG_BACKUP)
+    result.files.append(write_file(config_path, text, PUBLIC_FILE_MODE))
+    result.files.append(write_file(env_path, env_text, PUBLIC_FILE_MODE))
+    if node_pass is not None:
+        node_pass_path.parent.mkdir(mode=DATA_DIR_MODE, parents=True, exist_ok=True)
+        result.files.append(write_file(node_pass_path, node_pass, SECRET_FILE_MODE))
+    elif node_pass_path.exists():
+        result.retired.append(_retire(node_pass_path))
+    # The top-level files belong to the person, not to root: `vibedpn up` rewrites .env and
+    # later commands edit config.yaml without sudo. secrets/ stays root-only.
+    for path in (config_path, env_path, box_dir / CONFIG_BACKUP):
+        if path.exists():
+            give_to_invoker(path)
+    secrets_dir.mkdir(mode=SECRET_DIR_MODE, exist_ok=True)
+    secrets_dir.chmod(SECRET_DIR_MODE)
+    for name, content in secrets.items():
+        result.files.append(write_file(secrets_dir / name, content, SECRET_FILE_MODE))
+    for name in KNOWN_SECRETS:
+        stale = secrets_dir / name
+        if name not in secrets and stale.exists():
+            result.retired.append(_retire(stale))
     return result
+
+
+def _retire(path: Path) -> Path:
+    retired = path.with_name(path.name + BACKUP_SUFFIX)
+    path.replace(retired)
+    retired.chmod(SECRET_FILE_MODE)
+    return retired
 
 
 def invoker_ids() -> tuple[int, int] | None:

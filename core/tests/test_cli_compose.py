@@ -40,6 +40,10 @@ def box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Recorder
     (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
     config = build_config(Answers(Role.VPS, endpoint="vps.example.com"), HostFacts(None, True))
     (tmp_path / "config.yaml").write_text(render_config(config), encoding="utf-8")
+    (tmp_path / "secrets").mkdir()
+    (tmp_path / "secrets" / "htpasswd").write_text("admin:x\n", encoding="utf-8")
+    (tmp_path / "data" / "myst-provider").mkdir(parents=True)
+    (tmp_path / "data" / "myst-provider" / "nodeui-pass").write_text("$2b$x\n", encoding="utf-8")
     return tmp_path, recorder
 
 
@@ -75,6 +79,15 @@ def test_up_retires_containers_of_dropped_profiles(box: tuple[Path, Recorder]) -
         "myst-consumer",
     ]
     assert tail(recorder.calls[3]) == ["up", "-d", "--remove-orphans"]
+
+
+def test_up_refuses_without_the_node_password(box: tuple[Path, Recorder]) -> None:
+    box_dir, recorder = box
+    (box_dir / "data" / "myst-provider" / "nodeui-pass").unlink()
+    result = runner.invoke(cli.app, ["up", "--dir", str(box_dir)])
+    assert result.exit_code == 1
+    assert "missing nodeui-pass" in result.output and "init --force" in result.output
+    assert recorder.calls == []
 
 
 def test_down_covers_every_profile(box: tuple[Path, Recorder]) -> None:

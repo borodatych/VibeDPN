@@ -33,6 +33,7 @@ HOSTNAME_PATTERN = re.compile(
 INTERFACE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")  # IFNAMSIZ is 16 with the NUL
 PORT_MIN = 1
 PORT_MAX = 65535
+DEFAULT_SSH_PORT = 22
 MIN_WG_SUBNET_ADDRESSES = 4  # network, server, at least one peer, broadcast
 LAST_PREFIX_WITH_BROADCAST = 30  # /31 and /32 have no reserved network/broadcast addresses
 
@@ -320,8 +321,39 @@ class ApiConfig(StrictModel):
     port: Port = 4480
 
 
+class FirewallConfig(StrictModel):
+    """Host firewall of a VPS: nftables table ``inet vibedpn``, input policy drop.
+
+    Open by default: ssh, the WireGuard server port, the node's UDP range, the wg0 tunnel;
+    ``allow_tcp``/``allow_udp`` are for other services the owner runs on the same VPS.
+    """
+
+    enabled: bool = True
+    ssh_ports: list[Port] = Field(default_factory=lambda: [DEFAULT_SSH_PORT])
+    allow_tcp: list[Port] = Field(default_factory=list)
+    allow_udp: list[Port] = Field(default_factory=list)
+
+    @field_validator("ssh_ports", "allow_tcp", "allow_udp")
+    @classmethod
+    def check_unique(cls, value: list[int]) -> list[int]:
+        if len(set(value)) != len(value):
+            raise ValueError("a port is listed twice")
+        return value
+
+    @field_validator("ssh_ports")
+    @classmethod
+    def check_ssh_ports(cls, value: list[int]) -> list[int]:
+        if not value:
+            raise ValueError(
+                "firewall.ssh_ports must keep at least one port, or you lock yourself out"
+            )
+        return value
+
+
 # Sections that describe a LAN-side box and make no sense on a headless VPS.
 LAN_SECTIONS = ("network", "routing", "devices", "upstreams", "dns", "ui")
+# Sections that only a VPS has (LAN roles get the router engine in Stage 4).
+VPS_SECTIONS = ("firewall",)
 
 
 class Config(StrictModel):
@@ -338,6 +370,7 @@ class Config(StrictModel):
     dns: DnsConfig = Field(default_factory=DnsConfig)
     ui: UiConfig = Field(default_factory=UiConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
+    firewall: FirewallConfig = Field(default_factory=FirewallConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -346,11 +379,22 @@ class Config(StrictModel):
 
         The real error is the section itself, not a missing ``lan_interface`` inside it.
         """
-        if isinstance(data, dict) and data.get("role") == Role.VPS:
+        if not isinstance(data, dict):
+            return data
+        role = data.get("role")
+        if role == Role.VPS:
             present = [section for section in LAN_SECTIONS if section in data]
             if present:
                 raise ValueError(
                     "; ".join(f"{section}: not part of role 'vps'" for section in present)
+                )
+        elif role in (Role.HOME, Role.CLIENT):
+            present = [section for section in VPS_SECTIONS if section in data]
+            if present:
+                raise ValueError(
+                    "; ".join(
+                        f"{section}: only role 'vps' has a host firewall" for section in present
+                    )
                 )
         return data
 

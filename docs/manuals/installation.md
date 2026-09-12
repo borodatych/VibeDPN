@@ -81,7 +81,7 @@ sudo vibedpn init --role client --peer-config ~/home.conf --password-file ~/pane
 | `.env` | производные для Compose и `VIBEDPN_TAG` (при повторном `init` тег сохраняется) | 644 |
 | `secrets/htpasswd` | `admin:` + bcrypt-хеш пароля — для `auth_basic` в `ui` и API (Stage 4) | 600 |
 | `secrets/wg-client.conf` | копия peer-файла (роль `client`) | 600 |
-| `data/myst-provider/nodeui-pass` | bcrypt-хеш того же пароля для панели ноды (роли с provider); нода читает его при старте | 600 |
+| `data/myst-provider/nodeui-pass` | bcrypt-хеш того же пароля для панели ноды (роли с provider); нода читает его при каждой попытке входа | 600 |
 
 Повторный `init` при существующем `config.yaml` отказывается ещё до вопросов; `--force` заменяет
 файл, старый остаётся как `config.yaml.bak`, а секреты прежней роли (например, `wg-client.conf`
@@ -136,7 +136,14 @@ AdGuard слушает только адрес коробки в LAN. Что н�
 без какой-либо аутентификации — его защищает только то, что он на loopback; пароль NodeUI (логин
 `myst`) — тот, что задан в `init`. В `bridge`-сети UPnP не работает; для VPS с публичным IP хватает
 `traversal: [manual]`, диапазон UDP открыт публикацией портов. Клейм ноды в mystnodes.com и
-проверка на живом сервере — чекбокс 4 этой стадии. До Stage 3 контейнер `wg-server` в этой роли
+проверка на живом сервере — чекбокс 4 этой стадии.
+
+**Файрвол.** При старте `core` применяет nftables-таблицу `inet vibedpn`: на вход открыты только
+порты sshd (`init` прочитал их из `sshd_config`), порт `wg_server`, UDP-диапазон ноды, трафик из
+туннеля `wg0` и ICMP; всё остальное — drop. Свой сервис на той же VPS — в `firewall.allow_tcp` /
+`allow_udp` в `config.yaml`, потом `vibedpn restart`. Таблицы Docker не трогаются. Между
+перезагрузкой VPS и стартом `core` правил нет — защищает только ключевой ssh; `doctor` показывает,
+загружена ли таблица. До Stage 3 контейнер `wg-server` в этой роли
 честно завершается с ошибкой «not implemented» — `doctor` покажет это как `fail` сервиса.
 
 ## Удалить

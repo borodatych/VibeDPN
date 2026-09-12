@@ -15,14 +15,10 @@ from enum import StrEnum
 from pathlib import Path
 
 from vibedpn.bootstrap import (
-    DATA_DIR,
     ENV_FILE,
-    HTPASSWD_FILE,
-    KNOWN_SECRETS,
-    MYST_PROVIDER_DATA,
-    NODEUI_PASS_FILE,
     SECRETS_DIR,
-    WG_CLIENT_CONF,
+    required_secrets,
+    secrets_present,
 )
 from vibedpn.compose import (
     ComposeError,
@@ -35,6 +31,7 @@ from vibedpn.compose import (
 )
 from vibedpn.config import Config, Profile, Role, parse_port_range
 from vibedpn.detect import WIREGUARD_MODULE, module_present
+from vibedpn.engine.router import NFT_TABLE, find_nft
 
 NFTABLES_MODULE = "nf_tables"
 IP_FORWARD_SYSCTL = Path("/proc/sys/net/ipv4/ip_forward")
@@ -98,7 +95,7 @@ class DoctorFacts:
     config_error: str
     config_hint: str
     env_current: bool | None  # None: no .env yet
-    secrets: dict[str, bool] | None  # None: secrets/ is root-only and we are not root
+    secrets: dict[str, bool | None]  # None per file: cannot stat (root-only dir, not root)
     wireguard: bool | None  # None: could not check
     nf_tables: bool | None
     ip_forward: bool | None  # None: unreadable
@@ -108,6 +105,7 @@ class DoctorFacts:
     listeners_error: str = ""
     services: list[ServiceStatus] = field(default_factory=list)
     active_services: list[str] = field(default_factory=list)
+    firewall_table: bool | None = None  # None: could not list tables (not root / no nft)
 
 
 def parse_ss(output: str) -> list[Listener]:
@@ -198,6 +196,8 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
         _module_result("nf_tables", facts.nf_tables, "the router engine and Docker need it")
     )
     results.append(_ip_forward_result(facts.ip_forward))
+    if config is not None and config.role is Role.VPS and config.firewall.enabled:
+        results.append(_firewall_result(facts.firewall_table))
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -217,23 +217,20 @@ def _env_result(env_current: bool | None) -> CheckResult:
     return CheckResult("env", Verdict.OK, ".env matches config.yaml")
 
 
-def _secrets_result(config: Config, secrets: dict[str, bool] | None) -> CheckResult:
-    needed = [HTPASSWD_FILE]
-    if config.role is Role.CLIENT:
-        needed.append(WG_CLIENT_CONF)
-    if config.provider.enabled:
-        needed.append(NODEUI_PASS_FILE)
-    if secrets is None:
-        return CheckResult(
-            "secrets",
-            Verdict.WARN,
-            f"{SECRETS_DIR}/ is root-only; cannot check {', '.join(needed)}",
-            SUDO_HINT,
-        )
-    missing = [name for name in needed if not secrets.get(name)]
+def _secrets_result(config: Config, secrets: dict[str, bool | None]) -> CheckResult:
+    needed = required_secrets(config)
+    missing = [name for name in needed if secrets.get(name) is False]
     if missing:
         return CheckResult(
             "secrets", Verdict.FAIL, f"missing {', '.join(missing)}", "vibedpn init --force"
+        )
+    unknown = [name for name in needed if secrets.get(name) is None]
+    if unknown:
+        return CheckResult(
+            "secrets",
+            Verdict.WARN,
+            f"cannot check {', '.join(unknown)} ({SECRETS_DIR}/ is root-only)",
+            SUDO_HINT,
         )
     return CheckResult("secrets", Verdict.OK, ", ".join(needed))
 
@@ -262,6 +259,19 @@ def _wireguard_result(config: Config | None, present: bool | None) -> CheckResul
         "wireguard",
         Verdict.WARN,
         "kernel module missing; this role runs no WireGuard container (myst brings its own tunnel)",
+    )
+
+
+def _firewall_result(table_present: bool | None) -> CheckResult:
+    if table_present is None:
+        return CheckResult("firewall", Verdict.WARN, "cannot list nftables tables", SUDO_HINT)
+    if table_present:
+        return CheckResult("firewall", Verdict.OK, f"table {NFT_TABLE} is loaded")
+    return CheckResult(
+        "firewall",
+        Verdict.FAIL,
+        f"table {NFT_TABLE} is not loaded; core applies it at start",
+        "vibedpn up, then vibedpn logs core",
     )
 
 
@@ -381,12 +391,15 @@ def gather(box_dir: Path) -> DoctorFacts:
         except ComposeError as exc:
             docker_error = str(exc)
     listeners, listeners_error = _listeners()
+    firewall_table = None
+    if config is not None and config.role is Role.VPS:
+        firewall_table = _firewall_table_present()
     return DoctorFacts(
         config=config,
         config_error=config_error,
         config_hint=config_hint,
         env_current=env_current,
-        secrets=_secrets(box_dir),
+        secrets=secrets_present(box_dir),
         wireguard=module_present(WIREGUARD_MODULE),
         nf_tables=module_present(NFTABLES_MODULE),
         ip_forward=_read_ip_forward(),
@@ -396,6 +409,33 @@ def gather(box_dir: Path) -> DoctorFacts:
         listeners_error=listeners_error,
         services=services,
         active_services=active,
+        firewall_table=firewall_table,
+    )
+
+
+def _firewall_table_present() -> bool | None:
+    """Whether ``inet vibedpn`` is loaded; ``None`` when nft is missing or netlink is closed."""
+    nft = find_nft()
+    if nft is None:
+        return None
+    try:
+        probe = subprocess.run(
+            [nft, "-j", "list", "tables"], check=False, capture_output=True, text=True
+        )
+    except OSError:
+        return None
+    if probe.returncode != 0:
+        return None
+    family, name = NFT_TABLE.split()
+    try:
+        entries = json.loads(probe.stdout).get("nftables", [])
+    except json.JSONDecodeError:
+        return None
+    return any(
+        isinstance(entry, dict)
+        and entry.get("table", {}).get("family") == family
+        and entry.get("table", {}).get("name") == name
+        for entry in entries
     )
 
 
@@ -406,20 +446,6 @@ def _env_matches(env_path: Path, config: Config) -> bool:
         if sep:
             current[key.strip()] = value.strip()
     return all(current.get(key) == value for key, value in config.env_vars().items())
-
-
-def _secrets(box_dir: Path) -> dict[str, bool] | None:
-    """Which known secrets exist; ``None`` when secrets/ (root-only, 0700) cannot be searched.
-
-    ``Path.is_file`` raises ``PermissionError`` on Python < 3.14 when the directory is closed.
-    """
-    node_pass = box_dir / DATA_DIR / MYST_PROVIDER_DATA / NODEUI_PASS_FILE
-    try:
-        found = {name: (box_dir / SECRETS_DIR / name).is_file() for name in KNOWN_SECRETS}
-        found[NODEUI_PASS_FILE] = node_pass.is_file()
-    except OSError:
-        return None
-    return found
 
 
 def _read_ip_forward() -> bool | None:

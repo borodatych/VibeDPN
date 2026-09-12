@@ -35,8 +35,8 @@
 
 ## Stage 2 — Роль vps: нода
 
-- [x] **`myst-provider` контейнер** — ✅ (2026-09-12, `next`) сервис с published-портами (loopback 4449/4050, UDP-диапазон), томом `data/myst-provider`, актуальными флагами; пароль панели ноды — bcrypt-файл `nodeui-pass` от `init` (нода читает его при старте, проверено на 1.39.5), пароль спрашивается для всех ролей; TequilAPI, как выяснилось, без аутентификации вовсе — защита сетевая (loopback, nft в Stage 4/8); регистрация и клейм — чекбокс 4 на реальной VPS
-- [ ] nftables baseline VPS (ssh, wg, myst UDP; остальное drop), применяется `core`
+- [x] **`myst-provider` контейнер** — ✅ (2026-09-12, `next`) сервис с published-портами (loopback 4449/4050, UDP-диапазон), томом `data/myst-provider`, актуальными флагами; пароль панели ноды — bcrypt-файл `nodeui-pass` от `init` (нода читает его при каждом входе, проверено на 1.39.5), пароль спрашивается для всех ролей; TequilAPI, как выяснилось, без аутентификации вовсе — защита сетевая (loopback, nft в Stage 4/8); регистрация и клейм — чекбокс 4 на реальной VPS. Ревью (2 линзы + скептик): порог Docker Engine ≥ 28.0.0 в `install.sh`, `preflight` и `doctor` (до 28 loopback-порты были видны соседям по L2), `up`/`restart` отказываются без `nodeui-pass` (иначе нода молча ставит `mystberry`), `--tequilapi.allowed-hostnames=.` убран (отключал защиту от DNS-rebinding), `nodeui-pass` прежней роли откладывается в `.bak`, факты о секретах в `doctor` потрёхзначные по файлам
+- [x] **nftables baseline VPS** — ✅ (2026-09-12, `next`) секция `firewall` (только vps: `ssh_ports` из `sshd_config` через `init`, `allow_tcp/udp`), шаблон `firewall.nft.j2` → таблица `inet vibedpn` с input policy drop (ssh, wg, UDP ноды, `wg0`, ICMP), `engine/router.py` рендерит, проверяет `nft -c`, применяет одной транзакцией идемпотентно, отказывается без правила для ssh; `core` применяет при старте и падает с EX_CONFIG при ошибке; `doctor` проверяет загруженность таблицы; CI применяет ruleset дважды в контейнере с NET_ADMIN
 - [ ] `GET /provider/stats` через TequilAPI; `vibedpn status` показывает состояние ноды
 - [ ] Проверка: нода видна и заклеймлена в mystnodes.com, инструкция клейма в README
 

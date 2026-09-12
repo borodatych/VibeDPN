@@ -92,6 +92,17 @@ wg_server:
   subnet: {{ config.wg_server.subnet }}
   listen_port: {{ config.wg_server.listen_port }}
 {% endif %}
+{% if not lan %}
+
+# Файрвол VPS (nftables, таблица inet vibedpn, на вход всё закрыто, кроме перечисленного):
+# ssh_ports — порты sshd (init читает их из sshd_config; убрать все — запереть себя),
+# allow_tcp / allow_udp — другие сервисы владельца на этой же VPS.
+firewall:
+  enabled: {{ config.firewall.enabled | tojson }}
+  ssh_ports: {{ config.firewall.ssh_ports | tojson }}
+  allow_tcp: {{ config.firewall.allow_tcp | tojson }}
+  allow_udp: {{ config.firewall.allow_udp | tojson }}
+{% endif %}
 {% if lan %}
 
 # DNS и адблок: AdGuard Home на порту 53 LAN-адреса; upstreams — DNS-over-HTTPS.

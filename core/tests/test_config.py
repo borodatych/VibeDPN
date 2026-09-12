@@ -103,6 +103,20 @@ def test_vps_rejects_incomplete_lan_section_by_name(vps: dict[str, Any]) -> None
     assert "Field required" not in message
 
 
+def test_firewall_only_on_vps(home: dict[str, Any], vps: dict[str, Any]) -> None:
+    home["firewall"] = {"enabled": True}
+    assert "only role 'vps' has a host firewall" in errors_of(home)
+    vps["firewall"] = {"ssh_ports": []}
+    assert "lock yourself out" in errors_of(vps)
+    vps["firewall"] = {"ssh_ports": [22, 22]}
+    assert "listed twice" in errors_of(vps)
+    vps["firewall"] = {"ssh_ports": [2222], "allow_tcp": [443]}
+    config = Config.model_validate(vps)
+    assert config.firewall.ssh_ports == [2222] and config.firewall.allow_tcp == [443]
+    del home["firewall"]
+    assert Config.model_validate(home).firewall.enabled  # defaults exist, just not settable
+
+
 def test_vps_requires_wg_server_and_provider() -> None:
     message = errors_of({"version": 1, "role": "vps"})
     assert "wg_server: required" in message
@@ -361,6 +375,7 @@ def test_server_serves_on_loopback_and_config_port(tmp_path: Path) -> None:
     )
     with (
         patch.dict("os.environ", {server.CONFIG_PATH_ENV: str(good)}),
+        patch("vibedpn.api.server.apply_firewall", return_value=True),
         patch("vibedpn.api.server.uvicorn.run") as run,
     ):
         server.main()

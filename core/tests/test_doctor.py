@@ -10,7 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from vibedpn import cli, doctor
-from vibedpn.bootstrap import Answers, HostFacts, build_config, render_config
+from vibedpn.bootstrap import Answers, HostFacts, build_config, render_config, secrets_present
 from vibedpn.compose import ServiceStatus
 from vibedpn.config import Config, Role
 from vibedpn.detect import Interface
@@ -58,6 +58,7 @@ def facts(**overrides: object) -> DoctorFacts:
         "listeners_error": "",
         "services": [ServiceStatus("core", "running", "healthy", "Up")],
         "active_services": ["core"],
+        "firewall_table": None,
     }
     base.update(overrides)
     return DoctorFacts(**base)  # type: ignore[arg-type]
@@ -186,11 +187,13 @@ def test_secrets_per_role_and_without_access() -> None:
     client = build_config(Answers(Role.CLIENT, password="x" * 8, peer_config=Path("p")), LAN)
     partial = facts(config=client, secrets={"htpasswd": True, "wg-client.conf": False})
     assert by_name(evaluate(partial))["secrets"].detail == "missing wg-client.conf"
-    vps = by_name(evaluate(facts(config=vps_config(), secrets={"htpasswd": True})))["secrets"]
+    vps = by_name(
+        evaluate(facts(config=vps_config(), secrets={"htpasswd": True, "nodeui-pass": False}))
+    )["secrets"]
     assert vps.verdict is Verdict.FAIL and vps.detail == "missing nodeui-pass"
-    closed = by_name(evaluate(facts(secrets=None)))["secrets"]
+    closed = by_name(evaluate(facts(secrets={"htpasswd": None, "nodeui-pass": True})))["secrets"]
     assert closed.verdict is Verdict.WARN and closed.hint == "sudo vibedpn doctor"
-    assert "init" not in closed.hint
+    assert "cannot check htpasswd" in closed.detail and "init" not in closed.hint
 
 
 def test_services_not_started_broken_or_unhealthy() -> None:
@@ -202,6 +205,24 @@ def test_services_not_started_broken_or_unhealthy() -> None:
     assert result.hint == "vibedpn logs <service>"
     sick = facts(services=[ServiceStatus("core", "running", "unhealthy", "Up")])
     assert by_name(evaluate(sick))["services"].verdict is Verdict.FAIL
+
+
+def test_firewall_verdicts_only_for_vps() -> None:
+    assert "firewall" not in by_name(evaluate(facts(firewall_table=False)))
+    loaded = by_name(
+        evaluate(
+            facts(
+                config=vps_config(),
+                secrets={"htpasswd": True, "nodeui-pass": True},
+                firewall_table=True,
+            )
+        )
+    )["firewall"]
+    assert loaded.verdict is Verdict.OK
+    missing = by_name(evaluate(facts(config=vps_config(), firewall_table=False)))["firewall"]
+    assert missing.verdict is Verdict.FAIL and "vibedpn up" in missing.hint
+    unknown = by_name(evaluate(facts(config=vps_config(), firewall_table=None)))["firewall"]
+    assert unknown.verdict is Verdict.WARN and unknown.hint == "sudo vibedpn doctor"
 
 
 def test_env_verdicts() -> None:
@@ -240,18 +261,25 @@ def test_gather_survives_root_only_secrets(tmp_path: Path, monkeypatch: pytest.M
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
-def test_secrets_probe_returns_none_when_closed(tmp_path: Path) -> None:
+def test_secrets_probe_is_per_file(tmp_path: Path) -> None:
     secrets = tmp_path / "secrets"
     secrets.mkdir()
+    node = tmp_path / "data" / "myst-provider"
+    node.mkdir(parents=True)
+    (node / "nodeui-pass").write_text("$2b$x\n", encoding="utf-8")
     secrets.chmod(0)
     try:
-        assert doctor._secrets(tmp_path) is None
+        assert secrets_present(tmp_path) == {
+            "htpasswd": None,
+            "wg-client.conf": None,
+            "nodeui-pass": True,
+        }
     finally:
         secrets.chmod(stat.S_IRWXU)
-    assert doctor._secrets(tmp_path) == {
+    assert secrets_present(tmp_path) == {
         "htpasswd": False,
         "wg-client.conf": False,
-        "nodeui-pass": False,
+        "nodeui-pass": True,
     }
 
 

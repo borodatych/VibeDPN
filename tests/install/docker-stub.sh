@@ -6,6 +6,10 @@ case "${1:-} ${2:-}" in
     echo "v0.0.0-stub"
     exit 0
     ;;
+  "version --format")
+    echo "29.0.0"  # a modern engine; install.sh checks the >= 28 floor
+    exit 0
+    ;;
 esac
 echo "docker-stub: unexpected call: $*" >&2
 exit 1

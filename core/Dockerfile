@@ -12,6 +12,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
 
 FROM python:3.12-slim-trixie
+# nftables: core programs the host firewall (network_mode: host + NET_ADMIN).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nftables \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app /app
 # Mount points of compose.yaml: config (ro), secrets, state.
 RUN mkdir -p /etc/vibedpn/secrets /var/lib/vibedpn

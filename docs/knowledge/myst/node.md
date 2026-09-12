@@ -76,9 +76,16 @@ https://raw.githubusercontent.com/mysteriumnetwork/node/master/cmd/commands/serv
 10.77.0.20 обязан быть закрыт nft от LAN. Пароль NodeUI хранится в `<data-dir>/nodeui-pass` —
 bcrypt-хеш (60 байт, 600); при отсутствии файла нода при старте пишет туда хеш `mystberry`
 (лог: «CredentialsManager not found, initializing to default»). Файл с нашим `$2b$`-хешем нода
-принимает: логин с этим паролем — 200, с прежним — 401. `myst config set
+принимает: логин с этим паролем — 200, с прежним — 401; файл читается при каждой попытке
+входа (первая строка), смена пароля перезапуска не требует. `myst config set
 tequilapi.auth.password` — клиент к работающей ноде: пишет `config-mainnet.toml`
-(`[tequilapi.auth] password = …`), но на вход это не влияет.
+(`[tequilapi.auth] password = …`), но на вход это не влияет. Флаг
+`--tequilapi.allowed-hostnames=.` (из e2e-compose ноды) отключает единственный фильтр Host —
+защиту от DNS-rebinding, — а обращения по IP проходят и без него; в compose.yaml его нет.
+**Порог Docker:** loopback-порты 4449/4050 защищены от соседей по L2 только на Engine ≥ 28.0.0
+(release notes 28.0.0: «neighbor hosts to connect to ports mapped on a loopback address»);
+`install.sh` и `preflight` отказываются работать со старым Engine — дистрибутивный `docker.io`
+в trixie это 26.1.5.
 **Применение:** `init` пишет `data/myst-provider/nodeui-pass` с bcrypt пароля панелей;
 `config.toml` не трогаем. Core в чекбоксе 3 ходит в TequilAPI без учётных данных.
 **Источники:** исполнение 2026-09-12 (`docker run … daemon`, busybox wget к 127.0.0.1:4050);
