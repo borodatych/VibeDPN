@@ -35,6 +35,16 @@
 - [debianPi.md](platform/debianPi.md) — ядра Debian 12/13 и Raspberry Pi с `CONFIG_WIREGUARD=m`,
   Raspberry Pi OS на trixie; системный Python 3.11/3.13 и установка Docker из deb822-репозитория
 
+## linux
+
+- [iproute2Json.md](linux/iproute2Json.md) — поля `ip -j route/addr`, фикстуры для парсеров, проверка
+  модуля wireguard, `is_global` против TEST-NET и CGNAT
+
+## security
+
+- [uiPassword.md](security/uiPassword.md) — `secrets/htpasswd` с bcrypt: почему bcrypt, проверка с
+  nginx:alpine и грабля `return 200` до `auth_basic`
+
 ## ci
 
 - [githubActions.md](ci/githubActions.md) — мажоры actions, `setup-uv` без плавающего тега, arm64-раннеры,

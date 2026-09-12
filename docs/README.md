@@ -13,7 +13,7 @@ docs/
 │   └── installation.md   # установка на коробку: предусловия, что делает install.sh, проверка, удаление
 └── knowledge/            # база знаний: грабли и проверенные факты с URL
     ├── README.md         # индекс — запись без строки здесь не существует
-    ├── myst/  adguard/  compose/  docker/  wireguard/  platform/  ci/  frontend/
+    ├── myst/  adguard/  compose/  docker/  wireguard/  platform/  linux/  security/  ci/  frontend/
     ├── python/
     └── process/
 ```

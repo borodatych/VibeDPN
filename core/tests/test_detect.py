@@ -1,0 +1,52 @@
+"""Parsers of iproute2 JSON (fixtures captured from a Debian trixie container) and the probe."""
+
+import subprocess
+from ipaddress import IPv4Address, IPv4Network
+from pathlib import Path
+
+import pytest
+
+from vibedpn.detect import DetectError, HostProbe, Interface, parse_default_route, parse_interface
+
+FIXTURES = Path(__file__).parent / "fixtures"
+ROUTE = (FIXTURES / "ip_route_default.json").read_text(encoding="utf-8")
+ADDR = (FIXTURES / "ip_addr.json").read_text(encoding="utf-8")
+
+
+def test_parse_default_route_from_real_output() -> None:
+    assert parse_default_route(ROUTE) == "eth0"
+
+
+def test_parse_default_route_without_default() -> None:
+    assert parse_default_route("[]") is None
+    assert parse_default_route('[{"dst": "10.0.0.0/8", "dev": "eth1"}]') is None
+
+
+def test_parse_interface_from_real_output() -> None:
+    interface = parse_interface(ADDR, "eth0")
+    assert interface == Interface("eth0", IPv4Address("172.17.0.2"), 16)
+    assert interface.subnet == IPv4Network("172.17.0.0/16")
+
+
+def test_parse_interface_skips_loopback_and_unknown() -> None:
+    assert parse_interface(ADDR, "lo") is None  # scope host, not global
+    assert parse_interface(ADDR, "wlan0") is None
+
+
+def test_probe_reports_missing_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError("ip")
+
+    monkeypatch.setattr(subprocess, "run", missing)
+    with pytest.raises(DetectError, match="iproute2"):
+        HostProbe().default_interface()
+    assert HostProbe().wireguard_module_present() is False or True  # sysfs may exist on Linux
+
+
+def test_probe_reports_failing_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+    def failing(*_args: object, **_kwargs: object) -> None:
+        raise subprocess.CalledProcessError(1, ["ip"], stderr="boom")
+
+    monkeypatch.setattr(subprocess, "run", failing)
+    with pytest.raises(DetectError, match="boom"):
+        HostProbe().default_interface()

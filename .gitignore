@@ -1,5 +1,6 @@
 # Live box state — never committed. Examples (config.example.yaml, .env.example) are.
 /config.yaml
+/config.yaml.bak
 /.env
 /secrets/
 /data/

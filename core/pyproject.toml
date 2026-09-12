@@ -5,6 +5,7 @@ description = "VibeDPN core: router engine, API and CLI of the DPN box"
 requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
+  "bcrypt>=5.0.0",
   "fastapi>=0.115",
   "httpx>=0.28",
   "jinja2>=3.1",
@@ -62,6 +63,7 @@ select = [
 ]
 ignore = [
   "PLR0913",  # many arguments in CLI callbacks are the Typer idiom
+  "PLR0917",  # same: every Typer option is a positional-or-keyword parameter
 ]
 
 [tool.ruff.lint.per-file-ignores]

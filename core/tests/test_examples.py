@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from vibedpn.bootstrap import render_config
 from vibedpn.config import Config, Profile, load_config, parse_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]  # tests/ -> core/ -> repository root
@@ -48,3 +49,16 @@ def test_spec_examples_validate(block: str) -> None:
 def test_spec_has_an_example_per_role() -> None:
     roles = {Config.model_validate(parse_yaml(block)).role.value for block in spec_examples()}
     assert roles == {"home", "vps", "client"}
+
+
+def test_config_example_is_the_rendered_template() -> None:
+    """The example is generated from templates/config.yaml.j2, the same file `init` writes."""
+    assert render_config(load_config(EXAMPLE)) == EXAMPLE.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "block", spec_examples(), ids=lambda b: b.splitlines()[0].removeprefix("# example: ")
+)
+def test_spec_examples_render_and_round_trip(block: str) -> None:
+    config = Config.model_validate(parse_yaml(block))
+    assert Config.model_validate(parse_yaml(render_config(config))) == config

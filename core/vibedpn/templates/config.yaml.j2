@@ -7,20 +7,24 @@
 # Полная спека формата с образцами для всех ролей — docs/manuals/configSpec.md; какая роль что
 # запускает — docs/roles.md.
 
-version: 1
+version: {{ config.version }}
 
 # Роль коробки: home | vps | client.
-role: home
+role: {{ config.role.value }}
+{% if lan %}
 
 # Сеть коробки. `init` определяет интерфейс, адрес и подсеть сам.
 # mode: sidecar — коробка стоит в существующей LAN одним портом;
 #       gateway — «в разрыв», WAN + LAN двумя портами (Stage 9), тогда нужен wan_interface.
 # lan_address: адрес коробки в LAN, на нём слушают ui и dns — закрепите его на роутере.
 network:
-  mode: sidecar
-  lan_interface: eth0
-  lan_subnet: 192.168.1.0/24
-  lan_address: 192.168.1.50
+  mode: {{ config.network.mode.value }}
+  lan_interface: {{ config.network.lan_interface }}
+  lan_subnet: {{ config.network.lan_subnet }}
+  lan_address: {{ config.network.lan_address }}
+{% if config.network.wan_interface %}
+  wan_interface: {{ config.network.wan_interface }}
+{% endif %}
 
 # Политика для трафика LAN.
 # mode: off — всё напрямую; full — всё через default_upstream;
@@ -29,13 +33,26 @@ network:
 # failopen: false — упал аплинк, трафик стоит (kill-switch); true — уходит напрямую, осознанно.
 # smart_domains: доменные суффиксы для режима smart, например [netflix.com, bbc.co.uk].
 routing:
-  mode: off
-  default_upstream: dpn
-  failopen: false
-  smart_domains: []
+  mode: {{ config.routing.mode.value }}
+  default_upstream: {{ config.routing.default_upstream.value }}
+  failopen: {{ config.routing.failopen | tojson }}
+  smart_domains: {{ config.routing.smart_domains | tojson }}
 
 # Устройства LAN с собственной политикой поверх routing.mode: vps | dpn | bypass | block.
 # Идентификация по MAC, IP — запасной вариант.
+{% if config.devices %}
+devices:
+{% for device in config.devices %}
+  - name: {{ device.name | tojson }}
+{% if device.mac %}
+    mac: {{ device.mac }}
+{% endif %}
+{% if device.ip %}
+    ip: {{ device.ip }}
+{% endif %}
+    policy: {{ device.policy.value }}
+{% endfor %}
+{% else %}
 devices: []
 # devices:
 #   - name: TV
@@ -44,36 +61,54 @@ devices: []
 #   - name: Laptop
 #     ip: 192.168.1.42
 #     policy: dpn
+{% endif %}
 
 # Аплинки — куда коробка может отправлять трафик.
 # vps: приватный WireGuard-туннель к своей VPS (только роль client; peer-файл — secrets/wg-client.conf).
 # dpn: consumer Mysterium — выход через ноду сети; country — ISO 3166-1 alpha-2, без строки — любая.
 upstreams:
   vps:
-    enabled: false
+    enabled: {{ config.upstreams.vps.enabled | tojson }}
   dpn:
-    enabled: true
-    country: DE
+    enabled: {{ config.upstreams.dpn.enabled | tojson }}
+{% if config.upstreams.dpn.country %}
+    country: {{ config.upstreams.dpn.country }}
+{% else %}
+    # country: DE
+{% endif %}
+{% endif %}
 
 # Нода Mysterium (provider): раздаём канал, получаем MYST.
 # udp_ports: UDP-диапазон ноды, пробросить на роутере; traversal: порядок обхода NAT.
 provider:
-  enabled: true
-  udp_ports: "56000-56100"
-  traversal: [manual, upnp, holepunching]
+  enabled: {{ config.provider.enabled | tojson }}
+  udp_ports: "{{ config.provider.udp_ports }}"
+  traversal: [{{ config.provider.traversal | map(attribute="value") | join(", ") }}]
+{% if config.wg_server %}
+
+# Сервер приватного туннеля (роль vps): домашние коробки набирают endpoint:listen_port.
+wg_server:
+  endpoint: {{ config.wg_server.endpoint }}
+  subnet: {{ config.wg_server.subnet }}
+  listen_port: {{ config.wg_server.listen_port }}
+{% endif %}
+{% if lan %}
 
 # DNS и адблок: AdGuard Home на порту 53 LAN-адреса; upstreams — DNS-over-HTTPS.
 dns:
-  enabled: true
+  enabled: {{ config.dns.enabled | tojson }}
   upstreams:
-    - https://dns.cloudflare.com/dns-query
-  web_port: 3000
+{% for url in config.dns.upstreams %}
+    - {{ url }}
+{% endfor %}
+  web_port: {{ config.dns.web_port }}
 
 # Веб-интерфейс коробки, только на LAN-адресе.
 ui:
-  enabled: true
-  port: 80
+  enabled: {{ config.ui.enabled | tojson }}
+  port: {{ config.ui.port }}
+{% endif %}
 
 # API ядра: слушает только 127.0.0.1, на LAN его отдаёт ui (nginx).
 api:
-  port: 4480
+  port: {{ config.api.port }}

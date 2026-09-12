@@ -51,7 +51,7 @@ install_base_packages() {
   log "Installing base packages"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y -qq --no-install-recommends ca-certificates curl git python3 python3-venv >/dev/null
+  apt-get install -y -qq --no-install-recommends ca-certificates curl git iproute2 python3 python3-venv >/dev/null
 }
 
 # Official apt repository of Docker (https://docs.docker.com/engine/install/debian/); Raspberry Pi

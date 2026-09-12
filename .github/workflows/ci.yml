@@ -61,7 +61,7 @@ jobs:
         debian: [bookworm, trixie]
     steps:
       - uses: actions/checkout@v7
-      - name: Run the installer twice in a clean Debian container (docker CLI stubbed)
+      - name: Run the installer twice, then `vibedpn init`, in a clean Debian container (docker CLI stubbed)
         run: |
           docker run --rm -v "$PWD:/src:ro" "debian:${{ matrix.debian }}-slim" bash -eu -c '
             export DEBIAN_FRONTEND=noninteractive
@@ -75,6 +75,12 @@ jobs:
             test -L /usr/local/bin/vibedpn
             vibedpn --version
             bash /src/install.sh
+            vibedpn init --role vps --endpoint 203.0.113.7
+            test -f /opt/vibedpn/config.yaml && test -f /opt/vibedpn/.env
+            test ! -e /opt/vibedpn/secrets/htpasswd
+            ! vibedpn init --role vps --endpoint 203.0.113.7
+            vibedpn init --role vps --endpoint 203.0.113.7 --force
+            test -f /opt/vibedpn/config.yaml.bak
           '
 
   ui:

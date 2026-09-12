@@ -55,7 +55,32 @@ vibedpn --version
 docker compose version
 ```
 
-Дальше — `sudo vibedpn init` (Stage 1, следующий чекбокс).
+## Настроить: `sudo vibedpn init`
+
+Мастер спрашивает только то, что нельзя определить: роль, пароль веб-интерфейса (роли `home`
+и `client`, не короче 8 символов), для `client` — путь к peer-файлу с VPS. Остальное детектируется:
+интерфейс с маршрутом по умолчанию, его адрес и подсеть, наличие модуля `wireguard` (без него —
+предупреждение). Для `vps` публичный адрес берётся с интерфейса; если коробка за NAT и адрес
+приватный, мастер спросит `endpoint` (публичный хост или IPv4).
+
+Всё задаваемо флагами — для автоматизации и повторяемости:
+
+```bash
+sudo vibedpn init --role vps --endpoint vps.example.com
+sudo vibedpn init --role client --peer-config ~/home.conf --password-file ~/ui.pw
+```
+
+Что пишется в `/opt/vibedpn`:
+
+| Файл | Что | Права |
+|---|---|---|
+| `config.yaml` | конфиг с пояснениями, [формат](configSpec.md); режим маршрутизации сразу `off` | 644 |
+| `.env` | производные для Compose и `VIBEDPN_TAG` (при повторном `init` тег сохраняется) | 644 |
+| `secrets/htpasswd` | `admin:` + bcrypt-хеш пароля — для `auth_basic` в `ui` и API (Stage 4) | 600 |
+| `secrets/wg-client.conf` | копия peer-файла (роль `client`) | 600 |
+
+Повторный `init` при существующем `config.yaml` отказывается; `--force` заменяет файл, старый
+остаётся как `config.yaml.bak`. Дальше — `vibedpn up` (следующий чекбокс).
 
 ## Удалить
 
@@ -71,4 +96,5 @@ docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin` и уд�
 
 CI гоняет `install.sh` дважды в чистых контейнерах `debian:bookworm-slim` и `debian:trixie-slim`
 с заглушкой `docker` (`tests/install/docker-stub.sh`): шаг Docker пропускается, остальное — по-настоящему,
-включая сборку CLI и проверку `vibedpn --version` через симлинк.
+включая сборку CLI, проверку `vibedpn --version` через симлинк и `vibedpn init --role vps` с
+отказом без `--force` и бэкапом с ним.
