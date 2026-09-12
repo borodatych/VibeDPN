@@ -59,7 +59,8 @@
 ## ci
 
 - [githubActions.md](ci/githubActions.md) — мажоры actions, `setup-uv` без плавающего тега, arm64-раннеры,
-  права для GHCR, ruff 0.16; тесты в контейнере на раннере: `safe.directory` и `&&` под `set -e`
+  права для GHCR, ruff 0.16; тесты в контейнере на раннере: `safe.directory` и `&&` под `set -e`;
+  shellcheck раннера отстаёт от локального — версия прибита с проверкой sha256
 
 ## frontend
 

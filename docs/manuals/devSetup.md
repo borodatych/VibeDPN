@@ -9,7 +9,7 @@
 | `uv` | Python 3.12, зависимости `core/`, запуск ruff/mypy/pytest | `brew install uv`; интерпретаторы и кэш uv у владельца живут на томе Storage (`UV_PYTHON_INSTALL_DIR`, `UV_CACHE_DIR` в `~/.zshrc`) |
 | Docker + Compose v2 + buildx | `compose config`, сборка образов | colima (`brew install colima docker docker-compose docker-buildx`), `colima start`; образы собираются под arm64 хоста, amd64 — в CI. См. «Colima» ниже |
 | `actionlint` | проверка `.github/workflows` | `brew install actionlint` |
-| `shellcheck` | проверка shell-скриптов | `brew install shellcheck` |
+| `shellcheck` | проверка shell-скриптов | `brew install shellcheck`; в CI версия прибита (`SHELLCHECK_VERSION` в `ci.yml`, сейчас 0.11.0) — у раннера своя, более старая, и она спорит с локальной о номерах проверок |
 
 ## Порядок
 

@@ -43,3 +43,17 @@ safe.directory "*"`. Вторая грабля скрыла первую: `git c
 с проверкой побочного эффекта (sha256 файла до и после), иначе тест доказывает только код возврата.
 **Источники:** https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory ,
 https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html (поведение `-e` в списках).
+
+## [грабля] shellcheck раннера отстаёт и спорит с локальным о номерах проверок
+
+**Контекст:** Stage 3, чекбокс 1: локально `shellcheck` 0.11.0 молчал, в CI задача `shell`
+падала на том же файле.
+**Суть:** в образе `ubuntu-24.04` shellcheck старее (0.9.x). Про функцию, которую вызывает
+только `trap`, 0.11 говорит `SC2329` («never invoked»), а 0.9 — `SC2317` («unreachable») на
+каждой строке её тела; директива подавления, написанная по локальному выводу, в CI не
+срабатывает, и наоборот. Выход — прибить версию так же, как прибит actionlint: скачивать
+релиз с GitHub и сверять sha256 (`SHELLCHECK_VERSION`, `SHELLCHECK_SHA256` в `ci.yml`),
+тогда «зелено локально» и «зелено в CI» означают одно и то же.
+**Источники:** https://github.com/koalaman/shellcheck/releases/tag/v0.11.0 ,
+https://www.shellcheck.net/wiki/SC2329 , https://www.shellcheck.net/wiki/SC2317 ;
+прогон CI 2026-09-12 (задача `shell` на коммите ea14fe6).
