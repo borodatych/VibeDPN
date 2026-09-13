@@ -201,6 +201,55 @@ jobs:
           PY
             if nft list tables | grep -q vibedpn; then echo "table survived teardown"; exit 1; fi
           '
+      - name: Tunnel egress — NAT table and DOCKER-USER rules, applied twice and removed
+        run: |
+          docker run --rm --cap-add NET_ADMIN -v "$PWD:/src:ro" python:3.12-slim-trixie bash -eu -c '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends iptables nftables >/dev/null
+            pip install -q --require-hashes -r /src/core/requirements.txt
+            pip install -q --no-deps --no-build-isolation /src/core
+            python - <<"PY"
+          from vibedpn.config import Config
+          from vibedpn.engine.router import Egress, apply_tunnel_egress
+          base = {"version": 1, "role": "vps", "provider": {"enabled": True}, "wg_server": {"endpoint": "203.0.113.7"}, "firewall": {"enabled": False}}
+          assert apply_tunnel_egress(Config.model_validate(base)) is Egress.NO_DOCKER_DROP
+          PY
+            nft list table inet vibedpn_egress | tee /tmp/egress.nft
+            grep -q "ip saddr 10.78.0.0/24 oifname != \"wg0\" masquerade" /tmp/egress.nft
+            grep -q "ip saddr 10.78.0.0/24 oifname \"br-\*\" drop" /tmp/egress.nft
+            grep -q "169.254.0.0/16" /tmp/egress.nft
+            # A Docker host: the chain exists, and the rules must land once, however often core starts.
+            iptables-nft -N DOCKER-USER
+            iptables-nft -A DOCKER-USER -i eth9 -j DROP
+            python - <<"PY"
+          from vibedpn.config import Config
+          from vibedpn.engine.router import Egress, apply_tunnel_egress
+          base = {"version": 1, "role": "vps", "provider": {"enabled": True}, "wg_server": {"endpoint": "203.0.113.7"}}
+          for _ in range(2):
+              assert apply_tunnel_egress(Config.model_validate(base)) is Egress.DOCKER_USER
+          PY
+            iptables-nft -S DOCKER-USER | tee /tmp/user.txt
+            test "$(grep -c vibedpn-egress /tmp/user.txt)" = 2
+            grep -q -- "-i eth9 -j DROP" /tmp/user.txt
+            python - <<"PY"
+          from vibedpn.config import Config
+          from vibedpn.engine.router import Egress, apply_tunnel_egress
+          moved = {"version": 1, "role": "vps", "provider": {"enabled": True}, "wg_server": {"endpoint": "203.0.113.7", "subnet": "10.99.0.0/24"}}
+          assert apply_tunnel_egress(Config.model_validate(moved)) is Egress.DOCKER_USER
+          PY
+            iptables-nft -S DOCKER-USER | tee /tmp/moved.txt
+            test "$(grep -c "10.99.0.0/24.*vibedpn-egress" /tmp/moved.txt)" = 2
+            if grep -q 10.78.0.0 /tmp/moved.txt; then echo "rules of the old subnet survived"; exit 1; fi
+            python - <<"PY"
+          from vibedpn.config import Config
+          from vibedpn.engine.router import Egress, apply_tunnel_egress
+          client = {"version": 1, "role": "client", "network": {"lan_interface": "eth0", "lan_subnet": "192.168.1.0/24", "lan_address": "192.168.1.50"}, "routing": {"mode": "off", "default_upstream": "vps"}, "upstreams": {"vps": {"enabled": True}}}
+          assert apply_tunnel_egress(Config.model_validate(client)) is Egress.NONE
+          PY
+            if nft list tables | grep -q vibedpn_egress; then echo "egress table survived"; exit 1; fi
+            if iptables-nft -S DOCKER-USER | grep -q vibedpn-egress; then echo "DOCKER-USER rules survived"; exit 1; fi
+            iptables-nft -S DOCKER-USER | grep -q -- "-i eth9 -j DROP"
+          '
 
   tunnel:
     name: tunnel · wg handshake and kill switch

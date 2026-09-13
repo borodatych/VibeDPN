@@ -32,7 +32,15 @@ from vibedpn.compose import (
 from vibedpn.config import Config, Profile, Role, parse_port_range
 from vibedpn.detect import SSHD, WIREGUARD_MODULE, module_present
 from vibedpn.engine.myst import NODEUI_PORT, TEQUILAPI_PORT
-from vibedpn.engine.router import NFT_TABLE, find_nft
+from vibedpn.engine.router import (
+    EGRESS_TABLE,
+    NFT_TABLE,
+    RouterError,
+    docker_user_chain,
+    docker_user_rules,
+    find_nft,
+    plan_docker_user,
+)
 from vibedpn.engine.wg import SERVER_CONF_FILE, SERVER_KEY_FILE, server_address
 from vibedpn.engine.wg import SERVER_DIR as WG_SERVER_DIR
 
@@ -115,6 +123,10 @@ class DoctorFacts:
     firewall_table: bool | None = None  # None: could not list tables, see firewall_error
     firewall_error: str = ""
     tunnel: dict[str, FileFact] = field(default_factory=dict)  # role vps: files core renders
+    egress_table: bool | None = None  # None: could not list tables, see egress_error
+    egress_error: str = ""
+    docker_user: bool | None = None  # True: rules current or no DOCKER-USER; None: see error
+    docker_user_error: str = ""
 
 
 def parse_ss(output: str) -> list[Listener]:
@@ -212,6 +224,8 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
         access = _tunnel_access_result(config, facts)
         if access is not None:
             results.append(access)
+        if config.wg_server is not None:
+            results.append(_egress_result(config, facts))
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -373,6 +387,31 @@ def _firewall_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
     return results
 
 
+def _egress_result(config: Config, facts: DoctorFacts) -> CheckResult:
+    """Peers reach the internet only with both the NAT table and an opened Docker forward drop."""
+    hint = "" if facts.is_root else SUDO_HINT
+    subnet = config.wg_server.subnet if config.wg_server else ""
+    if facts.egress_table is None:
+        return CheckResult("tunnel egress", Verdict.WARN, facts.egress_error, hint)
+    if not facts.egress_table:
+        return CheckResult(
+            "tunnel egress",
+            Verdict.FAIL,
+            f"table {EGRESS_TABLE} is not loaded for {subnet}: peers cannot reach the internet",
+            "vibedpn restart, then vibedpn logs core",
+        )
+    if facts.docker_user is None:
+        return CheckResult("tunnel egress", Verdict.WARN, facts.docker_user_error, hint)
+    if not facts.docker_user:
+        return CheckResult(
+            "tunnel egress",
+            Verdict.FAIL,
+            "Docker drops forwarded traffic and DOCKER-USER does not let the tunnel out",
+            "vibedpn restart (core adds the rules at start), then vibedpn logs core",
+        )
+    return CheckResult("tunnel egress", Verdict.OK, f"peers of {subnet} leave through this VPS")
+
+
 def _ssh_result(ssh_ports: list[int], listeners: list[Listener] | None) -> CheckResult | None:
     """Every port sshd actually listens on must be in ``firewall.ssh_ports``; the config-file
     reading of ``init`` is not the daemon (socket activation, a later edit), so ``ss`` decides."""
@@ -513,9 +552,14 @@ def gather(box_dir: Path) -> DoctorFacts:
     listeners, listeners_error = _listeners()
     firewall_table, firewall_error = None, ""
     tunnel: dict[str, FileFact] = {}
+    egress_table, egress_error = None, ""
+    docker_user, docker_user_error = None, ""
     if config is not None and config.role is Role.VPS:
-        firewall_table, firewall_error = _firewall_table_present()
+        firewall_table, firewall_error = _table_present(NFT_TABLE)
         tunnel = tunnel_files(box_dir)
+        if config.wg_server is not None:
+            egress_table, egress_error = _egress_table_current(str(config.wg_server.subnet))
+            docker_user, docker_user_error = _docker_user_current(config)
     return DoctorFacts(
         config=config,
         config_error=config_error,
@@ -534,6 +578,10 @@ def gather(box_dir: Path) -> DoctorFacts:
         firewall_table=firewall_table,
         firewall_error=firewall_error,
         tunnel=tunnel,
+        egress_table=egress_table,
+        egress_error=egress_error,
+        docker_user=docker_user,
+        docker_user_error=docker_user_error,
     )
 
 
@@ -552,8 +600,45 @@ def tunnel_files(box_dir: Path) -> dict[str, FileFact]:
     return facts
 
 
-def _firewall_table_present() -> tuple[bool | None, str]:
-    """Whether ``inet vibedpn`` is loaded; ``None`` plus the reason when nft cannot tell."""
+def _docker_user_current(config: Config) -> tuple[bool | None, str]:
+    """Whether ``DOCKER-USER`` already holds exactly our rules (or does not exist at all)."""
+    if os.geteuid() != 0:
+        return None, "cannot read DOCKER-USER without root"
+    try:
+        found = docker_user_chain()
+    except RouterError as exc:
+        return None, str(exc)
+    if found is None:
+        return True, ""
+    delete, insert = plan_docker_user(found[1], docker_user_rules(config))
+    return not delete and not insert, ""
+
+
+def _egress_table_current(subnet: str) -> tuple[bool | None, str]:
+    """The egress table is loaded *for this subnet*: a changed ``wg_server.subnet`` without a
+    restart leaves NAT of the old one, which a mere presence check would call fine."""
+    present, error = _table_present(EGRESS_TABLE)
+    if not present:
+        return present, error
+    nft = find_nft()
+    if nft is None:
+        return None, "nft not found on the host (apt install nftables)"
+    try:
+        listing = subprocess.run(
+            [nft, "list", "table", *EGRESS_TABLE.split()],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        return None, f"cannot run nft: {exc.strerror}"
+    if listing.returncode != 0:
+        return None, f"nft cannot list {EGRESS_TABLE}: {listing.stderr.strip()}"
+    return f"ip saddr {subnet} " in listing.stdout, ""
+
+
+def _table_present(table: str) -> tuple[bool | None, str]:
+    """Whether an nft ``table`` is loaded; ``None`` plus the reason when nft cannot tell."""
     nft = find_nft()
     if nft is None:
         return None, "nft not found on the host (apt install nftables)"
@@ -565,7 +650,7 @@ def _firewall_table_present() -> tuple[bool | None, str]:
         return None, f"cannot run nft: {exc.strerror}"
     if probe.returncode != 0:
         return None, f"nft cannot list tables: {probe.stderr.strip() or 'not root'}"
-    family, name = NFT_TABLE.split()
+    family, name = table.split()
     try:
         entries = json.loads(probe.stdout).get("nftables", [])
     except json.JSONDecodeError:

@@ -14,9 +14,24 @@ from pydantic import ValidationError
 from vibedpn.api.app import create_app
 from vibedpn.api.tunnel import run_servers
 from vibedpn.config import ConfigError, load_config
-from vibedpn.engine.router import RouterError, apply_firewall
+from vibedpn.engine.router import (
+    EGRESS_TABLE,
+    Egress,
+    RouterError,
+    apply_firewall,
+    apply_tunnel_egress,
+)
 from vibedpn.engine.wg import WgError, ensure_server
 
+EGRESS_MESSAGES = {
+    Egress.NONE: f"no tunnel in this configuration; table {EGRESS_TABLE} removed if it was loaded",
+    Egress.DOCKER_USER: (
+        f"tunnel egress applied (table {EGRESS_TABLE}, forward opened in DOCKER-USER)"
+    ),
+    Egress.NO_DOCKER_DROP: (
+        f"tunnel egress applied (table {EGRESS_TABLE}; no DOCKER-USER chain, nothing to open)"
+    ),
+}
 CONFIG_PATH_ENV = "VIBEDPN_CONFIG"
 DEFAULT_CONFIG_PATH = Path("/etc/vibedpn/config.yaml")
 SECRETS_DIR_ENV = "VIBEDPN_SECRETS"
@@ -42,6 +57,8 @@ def main() -> None:
                 "vibedpn-core: no host firewall in this configuration;"
                 " table inet vibedpn removed if it was loaded\n"
             )
+        egress = apply_tunnel_egress(config)
+        sys.stderr.write(f"vibedpn-core: {EGRESS_MESSAGES[egress]}\n")
     except RouterError as exc:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None

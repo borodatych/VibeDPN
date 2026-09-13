@@ -18,6 +18,7 @@ from vibedpn.config import (
     normalize_mac,
     parse_port_range,
 )
+from vibedpn.engine.router import Egress
 
 
 def errors_of(data: dict[str, Any]) -> str:
@@ -385,6 +386,7 @@ def test_server_serves_on_loopback_and_config_port(tmp_path: Path) -> None:
             {server.CONFIG_PATH_ENV: str(good), server.SECRETS_DIR_ENV: str(tmp_path / "secrets")},
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=True),
+        patch("vibedpn.api.server.apply_tunnel_egress", return_value=Egress.DOCKER_USER),
         patch("vibedpn.api.server.run_servers") as run,
     ):
         server.main()

@@ -1,0 +1,22 @@
+# VibeDPN tunnel egress, role vps: home boxes leave for the internet through this VPS.
+# Rendered by core from config.yaml at every start, independent of firewall.enabled, and
+# applied as one transaction (`add table` + `delete table` + the whole table). The chains
+# accept by default: other forwarding of the host is not ours to judge. An accept here does not
+# override a drop in another table — Docker's FORWARD policy drop is opened by core in the
+# DOCKER-USER chain, see engine/router.py.
+add table inet vibedpn_egress
+delete table inet vibedpn_egress
+table inet vibedpn_egress {
+  chain forward {
+    type filter hook forward priority filter; policy accept;
+    ip saddr {{ tunnel_subnet }} iifname != "{{ wg_interface }}" drop comment "tunnel addresses come only from the tunnel"
+    ip daddr {{ tunnel_subnet }} oifname "{{ wg_interface }}" ct state != { established, related } drop comment "the internet opens nothing into the tunnel"
+    ip saddr {{ tunnel_subnet }} oifname "docker0" drop comment "peers never reach containers directly"
+    ip saddr {{ tunnel_subnet }} oifname "br-*" drop comment "peers never reach containers directly"
+    ip saddr {{ tunnel_subnet }} oifname != "{{ wg_interface }}" ip daddr { {{ private_ranges | join(", ") }} } drop comment "internet only: no cloud metadata, VPC or CGNAT"
+  }
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip saddr {{ tunnel_subnet }} oifname != "{{ wg_interface }}" masquerade comment "peers leave as the VPS address"
+  }
+}

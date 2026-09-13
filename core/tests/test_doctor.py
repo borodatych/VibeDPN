@@ -415,3 +415,28 @@ def test_core_must_listen_on_the_tunnel_address() -> None:
     assert unknown.verdict is Verdict.WARN
     assert unknown.detail == "cannot check: `ss` not found (install iproute2)"
     assert "tunnel access" not in by_name(evaluate(facts(listeners=core)))  # a home box
+
+
+def test_tunnel_egress_verdicts() -> None:
+    def verdict(**overrides: object) -> CheckResult:
+        return by_name(evaluate(facts(config=vps_config(), firewall_table=True, **overrides)))[
+            "tunnel egress"
+        ]
+
+    fine = verdict(egress_table=True, docker_user=True)
+    assert fine.verdict is Verdict.OK
+    assert fine.detail == "peers of 10.78.0.0/24 leave through this VPS"
+    no_table = verdict(egress_table=False, docker_user=True)
+    assert no_table.verdict is Verdict.FAIL and "inet vibedpn_egress" in no_table.detail
+    closed = verdict(egress_table=True, docker_user=False)
+    assert closed.verdict is Verdict.FAIL and "DOCKER-USER" in closed.detail
+    unknown = verdict(
+        egress_table=True,
+        docker_user=None,
+        docker_user_error="cannot read DOCKER-USER without root",
+        is_root=False,
+    )
+    assert unknown.verdict is Verdict.WARN and unknown.hint == "sudo vibedpn doctor"
+    unlisted = verdict(egress_table=None, egress_error="nft cannot list tables: not root")
+    assert unlisted.verdict is Verdict.WARN
+    assert "tunnel egress" not in by_name(evaluate(facts()))  # a home box has no tunnel server

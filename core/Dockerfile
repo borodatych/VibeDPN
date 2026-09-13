@@ -13,10 +13,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.12-slim-trixie
 # nftables: core programs the host firewall (network_mode: host + NET_ADMIN).
+# iptables: core opens Docker's FORWARD drop for the tunnel in DOCKER-USER (both backends).
 # wireguard-tools: core reads the live state of the VPS server wg0 (`wg show wg0 dump`) for
 # `vibedpn peer list`; it shares the host network namespace with wg-server.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends nftables wireguard-tools \
+    && apt-get install -y --no-install-recommends iptables nftables wireguard-tools \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app /app
 # Mount points of compose.yaml: config (ro), secrets, state.

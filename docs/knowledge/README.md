@@ -55,6 +55,8 @@
   NET_ADMIN, JSON-листинг для `doctor`, published-порты идут через FORWARD, `Port` в sshd — список;
   токенизация sshd_config как у sshd, `ListenAddress host:port`, `sshd -T`; DHCPv6 мимо conntrack,
   снятие таблицы парой `add table` + `delete table`
+- [tunnelEgress.md](linux/tunnelEgress.md) — `accept` в своей nft-таблице не отменяет DROP от Docker,
+  правила в `DOCKER-USER` по `iptables -S`, выбор бэкенда `nft`/`legacy`, NAT пиров туннеля
 
 ## security
 
