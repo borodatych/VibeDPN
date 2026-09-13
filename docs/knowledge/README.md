@@ -30,6 +30,8 @@
   прямого доступа к адресам шлюзов (репродукция на colima)
 - [bindMountRename.md](docker/bindMountRename.md) — `rename` поверх файлового bind-mount даёт EBUSY,
   монтировать каталог; права временного файла после замены — через `write_like`
+- [engineOverhead.md](docker/engineOverhead.md) — сколько памяти стоит Docker: `dockerd` 87 МиБ, `containerd` 48 МиБ,
+  ~10 МиБ shim на контейнер; Colima — VM поверх того же Docker, на Linux-коробке только добавит
 
 ## wireguard
 
