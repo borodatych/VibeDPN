@@ -54,6 +54,24 @@
 | `lan_subnet` | IPv4-сеть в CIDR (`192.168.1.0/24`) | — | адрес сети, не хоста: `192.168.1.5/24` — ошибка |
 | `lan_address` | IPv4 внутри `lan_subnet` | — | адрес коробки в LAN; на нём слушают `ui` и `dns`. Закрепить на роутере (DHCP-резервация или статика) |
 | `wan_interface` | имя интерфейса | — | только для `mode: gateway`, обязателен там и запрещён в `sidecar`; не равен `lan_interface` |
+| `dhcp.range_start`, `dhcp.range_end` | IPv4 внутри `lan_subnet` | со 100-го хоста до пятого с конца (у /24 — `.100`–`.249`) | только для `mode: gateway`: пул адресов, который раздаёт коробка; `lan_address` в него не входит, `lan_subnet` не меньше /28 |
+| `dhcp.lease` | `45m`, `12h`, `2d`, `infinite` | `12h` | только для `mode: gateway`: срок аренды |
+
+В `gateway` коробка — роутер своей LAN: раздаёт адреса (шлюз и DNS — `lan_address`), выпускает прямой трафик LAN через `wan_interface` с NAT.
+Адрес `lan_address` на `lan_interface` настраивает система, не VibeDPN; `vibedpn doctor` проверяет, что он стоит.
+
+```yaml
+network:
+  mode: gateway
+  lan_interface: wlan0
+  lan_subnet: 192.168.50.0/24
+  lan_address: 192.168.50.1
+  wan_interface: enp1s0
+  dhcp:
+    range_start: 192.168.50.100
+    range_end: 192.168.50.249
+    lease: 12h
+```
 
 ### `routing` — политика LAN-трафика
 

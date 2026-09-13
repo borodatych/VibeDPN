@@ -22,6 +22,7 @@ from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.config import Config, ConfigError, Upstream, load_config
 from vibedpn.engine.adguard import AdguardError, ensure_adguard
 from vibedpn.engine.devices import DB_FILE, DeviceError, DeviceStore
+from vibedpn.engine.dnsmasq import DnsmasqError, ensure_dnsmasq
 from vibedpn.engine.router import (
     EGRESS_TABLE,
     ROUTER_TABLE,
@@ -66,6 +67,8 @@ DEFAULT_SECRETS_DIR = Path("/etc/vibedpn/secrets")  # compose.yaml mounts ./secr
 ADGUARD_DIR_ENV = "VIBEDPN_ADGUARD_CONF"
 DEFAULT_ADGUARD_DIR = Path("/etc/vibedpn/adguard")  # compose.yaml mounts ./data/adguard/conf
 DATA_DIR_ENV = "VIBEDPN_DATA"
+DNSMASQ_DIR_ENV = "VIBEDPN_DNSMASQ_CONF"
+DEFAULT_DNSMASQ_DIR = Path("/etc/vibedpn/dnsmasq")  # compose.yaml mounts ./data/dnsmasq
 DEFAULT_DATA_DIR = Path("/var/lib/vibedpn")  # compose.yaml mounts ./data/core
 
 
@@ -104,9 +107,8 @@ def main() -> None:
     except AdguardError as exc:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None
-    if adguard is not None:
-        state = "updated" if adguard else "already current"
-        sys.stderr.write(f"vibedpn-core: AdGuard Home configuration {state}\n")
+    _report("AdGuard Home", adguard)
+    _report("dnsmasq", _write_dnsmasq(config))
     # Before the API: compose starts wg-server only once core is healthy, so the file it reads
     # is always the one rendered from the current config.
     try:
@@ -157,3 +159,20 @@ def _consumer_task(
         return []
     step = consumer_round(secrets_dir)
     return [partial(watch_consumer, lambda: box_state.config, consumer, step)]
+
+
+def _report(what: str, written: bool | None) -> None:
+    if written is not None:
+        state = "updated" if written else "already current"
+        sys.stderr.write(f"vibedpn-core: {what} configuration {state}\n")
+
+
+def _write_dnsmasq(config: Config) -> bool | None:
+    """Before the API, like AdGuard: compose starts dnsmasq only once core is healthy."""
+    conf_dir = Path(os.environ.get(DNSMASQ_DIR_ENV, DEFAULT_DNSMASQ_DIR))
+    try:
+        written = ensure_dnsmasq(config, conf_dir)
+    except DnsmasqError as exc:
+        sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
+        raise SystemExit(os.EX_CONFIG) from None
+    return written

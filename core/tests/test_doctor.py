@@ -654,3 +654,20 @@ def test_the_nat_of_the_node_is_judged_only_when_asked() -> None:
     assert symmetric.verdict is Verdict.WARN and "forward UDP 56000-56100" in symmetric.hint
     silent = by_name(evaluate(facts(nat_error="TequilAPI /nat/type: HTTP 500")))["nat"]
     assert silent.verdict is Verdict.WARN and "HTTP 500" in silent.detail
+
+
+def gateway_config() -> Config:
+    raw = home_config().model_dump(mode="json", exclude_none=True, exclude={"firewall"})
+    raw["network"] |= {"mode": "gateway", "wan_interface": "eth1"}
+    return Config.model_validate(raw)
+
+
+def test_gateway_needs_dhcp_port_and_its_lan_address() -> None:
+    needs = {(n.service, n.label) for n in port_needs(gateway_config())}
+    assert ("dnsmasq", "udp/67") in needs
+    assert ("dnsmasq", "udp/67") not in {(n.service, n.label) for n in port_needs(home_config())}
+    missing = evaluate(facts(config=gateway_config(), lan_address_set=False))
+    assert any(r.name == "lan address" and r.verdict is Verdict.FAIL for r in missing)
+    present = evaluate(facts(config=gateway_config(), lan_address_set=True))
+    assert any(r.name == "lan address" and r.verdict is Verdict.OK for r in present)
+    assert not any(r.name == "lan address" for r in evaluate(facts()))

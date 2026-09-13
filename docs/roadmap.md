@@ -114,7 +114,7 @@
 > входящий (WAN), Wi-Fi — точка доступа для домашних устройств. Пункт «Wi-Fi точка доступа» перенесён
 > из «Предложений» сюда.
 
-- [ ] `network.mode: gateway`: WAN/LAN интерфейсы, dnsmasq DHCP на LAN, NAT
+- [x] **`network.mode: gateway`: WAN/LAN интерфейсы, dnsmasq DHCP на LAN, NAT** — ✅ (2026-09-13, `next`) раздел `network.dhcp` (пул по умолчанию .100–.249 у /24, срок аренды, проверка: пул внутри подсети и без `lan_address`, подсеть не меньше /28); профиль Compose `dhcp` только в gateway; `engine/dnsmasq.py` рендерит `data/dnsmasq/dnsmasq.conf` при старте ядра (только DHCP, шлюз и DNS — `lan_address`); образ `images/dnsmasq` (Alpine 3.24, dnsmasq 2.92 — проверено сборкой), сборка в CI; роутер добавляет `masquerade` LAN → `wan_interface` и два правила транзита в DOCKER-USER; `doctor` — порт 67/udp и адрес LAN на интерфейсе. Решения 6–8 в `decisions.md`. Модульные тесты зелёные; на живом стенде проверит пункт E2E ниже
 - [ ] DHCP-аренды dnsmasq как источник устройств и имён для обнаружения (в sidecar аренд у коробки нет —
       перенесено из Stage 5)
 - [ ] `init` и UI дают выбрать входящий и исходящий интерфейс из обнаруженных

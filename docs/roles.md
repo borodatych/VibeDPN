@@ -19,7 +19,8 @@
 | `consumer` | `myst-consumer` (аплинк `dpn`) | `vibedpn-upstreams` 10.77.0.20 | `home`, `client` |
 | `wg-server` | `wg-server` | host, 51820/udp | `vps` |
 | `wg-client` | `wg-client` (аплинк `vps`) | `vibedpn-upstreams` 10.77.0.10 | `client` |
-| `router` | помощники LAN-стороны: dnsmasq для gateway-режима (Stage 9) и smart-режима (Stage 10) | host | `home`, `client` |
+| `router` | помощники LAN-стороны: dnsmasq smart-режима (Stage 10) | host | `home`, `client` |
+| `dhcp` | `dnsmasq` — DHCP на LAN, конфиг рендерит `core` | host, 67/udp на `lan_interface` | `home`, `client` только с `network.mode: gateway` |
 | `dns` | `adguard` | host, 53 на LAN-интерфейсе | `home`, `client` |
 | `ui` | `ui` (приложение start0 на Bun) и `ui-db` (Postgres 17) | `ui` — host, порт на LAN-интерфейсе; `ui-db` — только `127.0.0.1` | `home`, `client` |
 

@@ -324,3 +324,16 @@ def test_the_tunnel_of_the_vps_is_closed_to_the_lan_unless_opened() -> None:
     )
     assert "lan_access false" not in (router_ruleset(opened) or "")
     assert "lan_access false" not in (router_ruleset(lan_box(upstream="dpn")) or "")
+
+
+def test_gateway_mode_nats_the_lan_out_of_the_wan() -> None:
+    config = lan_box("off")
+    assert config.network is not None
+    config.network.mode = config.network.mode.GATEWAY
+    config.network.wan_interface = "eth1"
+    text = router_ruleset(config) or ""
+    assert 'oifname "eth1" ip saddr 192.168.1.0/24 masquerade' in text
+    rules = [" ".join(rule) for rule in router_docker_user_rules(config)]
+    assert any("-s 192.168.1.0/24 -i eth0 -o eth1" in rule for rule in rules)
+    assert any("-d 192.168.1.0/24 -i eth1 -o eth0" in rule for rule in rules)
+    assert 'masquerade comment "gateway' not in (router_ruleset(lan_box("off")) or "")

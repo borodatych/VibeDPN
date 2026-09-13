@@ -40,6 +40,12 @@ PORT_MAX = 65535
 DEFAULT_SSH_PORT = 22
 MIN_WG_SUBNET_ADDRESSES = 4  # network, server, at least one peer, broadcast
 LAST_PREFIX_WITH_BROADCAST = 30  # /31 and /32 have no reserved network/broadcast addresses
+# Default DHCP pool of gateway mode: hosts from this offset up to this many before the last one
+# (a /24 hands out .100-.249), leaving the low addresses to the box and static devices.
+DHCP_POOL_FIRST_OFFSET = 100
+DHCP_POOL_LAST_MARGIN = 5
+MIN_DHCP_SUBNET_PREFIX = 28
+LEASE_PATTERN = re.compile(r"^(\d+[mhdw]?|infinite)$")
 
 Port = Annotated[int, Field(ge=PORT_MIN, le=PORT_MAX)]
 InterfaceName = Annotated[str, Field(pattern=INTERFACE_PATTERN.pattern)]
@@ -59,6 +65,7 @@ class Profile(StrEnum):
     WG_SERVER = "wg-server"
     WG_CLIENT = "wg-client"
     ROUTER = "router"
+    DHCP = "dhcp"  # dnsmasq: gateway mode only, never next to the DHCP of an ISP router
     DNS = "dns"
     UI = "ui"
 
@@ -141,6 +148,21 @@ def normalize_domain(value: str) -> str:
     return domain
 
 
+class DhcpConfig(StrictModel):
+    """DHCP of gateway mode (dnsmasq on the LAN side); empty bounds take the default pool."""
+
+    range_start: IPv4Address | None = None
+    range_end: IPv4Address | None = None
+    lease: str = "12h"
+
+    @field_validator("lease")
+    @classmethod
+    def check_lease(cls, value: str) -> str:
+        if LEASE_PATTERN.fullmatch(value) is None:
+            raise ValueError(f"{value!r} is not a lease time (like 45m, 12h, 2d or infinite)")
+        return value
+
+
 class NetworkConfig(StrictModel):
     """Where the box sits: one LAN port (sidecar) or WAN+LAN (gateway, Stage 9)."""
 
@@ -149,6 +171,42 @@ class NetworkConfig(StrictModel):
     lan_subnet: IPv4Network
     lan_address: IPv4Address
     wan_interface: InterfaceName | None = None
+    dhcp: DhcpConfig | None = None
+
+    def dhcp_pool(self) -> tuple[IPv4Address, IPv4Address]:
+        """The addresses dnsmasq hands out: the configured bounds or the default pool."""
+        subnet = self.lan_subnet
+        first = subnet.network_address + 1
+        last = subnet.broadcast_address - 1
+        size = int(last) - int(first) + 1
+        dhcp = self.dhcp or DhcpConfig()
+        start = dhcp.range_start or first + min(DHCP_POOL_FIRST_OFFSET - 1, size // 2)
+        end = dhcp.range_end or last - min(DHCP_POOL_LAST_MARGIN, size // 4)
+        return start, end
+
+    @model_validator(mode="after")
+    def check_dhcp(self) -> Self:
+        if self.dhcp is not None and self.mode is not NetworkMode.GATEWAY:
+            raise ValueError("network.dhcp is only used with network.mode 'gateway'")
+        if self.mode is not NetworkMode.GATEWAY:
+            return self
+        if self.lan_subnet.prefixlen > MIN_DHCP_SUBNET_PREFIX:
+            raise ValueError(
+                f"network.lan_subnet {self.lan_subnet} is too small for DHCP in gateway mode"
+                f" (at most /{MIN_DHCP_SUBNET_PREFIX})"
+            )
+        start, end = self.dhcp_pool()
+        hosts = (self.lan_subnet.network_address + 1, self.lan_subnet.broadcast_address - 1)
+        if not (hosts[0] <= start <= end <= hosts[1]):
+            raise ValueError(
+                f"network.dhcp range {start}-{end} is not an ordered range of host addresses"
+                f" of network.lan_subnet {self.lan_subnet}"
+            )
+        if start <= self.lan_address <= end:
+            raise ValueError(
+                f"network.lan_address {self.lan_address} lies inside the DHCP range {start}-{end}"
+            )
+        return self
 
     @model_validator(mode="after")
     def check_lan_address(self) -> Self:
@@ -504,6 +562,7 @@ class Config(StrictModel):
             Profile.CONSUMER: self.upstreams.dpn.enabled,
             Profile.WG_CLIENT: self.role is Role.CLIENT,
             Profile.ROUTER: True,
+            Profile.DHCP: self.network is not None and self.network.mode is NetworkMode.GATEWAY,
             Profile.DNS: self.dns.enabled,
             Profile.UI: self.ui.enabled,
         }

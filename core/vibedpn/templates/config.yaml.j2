@@ -25,6 +25,14 @@ network:
 {% if config.network.wan_interface %}
   wan_interface: {{ config.network.wan_interface }}
 {% endif %}
+{% if config.network.mode.value == "gateway" %}
+{% set pool = config.network.dhcp_pool() %}
+  # DHCP коробки в LAN (dnsmasq): кого раздаёт и на сколько; адрес коробки в диапазон не входит.
+  dhcp:
+    range_start: {{ pool[0] }}
+    range_end: {{ pool[1] }}
+    lease: {{ (config.network.dhcp.lease if config.network.dhcp else "12h") }}
+{% endif %}
 
 # Политика для трафика LAN.
 # mode: off — всё напрямую; full — всё через default_upstream;

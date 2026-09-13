@@ -384,6 +384,8 @@ def router_ruleset(config: Config) -> str | None:
             vps_lan_closed=config.upstreams.vps.enabled and not config.upstreams.vps.lan_access,
             vps_mark=hex(UPLINKS[Upstream.VPS].mark),
             private_ranges=EGRESS_BLOCKED_RANGES,
+            # gateway mode: the box is the router of its LAN, so the direct path is NATed here
+            wan_interface=config.network.wan_interface or "",
         )
     )
 
@@ -405,6 +407,19 @@ def router_docker_user_rules(config: Config) -> list[list[str]]:
         ["-i", UPSTREAMS_BRIDGE, "-o", lan, *comment, "-j", "DROP"],
         ["-s", subnet, "-i", lan, "-o", lan, *comment, "-j", "ACCEPT"],
         ["-d", subnet, "-i", lan, "-o", lan, *replies, *comment, "-j", "ACCEPT"],
+        *_gateway_transit(config, comment, replies),
+    ]
+
+
+def _gateway_transit(config: Config, comment: list[str], replies: list[str]) -> list[list[str]]:
+    """gateway mode: the direct path of the LAN leaves through the WAN interface of the box."""
+    network = config.network
+    if network is None or network.wan_interface is None:
+        return []
+    lan, wan, subnet = network.lan_interface, network.wan_interface, str(network.lan_subnet)
+    return [
+        ["-s", subnet, "-i", lan, "-o", wan, *comment, "-j", "ACCEPT"],
+        ["-d", subnet, "-i", wan, "-o", lan, *replies, *comment, "-j", "ACCEPT"],
     ]
 
 

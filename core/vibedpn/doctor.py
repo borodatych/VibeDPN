@@ -32,8 +32,17 @@ from vibedpn.compose import (
     parse_ps,
     preflight,
 )
-from vibedpn.config import Config, Profile, Role, RoutingMode, UiVariant, Upstream, parse_port_range
-from vibedpn.detect import SSHD, WIREGUARD_MODULE, HostProbe, module_present
+from vibedpn.config import (
+    Config,
+    NetworkMode,
+    Profile,
+    Role,
+    RoutingMode,
+    UiVariant,
+    Upstream,
+    parse_port_range,
+)
+from vibedpn.detect import SSHD, WIREGUARD_MODULE, HostProbe, module_present, parse_interface
 from vibedpn.engine.myst import (
     NAT_OPEN,
     NAT_PUNCHABLE,
@@ -70,6 +79,7 @@ IP_FORWARD_SYSCTL = Path("/proc/sys/net/ipv4/ip_forward")
 SS_ARGV = ["ss", "-H", "-lntup"]
 API_HOST = "127.0.0.1"
 DNS_PORT = 53
+DHCP_SERVER_PORT = 67
 CORE_PROCESS_NAMES = frozenset({"vibedpn-core"})  # comm of the console script in `ss -p`
 ANY_ADDRESSES = frozenset({"0.0.0.0", "*", "::", "[::]"})
 WILDCARD = "*"
@@ -183,6 +193,8 @@ class DoctorFacts:
     # The node's NAT type (only with --network: the node asks Mysterium's servers); "" not asked.
     nat: str = ""
     nat_error: str = ""
+    # gateway mode: whether lan_address is configured on lan_interface; None: not checked
+    lan_address_set: bool | None = None
 
 
 def parse_ss(output: str) -> list[Listener]:
@@ -232,6 +244,8 @@ def port_needs(config: Config) -> list[PortNeed]:
         ]
     if config.wg_server is not None:
         needs.append(PortNeed("wg-server", "udp", WILDCARD, config.wg_server.listen_port))
+    if config.network is not None and config.network.mode is NetworkMode.GATEWAY:
+        needs.append(PortNeed("dnsmasq", "udp", WILDCARD, DHCP_SERVER_PORT))
     return needs
 
 
@@ -285,6 +299,7 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
     if config is not None and config.network is not None:
         results.extend(_lan_results(config, facts))
     results.extend(_nat_results(facts))
+    results.extend(_gateway_results(facts))
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -916,6 +931,7 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         exits=_exits(box_dir, config, services) if network and config is not None else None,
         memory_bytes=HostProbe().memory_bytes(),
         **_nat_facts(config, network=network),
+        lan_address_set=_lan_address_set(config),
     )
 
 
@@ -1166,3 +1182,49 @@ def _nat_result(config: Config, facts: DoctorFacts) -> CheckResult | None:
             forward,
         )
     return CheckResult("nat", Verdict.WARN, f"unknown NAT type {facts.nat!r} from the node")
+
+
+def _lan_address_set(config: Config | None) -> bool | None:
+    if config is None or config.network is None or config.network.mode is not NetworkMode.GATEWAY:
+        return None
+    ip = find_ip()
+    if ip is None:
+        return None
+    lan = config.network.lan_interface
+    try:
+        listing = subprocess.run(
+            [ip, "-j", "-4", "addr", "show", "dev", lan], check=True, capture_output=True, text=True
+        )
+        found = parse_interface(listing.stdout, lan)
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return None
+    return found is not None and found.address == config.network.lan_address
+
+
+def _gateway_results(facts: DoctorFacts) -> list[CheckResult]:
+    """gateway mode: the box owns its LAN address; the OS configures it, not core."""
+    config = facts.config
+    if config is None or config.network is None or config.network.mode is not NetworkMode.GATEWAY:
+        return []
+    network = config.network
+    if facts.lan_address_set is None:
+        return [
+            CheckResult(
+                "lan address",
+                Verdict.WARN,
+                f"cannot read the addresses of {network.lan_interface}",
+                SUDO_HINT,
+            )
+        ]
+    if not facts.lan_address_set:
+        return [
+            CheckResult(
+                "lan address",
+                Verdict.FAIL,
+                f"{network.lan_address} is not configured on {network.lan_interface}",
+                "give the LAN interface a static address (docs/manuals/installation.md, gateway)",
+            )
+        ]
+    return [
+        CheckResult("lan address", Verdict.OK, f"{network.lan_address} on {network.lan_interface}")
+    ]

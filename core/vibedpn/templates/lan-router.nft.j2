@@ -52,5 +52,8 @@ table inet vibedpn_router {
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
     iifname "{{ lan_interface }}" oifname "{{ lan_interface }}" ip saddr {{ lan_subnet }} masquerade comment "bypass on one port: replies come back through the box"
+{% if wan_interface %}
+    oifname "{{ wan_interface }}" ip saddr {{ lan_subnet }} masquerade comment "gateway mode: the box is the router of its LAN"
+{% endif %}
   }
 }

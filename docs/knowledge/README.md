@@ -70,6 +70,8 @@
   коробка, имена из PTR вместо аренд, SQLite с версией схемы
 - [gatewayContainer.md](linux/gatewayContainer.md) — шлюз с туннелем меньшего MTU подрезает TCP MSS
   (`rt mtu` в `forward`), проверка транзита и kill-switch шлюза счётчиками nft
+- [dnsmasqLeases.md](linux/dnsmasqLeases.md) — формат файла аренд dnsmasq (время, MAC, адрес, имя, client-id),
+  снят исполнением на 2.92; как собрать образ для опыта без сети
 
 ## security
 

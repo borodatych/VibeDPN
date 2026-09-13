@@ -29,6 +29,8 @@ services:
       - ./data/core:/var/lib/vibedpn
       # core keeps its keys of AdGuardHome.yaml current before adguard starts (engine/adguard.py).
       - ./data/adguard/conf:/etc/vibedpn/adguard
+      # core renders dnsmasq.conf of gateway mode before dnsmasq starts (engine/dnsmasq.py).
+      - ./data/dnsmasq:/etc/vibedpn/dnsmasq
     healthcheck:
       test:
         - CMD
@@ -266,6 +268,25 @@ services:
   # AdGuard Home on port 53 of the LAN address. Host network (needed for DHCP later and for real
   # client IPs); core renders AdGuardHome.yaml into ./data/adguard/conf so the setup wizard on
   # port 3000 never appears (Stage 4).
+  # DHCP of gateway mode (network.mode gateway only: the profile dhcp never runs next to the DHCP
+  # server of an ISP router). Host network on the LAN interface; the config comes from core.
+  dnsmasq:
+    image: ghcr.io/borodatych/vibedpn-dnsmasq:${VIBEDPN_TAG:-latest}
+    build:
+      context: ./images/dnsmasq
+    profiles:
+      - dhcp
+    network_mode: host
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      core:
+        condition: service_healthy
+    volumes:
+      - ./data/dnsmasq:/var/lib/vibedpn-dnsmasq
+
   adguard:
     image: adguard/adguardhome:${ADGUARD_TAG:-v0.107.79}
     profiles:

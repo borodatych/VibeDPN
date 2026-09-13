@@ -408,3 +408,31 @@ def test_a_lite_panel_gets_a_small_postgres(client: dict[str, Any]) -> None:
     assert env["VIBEDPN_UI_VARIANT"] == "lite"
     assert env["VIBEDPN_UI_DB_SHARED_BUFFERS"] == "32MB"
     assert env["VIBEDPN_UI_DB_MAX_CONNECTIONS"] == "20"
+
+
+def gateway(home: dict[str, Any]) -> dict[str, Any]:
+    home["network"] |= {"mode": "gateway", "wan_interface": "eth1"}
+    return home
+
+
+def test_gateway_default_dhcp_pool_skips_the_low_addresses(home: dict[str, Any]) -> None:
+    network = Config.model_validate(gateway(home)).network
+    assert network is not None
+    assert network.dhcp_pool() == (IPv4Address("192.168.1.100"), IPv4Address("192.168.1.249"))
+    assert Profile.DHCP in Config.model_validate(home).compose_profiles()
+
+
+def test_dhcp_range_must_not_hold_the_box_address(home: dict[str, Any]) -> None:
+    gateway(home)["network"]["dhcp"] = {"range_start": "192.168.1.20", "range_end": "192.168.1.60"}
+    assert "inside the DHCP range" in errors_of(home)
+    home["network"]["dhcp"] = {"range_start": "192.168.1.90", "range_end": "192.168.1.80"}
+    assert "not an ordered range" in errors_of(home)
+    home["network"]["dhcp"] = {"lease": "soon"}
+    assert "not a lease time" in errors_of(home)
+
+
+def test_dhcp_is_gateway_only(home: dict[str, Any]) -> None:
+    home["network"]["dhcp"] = {"lease": "1h"}
+    assert "network.dhcp is only used" in errors_of(home)
+    del home["network"]["dhcp"]
+    assert Profile.DHCP not in Config.model_validate(home).compose_profiles()

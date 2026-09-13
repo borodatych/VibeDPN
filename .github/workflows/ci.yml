@@ -563,6 +563,9 @@ jobs:
           - name: myst-consumer
             repository: myst-consumer
             context: images/myst-consumer
+          - name: dnsmasq
+            repository: dnsmasq
+            context: images/dnsmasq
           - name: ui-full
             repository: ui
             context: ui
