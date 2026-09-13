@@ -312,7 +312,7 @@ jobs:
           '
 
   adguard:
-    name: adguard · config from core, password, empty AAAA in full, UI settings survive
+    name: adguard · config from core, password, empty AAAA in full, box name, UI settings survive
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -320,7 +320,7 @@ jobs:
         run: |
           set -eu
           work="$(mktemp -d)"
-          mkdir -p "$work/conf" "$work/work" "$work/secrets"
+          mkdir -p "$work/conf" "$work/work" "$work/secrets" "$work/data"
           docker run --rm -v "$PWD:/src:ro" -v "$work:/work" python:3.12-slim-trixie bash -eu -c '
             pip install -q --require-hashes -r /src/core/requirements.txt
             pip install -q --no-deps --no-build-isolation /src/core
@@ -332,7 +332,7 @@ jobs:
           hashed = bcrypt.hashpw(b"ci-adguard-123", bcrypt.gensalt(12)).decode()
           Path("/work/secrets/htpasswd").write_text(f"admin:{hashed}\\n")
           raw = {"version": 1, "role": "client", "network": {"lan_interface": "lo", "lan_subnet": "127.0.0.0/8", "lan_address": "127.0.0.2"}, "routing": {"mode": "full", "default_upstream": "vps"}, "upstreams": {"vps": {"enabled": True}}, "dns": {"web_port": 3001}}
-          assert ensure_adguard(Config.model_validate(raw), Path("/work/conf"), Path("/work/secrets")) is True
+          assert ensure_adguard(Config.model_validate(raw), Path("/work/conf"), Path("/work/secrets"), Path("/work/data")) is True
           PY
           '
           start_adguard() {
@@ -350,16 +350,22 @@ jobs:
           test "$(login wrong-password)" = 403
           cat > "$work/dns.py" <<"PY"
           import socket, struct, sys
+          # dns.py <qtype> [name] [addr]: the answer count, or with "addr" the IPv4 of the last A answer.
           qtype = int(sys.argv[1])
-          query = struct.pack("!HHHHHH", 7, 0x0100, 1, 0, 0, 0) + b"\x06google\x03com\x00" + struct.pack("!HH", qtype, 1)
+          name = sys.argv[2] if len(sys.argv) > 2 else "google.com"
+          labels = b"".join(bytes([len(part)]) + part.encode() for part in name.split("."))
+          query = struct.pack("!HHHHHH", 7, 0x0100, 1, 0, 0, 0) + labels + b"\x00" + struct.pack("!HH", qtype, 1)
           sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
           sock.settimeout(5)
           sock.sendto(query, ("127.0.0.2", 53))
           reply, _ = sock.recvfrom(2048)
-          print(struct.unpack("!H", reply[6:8])[0])
+          count = struct.unpack("!H", reply[6:8])[0]
+          print(socket.inet_ntoa(reply[-4:]) if len(sys.argv) > 3 and count else count)
           PY
           test "$(docker run --rm -i --network host python:3.12-slim-trixie python - 28 < "$work/dns.py")" = 0
           test "$(docker run --rm -i --network host python:3.12-slim-trixie python - 1 < "$work/dns.py")" -gt 0
+          # The box name (ui.host_name, default vibedpn.lan) answers with the box address: core's rewrite is live.
+          test "$(docker run --rm -i --network host python:3.12-slim-trixie python - 1 vibedpn.lan addr < "$work/dns.py")" = 127.0.0.2
           # A setting made in the AdGuard UI (here: a disabled filter) survives core's next pass.
           docker rm -f adguard >/dev/null
           sudo sed -i "0,/enabled: false/s//enabled: true/" "$work/conf/AdGuardHome.yaml"
@@ -372,7 +378,7 @@ jobs:
           from vibedpn.config import Config
           from vibedpn.engine.adguard import ensure_adguard
           raw = {"version": 1, "role": "client", "network": {"lan_interface": "lo", "lan_subnet": "127.0.0.0/8", "lan_address": "127.0.0.2"}, "routing": {"mode": "off", "default_upstream": "vps"}, "upstreams": {"vps": {"enabled": True}}, "dns": {"web_port": 3001}}
-          assert ensure_adguard(Config.model_validate(raw), Path("/work/conf"), Path("/work/secrets")) is True
+          assert ensure_adguard(Config.model_validate(raw), Path("/work/conf"), Path("/work/secrets"), Path("/work/data")) is True
           PY
           '
           test "$(sudo grep -c "enabled: true" "$work/conf/AdGuardHome.yaml")" = "$enabled_before"
