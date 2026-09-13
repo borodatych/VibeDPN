@@ -9,11 +9,13 @@ from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
 from vibedpn import __version__
+from vibedpn.api.consumer import ConsumerStatus
 from vibedpn.api.models import (
     BoxStatus,
     DevicePolicyUpdate,
     DevicePolicyView,
     DeviceView,
+    DpnStatus,
     PeerCreate,
     PeerFile,
     PeerView,
@@ -257,6 +259,19 @@ def _uplink_statuses(
     return result
 
 
+def _dpn_status(consumer: ConsumerStatus | None) -> DpnStatus | None:
+    state = None if consumer is None else consumer.state
+    if state is None:
+        return None
+    return DpnStatus(
+        identity=state.identity,
+        registration=state.registration,
+        connection=state.connection,
+        country=state.country,
+        error=state.error,
+    )
+
+
 def _add_routing_routes(
     application: FastAPI,
     current: Callable[[], Config | None],
@@ -264,6 +279,7 @@ def _add_routing_routes(
     watchers: UplinkWatchers | None,
     routing_reader: RoutingReader,
     dns_mode: DnsModeSetter,
+    consumer: ConsumerStatus | None = None,
 ) -> None:
     """``/status`` and ``/routing``: the LAN router at a glance, and its mode changed live."""
 
@@ -284,6 +300,7 @@ def _add_routing_routes(
             and mode_uplink.gateway_alive is False
             and not routing.failopen,
             uplinks=uplinks,
+            dpn=_dpn_status(consumer),
         )
 
     @application.put("/routing", response_model=RoutingView)
@@ -346,6 +363,7 @@ def create_app(
     watchers: UplinkWatchers | None = None,
     routing_reader: RoutingReader = read_routing,
     dns_mode: DnsModeSetter | None = None,
+    consumer: ConsumerStatus | None = None,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -371,7 +389,13 @@ def create_app(
         return set_aaaa_disabled(box, secrets_dir)
 
     _add_routing_routes(
-        application, current, state, watchers, routing_reader, dns_mode or default_dns_mode
+        application,
+        current,
+        state,
+        watchers,
+        routing_reader,
+        dns_mode or default_dns_mode,
+        consumer,
     )
 
     @application.get("/health", response_model=Health)

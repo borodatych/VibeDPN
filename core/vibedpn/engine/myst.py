@@ -110,6 +110,19 @@ class TequilaClient:
             raise MystError(f"TequilAPI {path}: not JSON") from exc
         return body
 
+    def send(self, method: str, path: str, body: object | None = None) -> tuple[int, object]:
+        """Any verb; the status comes back with the body (``None`` when there is none), so a
+        caller decides what 422 or 404 means. Only a transport failure raises."""
+        try:
+            response = self._client.request(method, path, json=body)
+        except httpx.HTTPError as exc:
+            raise MystError(f"TequilAPI {method} {path}: {exc.__class__.__name__}: {exc}") from exc
+        try:
+            parsed: object = response.json() if response.content else None
+        except ValueError:
+            parsed = None
+        return response.status_code, parsed
+
     def close(self) -> None:
         self._client.close()
 

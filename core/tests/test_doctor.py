@@ -323,6 +323,7 @@ def test_secrets_probe_is_per_file(tmp_path: Path) -> None:
             "ui-db-password": None,
             "ui-auth-secret": None,
             "adguard-core-password": None,
+            "myst-consumer-passphrase": None,
             "nodeui-pass": True,
         }
     finally:
@@ -333,6 +334,7 @@ def test_secrets_probe_is_per_file(tmp_path: Path) -> None:
         "ui-db-password": False,
         "ui-auth-secret": False,
         "adguard-core-password": False,
+        "myst-consumer-passphrase": False,
         "nodeui-pass": True,
     }
 

@@ -69,7 +69,10 @@ UI_SECRETS = (UI_DB_PASSWORD_FILE, UI_AUTH_SECRET_FILE)
 # password.
 ADGUARD_CORE_PASSWORD_FILE = "adguard-core-password"
 ADGUARD_SECRETS = (ADGUARD_CORE_PASSWORD_FILE,)
-GENERATED_SECRETS = UI_SECRETS + ADGUARD_SECRETS
+# The passphrase of the dpn consumer identity (engine/consumer.py): losing it locks the identity.
+MYST_CONSUMER_PASSPHRASE_FILE = "myst-consumer-passphrase"
+CONSUMER_SECRETS = (MYST_CONSUMER_PASSPHRASE_FILE,)
+GENERATED_SECRETS = UI_SECRETS + ADGUARD_SECRETS + CONSUMER_SECRETS
 GENERATED_SECRET_BYTES = 32
 KNOWN_SECRETS = (HTPASSWD_FILE, WG_CLIENT_CONF, *GENERATED_SECRETS)
 DATA_DIR = "data"
@@ -134,8 +137,10 @@ def generated_secrets(config: Config) -> tuple[str, ...]:
     """Secrets ``init`` generates itself for this configuration: the panel's when it runs one,
     core's AdGuard user when it runs AdGuard."""
     profiles = config.compose_profiles()
-    return (UI_SECRETS if Profile.UI in profiles else ()) + (
-        ADGUARD_SECRETS if Profile.DNS in profiles else ()
+    return (
+        (UI_SECRETS if Profile.UI in profiles else ())
+        + (ADGUARD_SECRETS if Profile.DNS in profiles else ())
+        + (CONSUMER_SECRETS if Profile.CONSUMER in profiles else ())
     )
 
 

@@ -7,11 +7,15 @@ node panel, on the tunnel address (``vibedpn.api.tunnel``).
 
 import os
 import sys
+from collections.abc import Callable, Coroutine
+from functools import partial
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 
 from vibedpn.api.app import create_app
+from vibedpn.api.consumer import ConsumerStatus, consumer_round, watch_consumer
 from vibedpn.api.state import BoxState
 from vibedpn.api.tunnel import run_servers
 from vibedpn.api.uplink import UplinkWatchers
@@ -127,7 +131,29 @@ def main() -> None:
             raise SystemExit(os.EX_CONFIG) from None
     watchers = UplinkWatchers(uplinks)
     box_state = BoxState(config, config_path, watchers=watchers)
+    consumer = ConsumerStatus()
     application = create_app(
-        config, secrets_dir=secrets_dir, device_store=devices, state=box_state, watchers=watchers
+        config,
+        secrets_dir=secrets_dir,
+        device_store=devices,
+        state=box_state,
+        watchers=watchers,
+        consumer=consumer,
     )
-    run_servers(config, application, watchers=watchers, devices=devices)
+    run_servers(
+        config,
+        application,
+        watchers=watchers,
+        devices=devices,
+        extra=_consumer_task(config, box_state, consumer, secrets_dir),
+    )
+
+
+def _consumer_task(
+    config: Config, box_state: BoxState, consumer: ConsumerStatus, secrets_dir: Path
+) -> list[Callable[[], Coroutine[Any, Any, None]]]:
+    """The dpn consumer round on a box with a LAN; it idles while uplink dpn is off."""
+    if config.network is None:
+        return []
+    step = consumer_round(secrets_dir)
+    return [partial(watch_consumer, lambda: box_state.config, consumer, step)]

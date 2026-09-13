@@ -309,6 +309,7 @@ def run_servers(
     *,
     watchers: UplinkWatchers | None = None,
     devices: DeviceStore | None = None,
+    extra: Sequence[Callable[[], Coroutine[Any, Any, None]]] = (),
 ) -> None:
     try:
         listeners = open_listeners(config)
@@ -324,6 +325,7 @@ def run_servers(
             background.append(watchers.run)
         if devices is not None:
             background.append(partial(watch_devices, config, devices))
+        background.extend(extra)
         asyncio.run(serve(application, listeners, background))
     finally:
         listeners.close()

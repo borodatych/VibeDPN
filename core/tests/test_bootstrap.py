@@ -350,6 +350,7 @@ def test_the_panel_secrets_are_required_only_with_the_ui() -> None:
         "ui-db-password",
         "ui-auth-secret",
         "adguard-core-password",
+        "myst-consumer-passphrase",
     ]
     vps = build_config(Answers(Role.VPS, endpoint="vps.example.com"), PUBLIC)
     assert "ui-db-password" not in required_secrets(vps)

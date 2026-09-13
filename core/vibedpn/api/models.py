@@ -86,6 +86,16 @@ class UplinkStatus(BaseModel):
     lan_access: bool | None  # upstreams.vps.lan_access; None for an uplink without the setting
 
 
+class DpnStatus(BaseModel):
+    """The Mysterium consumer of uplink dpn as core last saw it."""
+
+    identity: str | None
+    registration: str
+    connection: str
+    country: str | None
+    error: str
+
+
 class BoxStatus(BaseModel):
     """The LAN router at a glance: what config.yaml asks and what the host does."""
 
@@ -96,6 +106,7 @@ class BoxStatus(BaseModel):
     # routing.mode full, its uplink does not answer and failopen is false: the LAN has no exit.
     lan_without_exit: bool
     uplinks: list[UplinkStatus]
+    dpn: DpnStatus | None = None  # None: uplink dpn is off, or core has not asked the consumer yet
 
 
 class RoutingUpdate(BaseModel):
