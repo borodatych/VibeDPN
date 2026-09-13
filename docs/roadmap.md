@@ -132,7 +132,8 @@
 ## Stage 11 — Полировка и раздача
 
 - [ ] DNS-запросы AdGuard идут через `default_upstream` в режиме `full`
-- [ ] `vibedpn backup|restore|update`, автообновление по таймеру (opt-in)
+- [x] **`vibedpn backup|restore`** — ✅ (2026-09-13, `next`) `engine/backup.py`: архив `tar.gz` (600) из `config.yaml`, `.env`, `secrets/`, `data/`; `backup` останавливает работающие сервисы на время копии и поднимает их обратно; `restore` проверяет все члены архива до записи (абсолютные пути, `..`, ссылки наружу, устройства — отказ целиком), откладывает текущие файлы в `restore-backup-<время>` и распаковывает с сохранением владельцев (фильтр `tar` там, где он есть: в bookworm Python 3.11.2 его нет). Решение 12. Unit-тесты и стенд `gateway.sh`: копия работающей коробки, коробка поднялась, после `restore` секрет вернулся, заменённый лежит в стороне, после `up` устройство на месте
+- [ ] `vibedpn update` и автообновление по таймеру (opt-in) — код и unit-тесты есть (`install.sh` из клона на текущей ветке, `compose pull --ignore-buildable`, `restart` новым CLI; `update --timer on|off` — `vibedpn-update.timer`, воскресенье 04:00, `RandomizedDelaySec=1h`, `Persistent=true`), исполнением не проверено: `install.sh` работает только на Debian, стенд на Ubuntu-VM его не запустит — проверка на N100
 - [ ] `docs/troubleshooting.md` по реальным вопросам из чата
 - [ ] Релиз v0.1.0: теги образов, GitHub Release, одна строка установки в README
 

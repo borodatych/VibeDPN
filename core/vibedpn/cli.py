@@ -3,6 +3,7 @@
 Stage 1 ships ``init``; ``up``, ``down``, ``restart``, ``status``, ``logs`` and ``doctor`` follow.
 """
 
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -63,9 +64,17 @@ from vibedpn.config import (
     check_endpoint,
 )
 from vibedpn.config_edit import ConfigEditError, set_routing
-from vibedpn.detect import DetectError, HostProbe
+from vibedpn.detect import DetectError, HostProbe, find_tool
 from vibedpn.device_view import render_devices
 from vibedpn.doctor import evaluate, gather, has_failures, render, to_json
+from vibedpn.engine.backup import (
+    BACKUPS_DIR,
+    BackupError,
+    create_archive,
+    read_members,
+    restore_archive,
+    stamp,
+)
 from vibedpn.engine.hostapd import HostapdError, read_passphrase
 from vibedpn.engine.myst import render_stats
 from vibedpn.tunnel_view import qr_code, render_peers
@@ -417,6 +426,153 @@ def restart(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     _retire_stale(box_dir)
     _compose(box_dir, "stop")
     _compose(box_dir, "up", "-d", "--remove-orphans")
+
+
+UPDATE_UNIT = "vibedpn-update"
+SYSTEMD_DIR = Path("/etc/systemd/system")
+# Weekly at night with a spread, and a missed run is caught up after a power-off (systemd.timer(5)).
+UPDATE_TIMER = """[Unit]
+Description=VibeDPN weekly update (vibedpn update --timer)
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
+
+class TimerSwitch(StrEnum):
+    ON = "on"
+    OFF = "off"
+
+
+def _running_services(box_dir: Path) -> list[str]:
+    try:
+        services = parse_ps(capture(compose_argv(box_dir, "ps", "--format", "json")))
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+    return [item.service for item in services if item.state == "running"]
+
+
+@app.command()
+def backup(
+    out: Annotated[
+        Path | None,
+        typer.Option(help="Archive to write; default backups/vibedpn-<time>.tar.gz in the box."),
+    ] = None,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Archive config.yaml, .env, secrets/ and data/; the box pauses for the copy."""
+    _prepare(box_dir, refresh=False)
+    target = out or box_dir / BACKUPS_DIR / f"vibedpn-{stamp(time.time())}.tar.gz"
+    running = _running_services(box_dir)
+    if running:
+        _compose(box_dir, "stop")
+    try:
+        names = create_archive(box_dir, target)
+    except BackupError as exc:
+        raise _fail(str(exc)) from None
+    finally:
+        if running:
+            _compose(box_dir, "up", "-d")
+    typer.echo(f"wrote {target} ({', '.join(names)}); it holds secrets: keep it private")
+
+
+@app.command()
+def restore(
+    archive: Annotated[
+        Path, typer.Argument(help="Archive from `vibedpn backup`.", exists=True, dir_okay=False)
+    ],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Put a backup back: the box goes down, the current files move aside, nothing is deleted."""
+    try:
+        read_members(archive)
+    except BackupError as exc:
+        raise _fail(str(exc)) from None
+    if (box_dir / CONFIG_FILE).exists():
+        _prepare(box_dir, refresh=False)
+        _compose(box_dir, "down", all_profiles=True)
+    try:
+        aside = restore_archive(box_dir, archive, time.time())
+    except BackupError as exc:
+        raise _fail(str(exc)) from None
+    if aside is not None:
+        typer.echo(f"the previous files are in {aside}")
+    typer.echo("restored; check config.yaml, then: vibedpn up")
+
+
+def _switch_update_timer(box_dir: Path, switch: TimerSwitch) -> None:
+    service = SYSTEMD_DIR / f"{UPDATE_UNIT}.service"
+    timer = SYSTEMD_DIR / f"{UPDATE_UNIT}.timer"
+    systemctl = find_tool("systemctl")
+    if systemctl is None:
+        raise _fail("systemctl not found: the update timer needs systemd")
+    try:
+        if switch is TimerSwitch.ON:
+            service.write_text(
+                "[Unit]\nDescription=VibeDPN update\nAfter=docker.service network-online.target\n\n"
+                f"[Service]\nType=oneshot\nExecStart={sys.executable} -m vibedpn update"
+                f" --dir {box_dir.resolve()}\n",
+                encoding="utf-8",
+            )
+            timer.write_text(UPDATE_TIMER, encoding="utf-8")
+            commands = [["daemon-reload"], ["enable", "--now", timer.name]]
+        else:
+            commands = [["disable", "--now", timer.name]]
+            for unit in (timer, service):
+                unit.unlink(missing_ok=True)
+            commands.append(["daemon-reload"])
+    except PermissionError:
+        raise _fail(f"cannot write {SYSTEMD_DIR}; run with sudo") from None
+    for command in commands:
+        if run([systemctl, *command]) != 0:
+            raise _fail(f"systemctl {' '.join(command)} failed")
+    typer.echo(f"automatic update: {switch.value}")
+
+
+@app.command()
+def update(
+    timer: Annotated[
+        TimerSwitch | None,
+        typer.Option(help="Weekly automatic update by a systemd timer: on or off."),
+    ] = None,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Update the checkout and the CLI (install.sh), pull the images, restart the box."""
+    if timer is not None:
+        _switch_update_timer(box_dir, timer)
+        return
+    config = _prepare(box_dir, refresh=False)
+    installer = box_dir / "install.sh"
+    if not (box_dir / ".git").is_dir() or not installer.is_file():
+        raise _fail(f"{box_dir} is not a checkout made by install.sh; nothing to update")
+    try:
+        branch = capture(["git", "-C", str(box_dir), "rev-parse", "--abbrev-ref", "HEAD"]).strip()
+        origin = capture(["git", "-C", str(box_dir), "remote", "get-url", "origin"]).strip()
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+    environment = {"VIBEDPN_DIR": str(box_dir), "VIBEDPN_BRANCH": branch, "VIBEDPN_REPO": origin}
+    if (
+        run(
+            [
+                "env",
+                *(f"{key}={value}" for key, value in environment.items()),
+                "bash",
+                str(installer),
+            ]
+        )
+        != 0
+    ):
+        raise _fail("install.sh failed; the box keeps running the previous version")
+    _compose(box_dir, "pull", "--ignore-buildable")
+    # the restart runs the freshly installed CLI, not this process with the old code loaded
+    if run([sys.executable, "-m", "vibedpn", "restart", "--dir", str(box_dir)]) != 0:
+        raise _fail("restart after the update failed; see `vibedpn doctor`")
+    typer.echo(f"updated to the latest {branch} (role {config.role.value})")
 
 
 def _routing_line(config: Config) -> str:

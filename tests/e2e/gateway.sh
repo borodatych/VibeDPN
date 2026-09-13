@@ -203,4 +203,27 @@ log "doctor"
 report="$(sudo "$CLI" doctor --dir "$BOX" || true)"
 printf '%s\n' "$report" | grep -q "\[ ok \] lan address" || fail "doctor does not confirm the LAN address: $report"
 
+log "backup of the running box, restore over a changed one"
+backup_out="$(sudo "$CLI" backup --dir "$BOX" --out "$WORK/box-backup.tar.gz" 2>&1)" || fail "vibedpn backup failed: $backup_out"
+[ "$(sudo stat -c %a "$WORK/box-backup.tar.gz")" = 600 ] || fail "the backup archive is not mode 600"
+i=0
+until settled; do
+  i=$((i + 5))
+  [ "$i" -lt "$TIMEOUT" ] || fail "the box did not come back after vibedpn backup"
+  sleep 5
+done
+before="$(sudo sha256sum "$BOX/secrets/htpasswd" | awk '{ print $1 }')"
+printf 'admin:changed-after-backup\n' | sudo tee "$BOX/secrets/htpasswd" >/dev/null
+restore_out="$(sudo "$CLI" restore "$WORK/box-backup.tar.gz" --dir "$BOX" 2>&1)" || fail "vibedpn restore failed: $restore_out"
+[ "$(sudo sha256sum "$BOX/secrets/htpasswd" | awk '{ print $1 }')" = "$before" ] || fail "restore did not bring the secret back"
+sudo sh -c "grep -q changed-after-backup '$BOX'/restore-backup-*/secrets/htpasswd" || fail "restore did not keep the replaced files aside"
+sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up after restore failed"
+i=0
+until settled && "$CLI" device list --dir "$BOX" 2>/dev/null | grep -q "$DEVICE_MAC"; do
+  i=$((i + 5))
+  [ "$i" -lt "$TIMEOUT" ] || fail "after restore the box is not up or lost the device $DEVICE_MAC"
+  sleep 5
+done
+echo "backup and restore: the secret is back, the old one is aside, the device store survived"
+
 log "gateway stand passed"

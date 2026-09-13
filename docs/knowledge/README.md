@@ -52,6 +52,7 @@
 
 - [debianPi.md](platform/debianPi.md) — ядра Debian 12/13 и Raspberry Pi с `CONFIG_WIREGUARD=m`,
   Raspberry Pi OS на trixie; системный Python 3.11/3.13 и установка Docker из deb822-репозитория
+- [imageArchitectures.md](platform/imageArchitectures.md) — Docker v28 последний для armhf, Bun только x64/arm64: полный образ только amd64 и arm64; инструменты сборки на VM
 
 ## linux
 
@@ -75,6 +76,7 @@
   снят исполнением на 2.92; как собрать образ для опыта без сети
 - [hostapdConfigCheck.md](linux/hostapdConfigCheck.md) — hostapd 2.11 без радио: ошибка конфига (`errors found in configuration file`) отличима от ошибки драйвера; виртуальное радио `mac80211_hwsim` для стенда
 - [dnsmasqNftset.md](linux/dnsmasqNftset.md) — `--nftset` есть в справке, но Alpine 3.24 собирает dnsmasq с `no-nftset`; Debian trixie — с `nftset`
+- [boxBackup.md](linux/boxBackup.md) — `tarfile` без фильтров в bookworm (3.11.2), `compose pull --ignore-buildable`, ключи таймера systemd, AdGuard не от root на порту 53 (`NET_BIND_SERVICE`)
 
 ## security
 
