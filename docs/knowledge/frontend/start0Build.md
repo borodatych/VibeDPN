@@ -20,3 +20,22 @@ SQLite ради Pi не рассматривается.
 На живом Pi 4 не проверено.
 **Источники:** https://github.com/oven-sh/bun/issues/26556 , https://github.com/oven-sh/bun/pull/26586 ,
 https://github.com/oven-sh/bun/pull/26545 (закрыт без слияния — базовая сборка ARM64 не понадобилась).
+
+## [архитектура] Вход в панель паролем коробки без копии пароля в базе
+
+**Контекст:** Stage 6, каркас панели (`ui/src/modules/auth/box-password.ts`), 2026-09-13.
+**Суть:** `vibedpn init` хранит только bcrypt (`secrets/htpasswd`), открытого пароля нигде нет.
+better-auth позволяет заменить `emailAndPassword.password.hash` и `verify`: `hash` отдаёт маркер, `verify` принимает только аккаунт с маркером и сверяет пароль с bcrypt-строкой `admin`.
+`Bun.password.verify` проверяет `$2b$` из Python bcrypt (исполнением: верный — `true`, чужой — `false`); по документации Bun определяет алгоритм по самому хешу.
+Файл читается на каждом входе: смена пароля через `init --force` действует без перезапуска панели.
+**Грабли:**
+- Пак сам занимает `/api/auth/*` и `/api/health`, поэтому прежнее правило nginx «`/api/` → ядро» с ним несовместимо: ядро переехало под `/api/core/*`, middleware Point0 по пути (документация Point0, раздел middleware) проверяет сессию и проксирует на `127.0.0.1`.
+- Point0 разворачивает `bunServeConfig` в `Bun.serve`, а у Bun `hostname` по умолчанию `0.0.0.0`: без явного адреса панель слушала бы все интерфейсы, включая WAN.
+- Rate limit better-auth по умолчанию выключен в development; включён явно. Специальное правило `/sign-in/email` — 3 запроса за 10 с: на прогоне 429 со второй неверной попытки подряд. Клиента он узнаёт по `x-forwarded-for`, прямого прокси перед панелью нет — поведение без заголовка проверено только прогоном на loopback.
+- `trustedOrigins` — `CLIENT_URL` = `http://<LAN-адрес>:<порт>`: вход по имени хоста вместо адреса better-auth отвергнет по Origin. Имя хоста в конфиге коробки — отдельная задача.
+- Cookie без `Secure`: у панели HTTP в LAN, `useSecureCookies: false` явно, `SameSite=Strict` через `advanced.cookies.session_token.attributes`.
+- `secrets/ui-db-password` пишется без перевода строки: он собирается в `DATABASE_URL`, а при смене пароль базы разошёлся бы с томом `data/ui-db` — поэтому `init` не перетирает эти секреты.
+**Источники:** https://www.better-auth.com/docs/authentication/email-password ,
+https://www.better-auth.com/docs/concepts/rate-limit , https://www.better-auth.com/docs/concepts/cookies ,
+https://bun.com/docs/runtime/hashing , https://bun.com/docs/runtime/http/server ,
+https://hub.docker.com/_/postgres (`POSTGRES_PASSWORD_FILE`, `/var/lib/postgresql/data`).

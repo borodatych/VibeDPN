@@ -30,6 +30,7 @@ Open-source «DPN-коробка» на своём железе: Mysterium-но�
 (cd core && uv sync --locked && uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest) && docker compose --profile '*' config -q && git ls-files -z '*.sh' | xargs -0 shellcheck && actionlint
 ```
 
+Панель (`ui/`): `(cd ui && bun run check && bun run test:unit && bun run test:dom)`.
 Плюс сборка образов, если менялись Dockerfile или зависимости: `docker compose --profile '*' build`.
 Инструменты и что они проверяют — [docs/manuals/devSetup.md](docs/manuals/devSetup.md). Тесты не
 запускать при ошибках типов — сначала чинить mypy.

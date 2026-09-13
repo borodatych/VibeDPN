@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "point0-project": {
+      "command": "bun",
+      "args": ["run", "mcp:project"]
+    },
+    "point0-docs": {
+      "command": "bun",
+      "args": ["run", "mcp:docs"]
+    }
+  }
+}

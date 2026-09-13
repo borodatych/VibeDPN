@@ -1,8 +1,32 @@
-# syntax=docker/dockerfile:1
-# UI image: nginx serving the static build and proxying /api/ to core. Until Stage 6 the
-# static content is a placeholder page; the nginx configuration is already the real one.
-FROM nginx:1.31-alpine
-COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
-COPY placeholder/ /usr/share/nginx/html/
-# Installs the password file for /api/ before nginx starts (see the script).
-COPY --chmod=755 entrypoint.d/05-htpasswd.sh /docker-entrypoint.d/05-htpasswd.sh
+# The VibeDPN panel: the start0 app on Bun. Built by CI only — `dist/` needs ~2 GiB of memory,
+# more than a Raspberry Pi or a small box has (docs/uiVariants.md).
+
+# ── build stage ── runs on the build platform: `dist/` is the same for every architecture, so it
+# is built once, natively, and never under emulation.
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.2 AS build
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl && rm -rf /var/lib/apt/lists/*
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile --ignore-scripts
+COPY . .
+# `prisma generate` uses a throwaway URL (prisma.config.ts): no database at build time.
+RUN bunx prisma generate && bun run build:code && find dist/client -type f -name '*.map' -delete
+
+# ── runtime stage ── per architecture: production dependencies (the Prisma CLI for migrations and
+# native addons), the built `dist/`, and the Prisma schema with its migrations.
+FROM oven/bun:1.4.2 AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    HOST_ENV=prod \
+    HTPASSWD_FILE=/run/secrets/htpasswd
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app/package.json /app/bun.lock ./
+RUN bun install --frozen-lockfile --production --ignore-scripts
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/src/modules/prisma/schema.prisma ./src/modules/prisma/schema.prisma
+COPY --from=build /app/src/modules/prisma/migrations ./src/modules/prisma/migrations
+COPY --from=build /app/prisma.config.ts ./prisma.config.ts
+COPY docker-entrypoint.sh /usr/local/bin/vibedpn-ui-entrypoint
+RUN chmod 0755 /usr/local/bin/vibedpn-ui-entrypoint
+ENTRYPOINT ["/usr/local/bin/vibedpn-ui-entrypoint"]
+CMD ["sh", "-c", "bunx prisma migrate deploy && exec bun run ./dist/server/index.server.js"]

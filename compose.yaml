@@ -40,8 +40,9 @@ services:
       retries: 3
       start_period: 10s
 
-  # Web UI: nginx serving the React build (Stage 6; a placeholder page until then) and proxying
-  # /api/ to core on loopback. Listens on the LAN address only.
+  # Web UI: the start0 app (ui/) on Bun, on the LAN address only. The core API is reachable from
+  # the LAN only through its /api/core/* behind a session; sign-in checks the bcrypt line of
+  # secrets/htpasswd on every attempt. Built by CI only (docs/uiVariants.md).
   ui:
     image: ghcr.io/borodatych/vibedpn-ui:${VIBEDPN_TAG:-latest}
     build:
@@ -53,18 +54,73 @@ services:
     depends_on:
       core:
         condition: service_healthy
+      ui-db:
+        condition: service_healthy
     volumes:
-      # The password of /api/ (bcrypt, from `vibedpn init`). Root-only on the host; the image copies
-      # it for the nginx workers at start. A missing file fails loudly instead of becoming a directory.
+      # Missing secret files fail loudly instead of becoming directories; the entrypoint refuses empty ones.
       - type: bind
         source: ./secrets/htpasswd
         target: /run/secrets/htpasswd
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source: ./secrets/ui-db-password
+        target: /run/secrets/ui-db-password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/ui-auth-secret
+        target: /run/secrets/ui-auth-secret
+        read_only: true
+        bind:
+          create_host_path: false
     environment:
-      UI_LISTEN: ${VIBEDPN_LAN_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}
-      API_PORT: ${VIBEDPN_API_PORT:-4480}
+      UI_LISTEN_HOST: ${VIBEDPN_LAN_IP:-127.0.0.1}
+      PORT: ${VIBEDPN_UI_PORT:-80}
+      SERVER_URL: http://${VIBEDPN_LAN_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}
+      CLIENT_URL: http://${VIBEDPN_LAN_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}
+      CORE_API_PORT: ${VIBEDPN_API_PORT:-4480}
+      UI_DB_PORT: ${VIBEDPN_UI_DB_PORT:-5480}
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - -e
+        - "fetch('http://${VIBEDPN_LAN_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  # Postgres of the panel (the start0 pack is bound to it: Prisma adapter, pg-boss, LISTEN/NOTIFY).
+  # Published on host loopback only, for `ui` on the host network. Password from init.
+  ui-db:
+    image: postgres:${UI_DB_TAG:-17.11-alpine}
+    profiles:
+      - ui
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: vibedpn
+      POSTGRES_DB: vibedpn
+      POSTGRES_PASSWORD_FILE: /run/secrets/ui-db-password
+    ports:
+      - "127.0.0.1:${VIBEDPN_UI_DB_PORT:-5480}:5432"
+    volumes:
+      # Postgres 17 images: the data volume goes to /var/lib/postgresql/data, not its parent.
+      - ./data/ui-db:/var/lib/postgresql/data
+      - type: bind
+        source: ./secrets/ui-db-password
+        target: /run/secrets/ui-db-password
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vibedpn -d vibedpn"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   # Mysterium provider node (roles home, vps). Bridge network with the UDP range published, as in
   # the official Docker guide; NodeUI (4449) and TequilAPI (4050) only on host loopback: TequilAPI

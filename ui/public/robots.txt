@@ -1,0 +1,11 @@
+# Crawl freely. Machine-readable docs for agents and LLMs:
+#   /llms.txt       — index of the docs (llmstxt.org standard)
+#   /llms-full.txt  — the entire docs corpus in one file
+#   append .md to any docs URL for raw markdown, e.g. /error0/latest/overview.md
+
+User-agent: *
+Disallow: /admin
+Disallow: /api/
+Allow: /
+
+Sitemap: https://1gr14.dev/sitemap.xml

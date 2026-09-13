@@ -1,8 +1,8 @@
 """Console entry point of the ``core`` container: load ``config.yaml`` and serve the API.
 
-The full API binds loopback only. The ``ui`` container (nginx) exposes it on the LAN interface
-with authentication; on a VPS home boxes reach a read-only part of it, and the node panel, on
-the tunnel address (``vibedpn.api.tunnel``).
+The full API binds loopback only. The ``ui`` panel exposes it on the LAN interface under
+``/api/core/`` to a signed-in session; on a VPS home boxes reach a read-only part of it, and the
+node panel, on the tunnel address (``vibedpn.api.tunnel``).
 """
 
 import os

@@ -320,6 +320,8 @@ def test_secrets_probe_is_per_file(tmp_path: Path) -> None:
         assert secrets_present(tmp_path) == {
             "htpasswd": None,
             "wg-client.conf": None,
+            "ui-db-password": None,
+            "ui-auth-secret": None,
             "nodeui-pass": True,
         }
     finally:
@@ -327,6 +329,8 @@ def test_secrets_probe_is_per_file(tmp_path: Path) -> None:
     assert secrets_present(tmp_path) == {
         "htpasswd": False,
         "wg-client.conf": False,
+        "ui-db-password": False,
+        "ui-auth-secret": False,
         "nodeui-pass": True,
     }
 

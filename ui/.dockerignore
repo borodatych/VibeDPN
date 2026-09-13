@@ -1,0 +1,14 @@
+.git
+node_modules
+dist
+src/generated
+.env
+.env.*
+*.ignore*
+*.log
+*.profraw
+.DS_Store
+tasks
+todo.txt
+todo.md
+htpasswd.local

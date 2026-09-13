@@ -70,7 +70,7 @@
 ## security
 
 - [uiPassword.md](security/uiPassword.md) — `secrets/htpasswd` с bcrypt: почему bcrypt, проверка с
-  nginx:alpine и грабля `return 200` до `auth_basic`
+  nginx:alpine и грабля `return 200` до `auth_basic`; заменено панелью start0 (Stage 6)
 
 ## ci
 
@@ -85,7 +85,8 @@
 - [toolchain.md](frontend/toolchain.md) — версии для Stage 6; TypeScript 7 против typescript-eslint,
   шаблон Vite с oxlint вместо ESLint; устарело — UI на start0
 - [start0Build.md](frontend/start0Build.md) — start0 на коробке: сборка падает на 2 ГиБ (пик 2.18 ГиБ),
-  runtime ~205–283 МиБ плюс Postgres ~70 МиБ, Bun на Pi 4 исправлен в v1.3.9
+  runtime ~205–283 МиБ плюс Postgres ~70 МиБ, Bun на Pi 4 исправлен в v1.3.9; вход паролем коробки через
+  `password.verify` по `htpasswd`, `/api/core/*` за сессией, `hostname` Bun, rate limit и cookie в LAN
 
 ## python
 

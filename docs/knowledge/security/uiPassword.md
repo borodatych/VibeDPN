@@ -1,5 +1,9 @@
 # Пароль UI
 
+> **Заменено 2026-09-13 (Stage 6):** nginx с `auth_basic` удалён; `secrets/htpasswd` теперь читает панель start0
+> при каждом входе (`password.verify`), см. [../frontend/start0Build.md](../frontend/start0Build.md). Запись — история
+> проверок bcrypt и прав на файл.
+
 ## [договорённость] Один секрет — `secrets/htpasswd` с bcrypt, читают и nginx, и core
 
 **Контекст:** `init` спрашивает пароль UI на Stage 1, потребители появятся в Stage 4 (auth_basic

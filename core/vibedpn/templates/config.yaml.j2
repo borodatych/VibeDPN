@@ -120,6 +120,6 @@ ui:
   port: {{ config.ui.port }}
 {% endif %}
 
-# API ядра: слушает только 127.0.0.1, на LAN его отдаёт ui (nginx).
+# API ядра: слушает только 127.0.0.1, на LAN его отдаёт панель ui под /api/core/ только после входа.
 api:
   port: {{ config.api.port }}

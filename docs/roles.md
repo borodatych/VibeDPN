@@ -21,7 +21,7 @@
 | `wg-client` | `wg-client` (аплинк `vps`) | `vibedpn-upstreams` 10.77.0.10 | `client` |
 | `router` | помощники LAN-стороны: dnsmasq для gateway-режима (Stage 9) и smart-режима (Stage 10) | host | `home`, `client` |
 | `dns` | `adguard` | host, 53 на LAN-интерфейсе | `home`, `client` |
-| `ui` | `ui` (nginx + статика) | host, порт на LAN-интерфейсе | `home`, `client` |
+| `ui` | `ui` (приложение start0 на Bun) и `ui-db` (Postgres 17) | `ui` — host, порт на LAN-интерфейсе; `ui-db` — только `127.0.0.1` | `home`, `client` |
 
 ## Связка `vps` + `client`
 

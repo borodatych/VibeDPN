@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import secrets as secrets_module
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from vibedpn.config import (
     DpnUplink,
     FirewallConfig,
     NetworkConfig,
+    Profile,
     ProviderConfig,
     Role,
     RoutingConfig,
@@ -46,7 +48,7 @@ TAG_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
 PRESERVED_ENV_VARS = (IMAGE_TAG_VAR, "MYST_TAG", "ADGUARD_TAG")
 UI_USER = "admin"
 MIN_PASSWORD_LENGTH = 8
-MAX_PASSWORD_BYTES = 72  # bcrypt hashes at most 72 bytes; nginx's crypt() has the same limit
+MAX_PASSWORD_BYTES = 72  # bcrypt hashes at most 72 bytes, whoever verifies the hash
 MAX_PEER_FILE_BYTES = 64 * 1024
 CONFIG_FILE = "config.yaml"
 CONFIG_BACKUP = "config.yaml.bak"
@@ -54,7 +56,13 @@ ENV_FILE = ".env"
 SECRETS_DIR = "secrets"
 HTPASSWD_FILE = "htpasswd"
 WG_CLIENT_CONF = "wg-client.conf"
-KNOWN_SECRETS = (HTPASSWD_FILE, WG_CLIENT_CONF)
+# The panel's own secrets: generated once and kept by every re-run of init, because the database
+# volume (data/ui-db) and the signed sessions depend on them. Written without a trailing newline.
+UI_DB_PASSWORD_FILE = "ui-db-password"
+UI_AUTH_SECRET_FILE = "ui-auth-secret"
+GENERATED_SECRETS = (UI_DB_PASSWORD_FILE, UI_AUTH_SECRET_FILE)
+GENERATED_SECRET_BYTES = 32
+KNOWN_SECRETS = (HTPASSWD_FILE, WG_CLIENT_CONF, *GENERATED_SECRETS)
 DATA_DIR = "data"
 MYST_PROVIDER_DATA = "myst-provider"  # bind-mounted to /var/lib/mysterium-node in compose.yaml
 # The node reads its panel (NodeUI) password from this bcrypt file in its data dir at start;
@@ -107,7 +115,13 @@ def required_secrets(config: Config) -> list[str]:
         needed.append(WG_CLIENT_CONF)
     if config.provider.enabled:
         needed.append(NODEUI_PASS_FILE)
+    needed.extend(generated_secrets(config))
     return needed
+
+
+def generated_secrets(config: Config) -> tuple[str, ...]:
+    """Secrets ``init`` generates itself for this configuration: the panel's, when it runs one."""
+    return GENERATED_SECRETS if Profile.UI in config.compose_profiles() else ()
 
 
 def _present(path: Path) -> bool | None:
@@ -268,13 +282,13 @@ def render_env(config: Config, preserved: dict[str, str]) -> str:
 
 
 def bcrypt_hash(password: str) -> str:
-    """A bcrypt hash of a policy-checked password (``$2b$``; nginx and the node accept it)."""
+    """A bcrypt hash of a policy-checked password (``$2b$``; panel, AdGuard and node accept it)."""
     check_password(password)
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
 
 
 def htpasswd_line(user: str, password: str) -> str:
-    """One ``user:hash`` line with a bcrypt hash, as nginx ``auth_basic`` reads it."""
+    """One ``user:hash`` bcrypt line; the panel reads the ``admin`` line on every sign-in."""
     return f"{user}:{bcrypt_hash(password)}\n"
 
 
@@ -315,14 +329,19 @@ def write_box(box_dir: Path, config: Config, answers: Answers, *, force: bool) -
     if answers.password is not None and config.provider.enabled:
         node_pass = bcrypt_hash(answers.password) + "\n"
     try:
-        return _write_files(box_dir, text, env_text, secrets, node_pass)
+        return _write_files(box_dir, text, env_text, secrets, node_pass, generated_secrets(config))
     except OSError as exc:
         target = exc.filename or box_dir
         raise BootstrapError(f"cannot write {target}: {exc.strerror}; run with sudo?") from exc
 
 
 def _write_files(
-    box_dir: Path, text: str, env_text: str, secrets: dict[str, str], node_pass: str | None
+    box_dir: Path,
+    text: str,
+    env_text: str,
+    secrets: dict[str, str],
+    node_pass: str | None,
+    generated: tuple[str, ...],
 ) -> Written:
     """The only part that touches the disk; every input is already validated."""
     config_path = box_dir / CONFIG_FILE
@@ -349,9 +368,14 @@ def _write_files(
     secrets_dir.chmod(SECRET_DIR_MODE)
     for name, content in secrets.items():
         result.files.append(write_file(secrets_dir / name, content, SECRET_FILE_MODE))
+    for name in generated:
+        path = secrets_dir / name
+        if not _present(path):
+            token = secrets_module.token_urlsafe(GENERATED_SECRET_BYTES)
+            result.files.append(write_file(path, token, SECRET_FILE_MODE))
     for name in KNOWN_SECRETS:
         stale = secrets_dir / name
-        if name not in secrets and stale.exists():
+        if name not in secrets and name not in generated and stale.exists():
             result.retired.append(_retire(stale))
     return result
 

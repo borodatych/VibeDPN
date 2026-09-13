@@ -1,0 +1,4 @@
+[data-sonner-toast],
+[data-sonner-toast] [data-close-button] {
+  box-shadow: none !important;
+}

@@ -1,0 +1,16 @@
+/* The navigation progress bar is 2px of colour on the page background, so one neutral cannot serve both themes: the
+   light one has to be dark enough to read on white, the dark one bright enough to read on near-black. `light-dark()` is
+   how every other colour on the site switches (see index.css), so it is how this switches too. */
+#nprogress .bar {
+  background: light-dark(var(--color-neutral-400), var(--color-neutral-200));
+}
+#nprogress .spinner {
+  display: none;
+}
+/* The peg is the glow at the bar's leading edge, so it has to glow in the bar's own colour — a dark glow over a bright
+   bar reads as a smudge. */
+#nprogress .peg {
+  box-shadow:
+    0 0 10px light-dark(var(--color-neutral-700), var(--color-neutral-200)),
+    0 0 5px light-dark(var(--color-neutral-700), var(--color-neutral-200));
+}

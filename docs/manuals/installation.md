@@ -79,7 +79,8 @@ sudo vibedpn init --role client --peer-config ~/home.conf --password-file ~/pane
 |---|---|---|
 | `config.yaml` | конфиг с пояснениями, [формат](configSpec.md); режим маршрутизации сразу `off` | 644 |
 | `.env` | производные для Compose и `VIBEDPN_TAG` (при повторном `init` тег сохраняется) | 644 |
-| `secrets/htpasswd` | `admin:` + bcrypt-хеш пароля — для `auth_basic` в `ui` и API (Stage 4) | 600 |
+| `secrets/htpasswd` | `admin:` + bcrypt-хеш пароля коробки — вход в панель, AdGuard | 600 |
+| `secrets/ui-db-password`, `secrets/ui-auth-secret` | пароль базы панели и ключ её сессий; создаются один раз, повторный `init` их не меняет | 600 |
 | `secrets/wg-client.conf` | копия peer-файла (роль `client`) | 600 |
 | `data/myst-provider/nodeui-pass` | bcrypt-хеш того же пароля для панели ноды (роли с provider); нода читает его при каждой попытке входа | 600 |
 

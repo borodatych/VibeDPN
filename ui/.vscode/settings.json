@@ -1,0 +1,17 @@
+{
+  "prettier.prettierPath": "./node_modules/prettier",
+  "js/ts.experimental.useTsgo": true,
+  "js/ts.preferences.importModuleSpecifier": "non-relative",
+  "editor.formatOnSave": true,
+  "files.associations": {
+    "*.css": "tailwindcss"
+  },
+  "tailwindCSS.classFunctions": ["cn", "cva", "clsx", "twMerge"],
+  "tailwindCSS.experimental.classRegex": [
+    "(?:class|className|\\w*ClassName)\\s*=\\s*[\"'`]([^\"'`]*)[\"'`]",
+    ["(?:class|className|\\w*ClassName)\\s*=\\s*\\{([^}]*)\\}", "[\"'`]([^\"'`]*)[\"'`]"]
+  ],
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  }
+}

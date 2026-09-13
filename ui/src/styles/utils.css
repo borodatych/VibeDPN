@@ -1,0 +1,15 @@
+@utility link {
+  @apply text-link hover:text-link-hover hover:underline cursor-pointer;
+}
+
+@utility link-holder {
+  @apply [&_a]:text-link [&_a:hover]:text-link-hover [&_a:hover]:underline [&_a]:cursor-pointer;
+}
+
+@utility form-sm {
+  @apply max-w-form-sm max-sm:max-w-full;
+}
+
+@utility form-md {
+  @apply max-w-form-md max-md:max-w-full;
+}

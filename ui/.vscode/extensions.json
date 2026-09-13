@@ -1,0 +1,15 @@
+// Install all at once: grep -oE '"[a-zA-Z0-9-]+\.[a-zA-Z0-9-]+"' .vscode/extensions.json | tr -d '"' | xargs -n1 code --install-extension
+{
+  "recommendations": [
+    "oven.bun-vscode", // Bun runtime support — debugging and run/test integration
+    "TypeScriptTeam.native-preview", // tsgo language service — settings.json turns it on via typescript.experimental.useTsgo
+    "YoavBls.pretty-ts-errors", // Readable TypeScript errors in hovers
+    "MylesMurphy.prettify-ts", // Expanded type previews on hover
+    "esbenp.prettier-vscode", // Prettier — settings.json formats on save with it
+    "dbaeumer.vscode-eslint", // ESLint — settings.json runs fixes on save with it
+    "bradlc.vscode-tailwindcss", // Tailwind IntelliSense — settings.json wires cn/cva and className detection
+    "prisma.prisma", // Prisma schema highlighting, formatting, and completion
+    "dbcode.dbcode", // Database client — browse the Postgres data without leaving the editor
+    "ms-azuretools.vscode-docker" // Dockerfile and docker-compose support
+  ]
+}

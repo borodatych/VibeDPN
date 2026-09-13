@@ -11,6 +11,7 @@ import pytest
 
 from vibedpn import bootstrap
 from vibedpn.bootstrap import (
+    GENERATED_SECRETS,
     Answers,
     BootstrapError,
     HostFacts,
@@ -22,6 +23,7 @@ from vibedpn.bootstrap import (
     read_peer_config,
     render_config,
     render_env,
+    required_secrets,
     write_box,
 )
 from vibedpn.config import Config, Role, load_config, parse_yaml
@@ -140,8 +142,20 @@ def test_write_box_writes_config_env_and_secrets(tmp_path: Path) -> None:
     config = build_config(answers, LAN)
     box = tmp_path / "box"
     written = write_box(box, config, answers, force=False)
-    assert [p.name for p in written.files] == ["config.yaml", ".env", "htpasswd", "wg-client.conf"]
+    assert [p.name for p in written.files] == [
+        "config.yaml",
+        ".env",
+        "htpasswd",
+        "wg-client.conf",
+        "ui-db-password",
+        "ui-auth-secret",
+    ]
     assert written.retired == []
+    for name in ("ui-db-password", "ui-auth-secret"):
+        generated = box / "secrets" / name
+        assert stat.S_IMODE(generated.stat().st_mode) == 0o600
+        assert len(generated.read_text(encoding="utf-8")) >= 32
+        assert not generated.read_text(encoding="utf-8").endswith("\n")
     assert not (box / "data").exists()  # a client runs no node
     assert load_config(box / "config.yaml") == config
     assert stat.S_IMODE((box / "secrets").stat().st_mode) == 0o700
@@ -217,7 +231,12 @@ def test_force_with_a_new_role_sets_old_secrets_aside(tmp_path: Path) -> None:
     write_box(box, build_config(client, LAN), client, force=False)
     vps = Answers(Role.VPS, endpoint="vps.example.com")
     written = write_box(box, build_config(vps, LAN), vps, force=True)
-    assert sorted(p.name for p in written.retired) == ["htpasswd.bak", "wg-client.conf.bak"]
+    assert sorted(p.name for p in written.retired) == [
+        "htpasswd.bak",
+        "ui-auth-secret.bak",
+        "ui-db-password.bak",
+        "wg-client.conf.bak",
+    ]
     assert not (box / "secrets" / "wg-client.conf").exists()
     assert stat.S_IMODE((box / "secrets" / "wg-client.conf.bak").stat().st_mode) == 0o600
     # A node password left behind by a provider role is set aside the same way.
@@ -301,3 +320,27 @@ def test_no_ownership_change_without_sudo(tmp_path: Path, monkeypatch: pytest.Mo
     answers = Answers(Role.VPS, endpoint="vps.example.com")
     write_box(tmp_path / "box", build_config(answers, LAN), answers, force=False)
     assert called == []
+
+
+def test_generated_secrets_survive_a_forced_re_run(tmp_path: Path) -> None:
+    answers = Answers(Role.HOME, password="secret123")
+    config = build_config(answers, LAN)
+    write_box(tmp_path, config, answers, force=False)
+    secrets = tmp_path / "secrets"
+    before = {name: (secrets / name).read_text(encoding="utf-8") for name in GENERATED_SECRETS}
+    assert before["ui-db-password"] != before["ui-auth-secret"]
+    written = write_box(tmp_path, config, Answers(Role.HOME, password="another123"), force=True)
+    assert not {p.name for p in written.files} & set(GENERATED_SECRETS)
+    after = {name: (secrets / name).read_text(encoding="utf-8") for name in GENERATED_SECRETS}
+    assert after == before
+    (secrets / "ui-auth-secret").write_text("", encoding="utf-8")  # empty counts as absent
+    written = write_box(tmp_path, config, answers, force=True)
+    assert [p.name for p in written.files if p.name in GENERATED_SECRETS] == ["ui-auth-secret"]
+    assert (secrets / "ui-db-password").read_text(encoding="utf-8") == before["ui-db-password"]
+
+
+def test_the_panel_secrets_are_required_only_with_the_ui() -> None:
+    home = build_config(Answers(Role.HOME, password="secret123"), LAN)
+    assert required_secrets(home) == ["htpasswd", "nodeui-pass", "ui-db-password", "ui-auth-secret"]
+    vps = build_config(Answers(Role.VPS, endpoint="vps.example.com"), PUBLIC)
+    assert "ui-db-password" not in required_secrets(vps)

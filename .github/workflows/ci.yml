@@ -98,26 +98,20 @@ jobs:
           '
 
   ui:
-    name: ui · lint
+    name: ui · types, lint, unit and dom tests
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ui
     steps:
       - uses: actions/checkout@v7
-      - id: present
-        name: Is the UI scaffolded yet (Stage 6)?
-        run: |
-          if [ -f ui/package.json ]; then echo "yes=true" >> "$GITHUB_OUTPUT"; else echo "yes=false" >> "$GITHUB_OUTPUT"; fi
-      - if: steps.present.outputs.yes == 'true'
-        uses: actions/setup-node@v7
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
-      - if: steps.present.outputs.yes == 'true'
-        run: npm ci
-        working-directory: ui
-      - if: steps.present.outputs.yes == 'true'
-        run: npm run lint
-        working-directory: ui
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bunx prisma generate && bun run generate
+      - run: bun run check
+      - run: bun run test:unit && bun run test:dom
 
   shell:
     name: shell · shellcheck
@@ -386,45 +380,71 @@ jobs:
           test "$(docker run --rm -i --network host python:3.12-slim-trixie python - 28 < "$work/dns.py")" -gt 0
           docker rm -f adguard >/dev/null
 
-  ui-auth:
-    name: ui · /api/ behind the init password
+  ui-image:
+    name: ui · image, sign-in with the init password, core behind the session
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - name: Build the ui image, serve a fake core, check 401/200 and a refused start without a password
+      - name: Build the panel image, start it with its database and a fake core, check the doors
         run: |
           set -eu
           docker build -q -t vibedpn-ui:ci ui >/dev/null
           work="$(mktemp -d)"
+          trap 'docker rm -f ui ui-db fake-core >/dev/null 2>&1 || true' EXIT
           mkdir -p "$work/api" "$work/secrets"
           echo ok > "$work/api/health"
-          hash="$(docker run --rm python:3.12-slim-trixie sh -c 'pip install -q bcrypt >/dev/null 2>&1 && python -c "import bcrypt; print(bcrypt.hashpw(b\"ci-secret-123\", bcrypt.gensalt(12)).decode())"')"
+          password=ci-secret-123
+          hash="$(docker run --rm --entrypoint bun vibedpn-ui:ci -e 'console.log(await Bun.password.hash(process.argv[1], {algorithm: "bcrypt"}))' "$password")"
           printf 'admin:%s\n' "$hash" > "$work/secrets/htpasswd"
-          sudo chown root:root "$work/secrets/htpasswd"
-          sudo chmod 600 "$work/secrets/htpasswd"
+          openssl rand -hex 24 | tr -d '\n' > "$work/secrets/ui-db-password"
+          openssl rand -hex 32 | tr -d '\n' > "$work/secrets/ui-auth-secret"
+          sudo chown root:root "$work/secrets/"*
+          sudo chmod 600 "$work/secrets/"*
+          docker run -d --name ui-db -p 127.0.0.1:5480:5432 -e POSTGRES_USER=vibedpn -e POSTGRES_DB=vibedpn \
+            -e POSTGRES_PASSWORD_FILE=/run/secrets/ui-db-password \
+            -v "$work/secrets/ui-db-password:/run/secrets/ui-db-password:ro" postgres:17.11-alpine >/dev/null
+          for _ in $(seq 30); do docker exec ui-db pg_isready -U vibedpn -d vibedpn >/dev/null 2>&1 && break; sleep 1; done
           docker run -d --name fake-core --network host -v "$work/api:/srv:ro" python:3.12-slim-trixie \
             python -m http.server 4480 --bind 127.0.0.1 --directory /srv >/dev/null
-          docker run -d --name ui --network host -e UI_LISTEN=127.0.0.1:8088 -e API_PORT=4480 \
-            -v "$work/secrets/htpasswd:/run/secrets/htpasswd:ro" vibedpn-ui:ci >/dev/null
-          for _ in $(seq 20); do curl -s -o /dev/null http://127.0.0.1:8088/ && break; sleep 1; done
+          secrets=(-v "$work/secrets/htpasswd:/run/secrets/htpasswd:ro"
+            -v "$work/secrets/ui-db-password:/run/secrets/ui-db-password:ro"
+            -v "$work/secrets/ui-auth-secret:/run/secrets/ui-auth-secret:ro")
+          base=http://127.0.0.1:8088
+          docker run -d --name ui --network host -e UI_LISTEN_HOST=127.0.0.1 -e PORT=8088 \
+            -e SERVER_URL=$base -e CLIENT_URL=$base -e CORE_API_PORT=4480 -e UI_DB_PORT=5480 \
+            "${secrets[@]}" vibedpn-ui:ci >/dev/null
+          for _ in $(seq 60); do curl -fsS -o /dev/null $base/api/health && break; sleep 1; done
           code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
-          test "$(code http://127.0.0.1:8088/api/health)" = 401
-          test "$(code -u admin:ci-secret-123 http://127.0.0.1:8088/api/health)" = 200
-          test "$(code -u admin:wrong http://127.0.0.1:8088/api/health)" = 401
-          test "$(code -u root:ci-secret-123 http://127.0.0.1:8088/api/health)" = 401
-          test "$(code http://127.0.0.1:8088/)" = 200
-          docker logs ui 2>&1 | grep -q "password file installed for /api/"
-          docker rm -f ui fake-core >/dev/null
-          # No password file, an empty one, or a directory in its place: the container refuses to start.
+          test "$(code $base/api/health)" = 200
+          # Listens on the given address only.
+          if curl -s -o /dev/null --max-time 3 "http://$(hostname -I | awk '{print $1}'):8088/api/health"; then
+            echo "the panel answers on a non-listen address"; exit 1
+          fi
+          # Core only behind a session.
+          test "$(code $base/api/core/health)" = 401
+          sign_in() { curl -s -o /dev/null -w '%{http_code}' -c "$work/jar" -H "Origin: $base" \
+            -H 'Content-Type: application/json' -d "{\"email\":\"admin@vibedpn.lan\",\"password\":\"$1\"}" \
+            $base/api/auth/sign-in/email; }
+          test "$(sign_in wrong-password)" = 401
+          test "$(sign_in "$password")" = 200
+          test "$(code -b "$work/jar" $base/api/core/health)" = 200
+          # Nobody signs up.
+          signup="$(curl -s -o /dev/null -w '%{http_code}' -H "Origin: $base" -H 'Content-Type: application/json' \
+            -d '{"email":"x@example.com","password":"12345678","name":"x"}' $base/api/auth/sign-up/email)"
+          test "$signup" != 200
+          # Brute force is limited.
+          limited=no
+          for _ in 1 2 3 4 5; do [ "$(sign_in wrong-password)" = 429 ] && limited=yes; done
+          test "$limited" = yes
+          docker rm -f ui >/dev/null
+          # A missing or empty secret: the container refuses to start.
           : > "$work/empty"
-          mkdir "$work/dir"
-          for source in "$work/empty" "$work/dir"; do
-            if docker run --rm --network host -e UI_LISTEN=127.0.0.1:8089 -e API_PORT=4480 \
-              -v "$source:/run/secrets/htpasswd:ro" vibedpn-ui:ci > "$work/refused.log" 2>&1; then
-              echo "ui started without a usable password file ($source)"; exit 1
-            fi
-            grep -q "is missing or empty" "$work/refused.log"
-          done
+          if docker run --rm --network host -e UI_DB_PORT=5480 -v "$work/empty:/run/secrets/htpasswd:ro" \
+            -v "$work/secrets/ui-db-password:/run/secrets/ui-db-password:ro" \
+            -v "$work/secrets/ui-auth-secret:/run/secrets/ui-auth-secret:ro" vibedpn-ui:ci > "$work/refused.log" 2>&1; then
+            echo "ui started with an empty password file"; exit 1
+          fi
+          grep -q "is missing or empty" "$work/refused.log"
 
   tunnel:
     name: tunnel · wg handshake and kill switch
@@ -467,7 +487,7 @@ jobs:
 
   images:
     name: image · ${{ matrix.image.name }}
-    needs: [python, shell, compose, install, firewall, router, ui-auth, adguard, tunnel, e2e]
+    needs: [python, shell, compose, install, firewall, router, ui, ui-image, adguard, tunnel, e2e]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

@@ -309,7 +309,7 @@ class DnsConfig(StrictModel):
 
 
 class UiConfig(StrictModel):
-    """Web UI (nginx) on the LAN interface; it also proxies the core API."""
+    """Web UI (the start0 app in ui/) on the LAN interface; it also proxies the core API."""
 
     enabled: bool = True
     port: Port = 80
