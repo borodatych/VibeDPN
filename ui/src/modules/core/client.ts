@@ -5,17 +5,20 @@ import '@point0/core/server-only'
 
 const CORE_TIMEOUT_MS = 10_000
 
+/** What core answered: its body, or its status with the `detail` it gives for an error. */
+export type CoreAnswer<T> = { ok: true; body: T } | { ok: false; status: number; detail: string }
+
+type CoreInit = { method: 'PUT'; body: unknown } | { method: 'DELETE' }
+
 /**
- * A JSON request to the core API from a server loader of the panel. Core answers errors with `{ detail }`; they come back
- * as `AppError` with core's status, so a refused mode change shows core's own reason.
+ * A JSON request to the core API from a server loader, without throwing on core's own refusals: a loader that has a
+ * meaning for 404 or 503 (no node on this box, the node does not answer) decides itself. Core not answering at all is
+ * still an `AppError` 502.
  *
  * @tags core
- * @related coreApiProxy
+ * @related coreRequest, coreApiProxy
  */
-export const coreRequest = async <T>(
-  path: string,
-  init?: { method: 'PUT'; body: unknown } | { method: 'DELETE' },
-): Promise<T> => {
+export const coreFetch = async <T>(path: string, init?: CoreInit): Promise<CoreAnswer<T>> => {
   let response: Response
   try {
     response = await fetch(`http://${CORE_API_HOST}:${serverEnv.CORE_API_PORT}${path}`, {
@@ -29,12 +32,27 @@ export const coreRequest = async <T>(
   }
   // 204 of a DELETE has no body
   const body: unknown = response.status === 204 ? null : await response.json().catch(() => null)
-  if (!response.ok) {
-    const detail =
-      body && typeof body === 'object' && 'detail' in body && typeof body.detail === 'string'
-        ? body.detail
-        : `Core answered HTTP ${response.status}`
-    throw new AppError(detail, { status: response.status })
+  if (response.ok) {
+    return { ok: true, body: body as T }
   }
-  return body as T
+  const detail =
+    body && typeof body === 'object' && 'detail' in body && typeof body.detail === 'string'
+      ? body.detail
+      : `Core answered HTTP ${response.status}`
+  return { ok: false, status: response.status, detail }
+}
+
+/**
+ * A JSON request to the core API from a server loader of the panel. Core answers errors with `{ detail }`; they come back
+ * as `AppError` with core's status, so a refused mode change shows core's own reason.
+ *
+ * @tags core
+ * @related coreFetch, coreApiProxy
+ */
+export const coreRequest = async <T>(path: string, init?: CoreInit): Promise<T> => {
+  const answer = await coreFetch<T>(path, init)
+  if (!answer.ok) {
+    throw new AppError(answer.detail, { status: answer.status })
+  }
+  return answer.body
 }
