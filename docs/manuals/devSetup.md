@@ -87,6 +87,20 @@ colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && VIBEDPN_TA
 
 В CI его гоняет задача `e2e-home`.
 
+`tests/e2e/gateway.sh` — стенд режима «в разрыв»: коробка с одними `core` и `dnsmasq`, устройство в netns
+получает адрес по DHCP (`dhcpcd`, в Ubuntu — пакет `dhcpcd-base`) и выходит в интернет через NAT коробки.
+Образы собираются на VM за минуту:
+
+```bash
+colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && docker build -q -t ghcr.io/borodatych/vibedpn-core:e2e core && docker build -q -t ghcr.io/borodatych/vibedpn-dnsmasq:e2e images/dnsmasq'
+```
+
+```bash
+colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && VIBEDPN_TAG=e2e sh tests/e2e/gateway.sh'
+```
+
+В CI его гоняет задача `e2e-gateway`.
+
 ## Что не проверить локально
 
 Сетевую часть (nft, ip rule, WireGuard) — только на Linux-хосте или в E2E-стенде выше. На macOS ядро

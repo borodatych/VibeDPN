@@ -119,7 +119,7 @@
       перенесено из Stage 5)
 - [ ] `init` и UI дают выбрать входящий и исходящий интерфейс из обнаруженных
 - [ ] Wi-Fi точка доступа (hostapd) как LAN-сторона gateway-режима
-- [ ] E2E: lan-client получает адрес по DHCP от box
+- [x] **E2E: lan-client получает адрес по DHCP от box** — ✅ (2026-09-13, `next`) `tests/e2e/gateway.sh`: облегчённая коробка `home` в gateway (только `core` и `dnsmasq`, профили `router,dhcp`), LAN — мост с адресом, выставленным стендом как ОС; устройство в netns берёт аренду `dhcpcd`: адрес из пула, шлюз — коробка, строка аренды с его MAC в `data/dnsmasq/leases`; выход в интернет совпадает с выходом коробки без эмуляции NAT провайдера — значит через `masquerade` роутера; `doctor` — `[ ok ] lan address`. Прогон на Linux-VM зелёный, CI-задача `e2e-gateway` в `needs` образов
 
 ## Stage 10 — Smart-режим
 
