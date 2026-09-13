@@ -170,7 +170,7 @@ def test_core_reports_a_configuration_without_firewall(
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=False),
         patch("vibedpn.api.server.apply_tunnel_egress", return_value=Egress.NO_DOCKER_DROP),
-        patch("vibedpn.api.server.apply_router", return_value=None),
+        patch("vibedpn.api.server.apply_router", return_value=[]),
         patch("vibedpn.api.server.run_servers"),
     ):
         server.main()
@@ -190,7 +190,7 @@ def test_core_applies_the_firewall_before_serving(tmp_path: Path) -> None:
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=True) as applied,
         patch("vibedpn.api.server.apply_tunnel_egress", return_value=Egress.DOCKER_USER) as egress,
-        patch("vibedpn.api.server.apply_router", return_value=None),
+        patch("vibedpn.api.server.apply_router", return_value=[]),
         patch("vibedpn.api.server.run_servers") as run,
     ):
         server.main()
@@ -243,7 +243,7 @@ def test_core_renders_the_tunnel_after_the_firewall_and_before_serving(tmp_path:
         ),
         patch("vibedpn.api.server.apply_firewall", side_effect=lambda _c: order.append("firewall")),
         patch("vibedpn.api.server.apply_tunnel_egress", side_effect=egress),
-        patch("vibedpn.api.server.apply_router", return_value=None),
+        patch("vibedpn.api.server.apply_router", return_value=[]),
         patch("vibedpn.api.server.ensure_server", side_effect=tunnel),
         patch("vibedpn.api.server.run_servers", side_effect=serve),
     ):
@@ -270,7 +270,7 @@ def test_core_refuses_to_start_on_a_broken_tunnel_key(
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=True),
         patch("vibedpn.api.server.apply_tunnel_egress", return_value=Egress.DOCKER_USER),
-        patch("vibedpn.api.server.apply_router", return_value=None),
+        patch("vibedpn.api.server.apply_router", return_value=[]),
         patch("vibedpn.api.server.run_servers") as run,
         pytest.raises(SystemExit) as exit_info,
     ):
@@ -307,7 +307,7 @@ def test_core_reports_peers_moved_by_a_subnet_change(
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=True),
         patch("vibedpn.api.server.apply_tunnel_egress", return_value=Egress.DOCKER_USER),
-        patch("vibedpn.api.server.apply_router", return_value=None),
+        patch("vibedpn.api.server.apply_router", return_value=[]),
         patch("vibedpn.api.server.run_servers"),
     ):
         server.main()

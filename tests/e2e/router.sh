@@ -295,6 +295,21 @@ wait_healthy vibedpn-core-1
 [ "$(first_seen)" = "$seen_before" ] || fail "a core restart reset first_seen of the device"
 echo "device $device_mac listed and kept across a core restart"
 
+log "device policies at runtime: vibedpn device set/unset, no core restart"
+core_started="$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)"
+"$CLI" device set "$device_mac" bypass --name e2e-device --dir "$BOX" || fail "vibedpn device set bypass failed"
+await_exit "$INTERNET_GATEWAY" "policy bypass did not send the device direct in mode full"
+echo "bypass: exit address $(exit_address)"
+grep -q "policy: bypass" "$BOX/config.yaml" || fail "vibedpn device set did not write config.yaml"
+"$CLI" device set "$device_mac" block --dir "$BOX" || fail "vibedpn device set block failed"
+await_exit none "policy block still lets the device out"
+echo "block: no exit"
+"$CLI" device unset "$device_mac" --dir "$BOX" || fail "vibedpn device unset failed"
+await_exit "$VPS_IP" "after unset the device does not follow routing.mode full again"
+echo "unset: exit address $(exit_address)"
+[ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)" = "$core_started" ] ||
+  fail "a device policy change restarted core"
+
 log "the LAN never reaches a gateway container directly"
 in_device "$PY" -c "$PROBE" "$BOX_LAN_IP" ||
   fail "the ICMP probe does not work from the device netns, so the next check would prove nothing"

@@ -3,7 +3,9 @@
 from datetime import datetime
 from ipaddress import IPv4Address
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from vibedpn.config import DevicePolicy
 
 
 class PeerCreate(BaseModel):
@@ -49,3 +51,19 @@ class DeviceView(BaseModel):
     policy: str | None
     first_seen: datetime
     last_seen: datetime
+
+
+class DevicePolicyUpdate(BaseModel):
+    """``PUT /devices/{mac or ip}``: the policy, and optionally a new name."""
+
+    policy: DevicePolicy
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class DevicePolicyView(BaseModel):
+    """The device entry of config.yaml after a policy change."""
+
+    name: str
+    mac: str | None
+    ip: IPv4Address | None
+    policy: str

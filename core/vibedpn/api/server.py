@@ -12,7 +12,9 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from vibedpn.api.app import create_app
+from vibedpn.api.state import BoxState
 from vibedpn.api.tunnel import run_servers
+from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.config import Config, ConfigError, Upstream, load_config
 from vibedpn.engine.adguard import AdguardError, ensure_adguard
 from vibedpn.engine.devices import DB_FILE, DeviceError, DeviceStore
@@ -52,7 +54,9 @@ def router_message(config: Config, uplinks: list[Upstream]) -> str:
 
 
 CONFIG_PATH_ENV = "VIBEDPN_CONFIG"
-DEFAULT_CONFIG_PATH = Path("/etc/vibedpn/config.yaml")
+# compose.yaml mounts the box directory: core rewrites config.yaml atomically, which a rename over
+# a single bind-mounted file does not allow (EBUSY).
+DEFAULT_CONFIG_PATH = Path("/etc/vibedpn/box/config.yaml")
 SECRETS_DIR_ENV = "VIBEDPN_SECRETS"
 DEFAULT_SECRETS_DIR = Path("/etc/vibedpn/secrets")  # compose.yaml mounts ./secrets here
 ADGUARD_DIR_ENV = "VIBEDPN_ADGUARD_CONF"
@@ -121,5 +125,7 @@ def main() -> None:
         except DeviceError as exc:
             sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
             raise SystemExit(os.EX_CONFIG) from None
-    application = create_app(config, secrets_dir=secrets_dir, device_store=devices)
-    run_servers(config, application, uplinks=uplinks, devices=devices)
+    watchers = UplinkWatchers(uplinks)
+    box_state = BoxState(config, config_path, watchers=watchers)
+    application = create_app(config, secrets_dir=secrets_dir, device_store=devices, state=box_state)
+    run_servers(config, application, watchers=watchers, devices=devices)

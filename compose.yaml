@@ -19,14 +19,12 @@ services:
       - NET_ADMIN
     restart: unless-stopped
     volumes:
-      # Long form with create_host_path: false — a missing config.yaml must fail loudly, not be
-      # silently replaced by an empty directory that `vibedpn init` then cannot overwrite.
+      # The box directory, writable: core changes device policies in config.yaml (vibedpn device
+      # set, PUT /devices) with a temporary file and a rename, and a rename over a single
+      # bind-mounted file fails with EBUSY. A missing config.yaml still stops core with one line.
       - type: bind
-        source: ./config.yaml
-        target: /etc/vibedpn/config.yaml
-        read_only: true
-        bind:
-          create_host_path: false
+        source: .
+        target: /etc/vibedpn/box
       - ./secrets:/etc/vibedpn/secrets
       - ./data/core:/var/lib/vibedpn
       # core keeps its keys of AdGuardHome.yaml current before adguard starts (engine/adguard.py).

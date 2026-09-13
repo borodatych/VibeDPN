@@ -28,6 +28,8 @@
 - [directRouting.md](docker/directRouting.md) — транзит LAN в bridge-сеть режет цепочка DOCKER,
   `trusted_host_interfaces` не спасает; нужен `gateway_mode_ipv4=nat-unprotected` плюс свой nft-drop
   прямого доступа к адресам шлюзов (репродукция на colima)
+- [bindMountRename.md](docker/bindMountRename.md) — `rename` поверх файлового bind-mount даёт EBUSY,
+  монтировать каталог; права временного файла после замены — через `write_like`
 
 ## wireguard
 

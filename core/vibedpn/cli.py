@@ -48,7 +48,7 @@ from vibedpn.compose import (
     run,
     stale_services,
 )
-from vibedpn.config import Config, Role, RoutingMode, Upstream, check_endpoint
+from vibedpn.config import Config, DevicePolicy, Role, RoutingMode, Upstream, check_endpoint
 from vibedpn.config_edit import ConfigEditError, set_routing
 from vibedpn.detect import DetectError, HostProbe
 from vibedpn.device_view import render_devices
@@ -601,15 +601,44 @@ def peer_rm(
     typer.echo(f"removed peer {name}")
 
 
-@device_app.command("list")
-def device_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
-    """Every LAN device that has used the box, with its name, address, MAC and policy."""
+def _lan_box(box_dir: Path) -> Config:
     try:
         config = check_box(box_dir)
     except ComposeError as exc:
         raise _fail(str(exc)) from None
     if config.network is None:
         raise _fail(f"LAN devices live on a box with a LAN; this box has role {config.role.value}")
+    return config
+
+
+DeviceId = Annotated[str, typer.Argument(help="The device: its MAC, or its IPv4 address.")]
+
+
+@device_app.command("list")
+def device_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Every LAN device that has used the box, with its name, address, MAC and policy."""
+    config = _lan_box(box_dir)
     devices = _core_call(lambda: core_api.list_devices(config.api.port))
     for line in render_devices(devices, time.time()):
         typer.echo(line)
+
+
+@device_app.command("set")
+def device_set(
+    ident: DeviceId,
+    policy: Annotated[DevicePolicy, typer.Argument(help="vps | dpn | bypass | block.")],
+    name: Annotated[str | None, typer.Option("--name", help="A name for config.yaml.")] = None,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Give a device its own policy; core writes config.yaml and applies it without a restart."""
+    config = _lan_box(box_dir)
+    view = _core_call(lambda: core_api.set_device(config.api.port, ident, policy, name))
+    typer.echo(f"{view.name} ({view.mac or view.ip}): policy {view.policy}, applied")
+
+
+@device_app.command("unset")
+def device_unset(ident: DeviceId, box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Remove a device's own policy: it follows routing.mode again."""
+    config = _lan_box(box_dir)
+    _core_call(lambda: core_api.unset_device(config.api.port, ident))
+    typer.echo(f"{ident}: own policy removed, follows routing.mode")

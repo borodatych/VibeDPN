@@ -9,10 +9,26 @@ from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
 from vibedpn import __version__
-from vibedpn.api.models import DeviceView, PeerCreate, PeerFile, PeerView
+from vibedpn.api.models import (
+    DevicePolicyUpdate,
+    DevicePolicyView,
+    DeviceView,
+    PeerCreate,
+    PeerFile,
+    PeerView,
+)
+from vibedpn.api.state import BoxState
 from vibedpn.config import Config, DeviceConfig
+from vibedpn.config_edit import (
+    ConfigEditError,
+    DeviceIdent,
+    DeviceNotFoundError,
+    set_device,
+    unset_device,
+)
 from vibedpn.engine.devices import DeviceError, DeviceStore, SeenDevice
 from vibedpn.engine.myst import MystError, ProviderStats, TequilaClient, provider_stats
+from vibedpn.engine.router import RouterError
 from vibedpn.engine.wg import (
     Peer,
     PeerExistsError,
@@ -95,12 +111,96 @@ def _device_view(seen: SeenDevice, configured: list[DeviceConfig]) -> DeviceView
     )
 
 
+def _add_device_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    state: BoxState | None,
+    device_store: DeviceStore | None,
+) -> None:
+    """``/devices``: what discovery saw, and the policies of config.yaml changed at runtime."""
+
+    def policy_edit(ident: str) -> tuple[BoxState, DeviceIdent]:
+        box = current()
+        if state is None or box is None or box.network is None:
+            raise HTTPException(status_code=404, detail="this box routes no LAN")
+        try:
+            return state, DeviceIdent.parse(ident)
+        except ConfigEditError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def discovered_name(target: DeviceIdent) -> str | None:
+        if device_store is None:
+            return None
+        try:
+            seen = device_store.devices()
+        except DeviceError:
+            return None
+        found = next(
+            (
+                item
+                for item in seen
+                if (target.mac is not None and item.mac == target.mac)
+                or (target.ip is not None and item.ip == target.ip)
+            ),
+            None,
+        )
+        return None if found is None else found.hostname
+
+    def run_edit(box_state: BoxState, change: Callable[[Path], tuple[Config, bool]]) -> Config:
+        try:
+            return box_state.edit(change)
+        except DeviceNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ConfigEditError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RouterError as exc:
+            raise HTTPException(
+                status_code=503, detail=f"router refused the change, config.yaml restored: {exc}"
+            ) from exc
+
+    @application.get("/devices", response_model=list[DeviceView])
+    def devices() -> list[DeviceView]:
+        box = current()
+        if box is None or box.network is None or device_store is None:
+            raise HTTPException(status_code=404, detail="this box routes no LAN")
+        try:
+            seen = device_store.devices()
+        except DeviceError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return [_device_view(item, box.devices) for item in seen]
+
+    @application.put("/devices/{ident}", response_model=DevicePolicyView)
+    def put_device(ident: str, request: DevicePolicyUpdate) -> DevicePolicyView:
+        box_state, target = policy_edit(ident)
+        default_name = discovered_name(target) or target.default_name()
+        updated = run_edit(
+            box_state,
+            lambda path: set_device(path, target, request.policy, request.name, default_name),
+        )
+        entry = next(
+            item
+            for item in updated.devices
+            if (target.mac is not None and item.mac == target.mac)
+            or (target.mac is None and item.ip == target.ip)
+        )
+        return DevicePolicyView(
+            name=entry.name, mac=entry.mac, ip=entry.ip, policy=entry.policy.value
+        )
+
+    @application.delete("/devices/{ident}", status_code=204, response_class=Response)
+    def delete_device(ident: str) -> Response:
+        box_state, target = policy_edit(ident)
+        run_edit(box_state, lambda path: unset_device(path, target))
+        return Response(status_code=204)
+
+
 def create_app(
     config: Config | None = None,
     stats_source: StatsSource = _default_stats,
     secrets_dir: Path | None = None,
     link_source: LinkSource = read_wg_dump,
     device_store: DeviceStore | None = None,
+    state: BoxState | None = None,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -110,10 +210,15 @@ def create_app(
     """
     application = FastAPI(title="VibeDPN core API", version=__version__)
 
+    def current() -> Config | None:
+        """The configuration as it is now: device policy edits change it at runtime."""
+        return state.config if state is not None else config
+
     def tunnel() -> tuple[Config, Path]:
-        if config is None or config.wg_server is None or secrets_dir is None:
+        box = current()
+        if box is None or box.wg_server is None or secrets_dir is None:
             raise HTTPException(status_code=404, detail=NO_TUNNEL)
-        return config, secrets_dir
+        return box, secrets_dir
 
     @application.get("/health", response_model=Health)
     def health() -> Health:
@@ -121,22 +226,15 @@ def create_app(
 
     @application.get("/provider/stats", response_model=ProviderStats)
     def stats() -> ProviderStats:
-        if config is None or not config.provider.enabled:
+        box = current()
+        if box is None or not box.provider.enabled:
             raise HTTPException(status_code=404, detail="this box runs no provider node")
         try:
             return stats_source()
         except MystError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    @application.get("/devices", response_model=list[DeviceView])
-    def devices() -> list[DeviceView]:
-        if config is None or config.network is None or device_store is None:
-            raise HTTPException(status_code=404, detail="this box routes no LAN")
-        try:
-            seen = device_store.devices()
-        except DeviceError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return [_device_view(item, config.devices) for item in seen]
+    _add_device_routes(application, current, state, device_store)
 
     @application.get("/peers", response_model=list[PeerView])
     def peers() -> list[PeerView]:

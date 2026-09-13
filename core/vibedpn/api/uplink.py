@@ -67,3 +67,47 @@ async def watch_uplink(
                 _log(f"uplink {upstream} gateway {gateway} {state}")
                 logged_state = alive
         await sleep(check_seconds)
+
+
+class UplinkWatchers:
+    """One watcher per uplink in use; the set follows device policy changes without a restart.
+
+    ``run`` owns the tasks on the event loop; ``sync`` may be called from a request thread and
+    hands the new set over to the loop."""
+
+    def __init__(
+        self,
+        uplinks: list[Upstream],
+        watch: Callable[[Upstream], Awaitable[None]] = watch_uplink,
+    ) -> None:
+        self._wanted = list(uplinks)
+        self._watch = watch
+        self._tasks: dict[Upstream, asyncio.Task[None]] = {}
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    async def run(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._apply(self._wanted)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            tasks = list(self._tasks.values())
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _apply(self, uplinks: list[Upstream]) -> None:
+        for upstream in list(self._tasks):
+            if upstream not in uplinks:
+                self._tasks.pop(upstream).cancel()
+        for upstream in uplinks:
+            if upstream not in self._tasks:
+                self._tasks[upstream] = asyncio.ensure_future(self._watch(upstream))
+
+    def sync(self, uplinks: list[Upstream]) -> None:
+        self._wanted = list(uplinks)
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._apply, list(uplinks))
+
+    def watched(self) -> list[Upstream]:
+        return list(self._tasks)

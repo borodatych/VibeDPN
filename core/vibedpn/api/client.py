@@ -12,7 +12,15 @@ from urllib.parse import quote
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
-from vibedpn.api.models import DeviceView, PeerCreate, PeerFile, PeerView
+from vibedpn.api.models import (
+    DevicePolicyUpdate,
+    DevicePolicyView,
+    DeviceView,
+    PeerCreate,
+    PeerFile,
+    PeerView,
+)
+from vibedpn.config import DevicePolicy
 from vibedpn.engine.myst import STATS_DEADLINE_SECONDS, ProviderStats
 
 CORE_API_HOST = "127.0.0.1"
@@ -159,3 +167,39 @@ def export_peer(port: int, name: str, transport: httpx.BaseTransport | None = No
 def remove_peer(port: int, name: str, transport: httpx.BaseTransport | None = None) -> None:
     path = f"/peers/{quote(name, safe='')}"
     _peer_request(port, "DELETE", path, httpx.codes.NO_CONTENT, transport=transport)
+
+
+def set_device(
+    port: int,
+    ident: str,
+    policy: DevicePolicy,
+    name: str | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> DevicePolicyView:
+    body = DevicePolicyUpdate(policy=policy, name=name).model_dump(mode="json", exclude_none=True)
+    response = _peer_request(
+        port,
+        "PUT",
+        f"/devices/{quote(ident, safe='')}",
+        httpx.codes.OK,
+        body=body,
+        transport=transport,
+        error=DeviceRequestError,
+    )
+    try:
+        return DevicePolicyView.model_validate(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise DeviceRequestError(
+            f"core answered something that is not a device policy ({VERSION_HINT})"
+        ) from exc
+
+
+def unset_device(port: int, ident: str, transport: httpx.BaseTransport | None = None) -> None:
+    _peer_request(
+        port,
+        "DELETE",
+        f"/devices/{quote(ident, safe='')}",
+        httpx.codes.NO_CONTENT,
+        transport=transport,
+        error=DeviceRequestError,
+    )

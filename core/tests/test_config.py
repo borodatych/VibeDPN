@@ -387,7 +387,7 @@ def test_server_serves_on_loopback_and_config_port(tmp_path: Path) -> None:
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=True),
         patch("vibedpn.api.server.apply_tunnel_egress", return_value=Egress.DOCKER_USER),
-        patch("vibedpn.api.server.apply_router", return_value=None),
+        patch("vibedpn.api.server.apply_router", return_value=[]),
         patch("vibedpn.api.server.run_servers") as run,
     ):
         server.main()
