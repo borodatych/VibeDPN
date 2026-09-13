@@ -5,6 +5,7 @@ Stage 1 ships ``init``; ``up``, ``down``, ``restart``, ``status``, ``logs`` and 
 
 import time
 from collections.abc import Callable
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, TypeVar
 
@@ -22,6 +23,7 @@ from vibedpn.api.client import (
 from vibedpn.api.models import PeerFile
 from vibedpn.atomic import write_private
 from vibedpn.bootstrap import (
+    CONFIG_FILE,
     DEFAULT_BOX_DIR,
     Answers,
     BootstrapError,
@@ -45,7 +47,8 @@ from vibedpn.compose import (
     run,
     stale_services,
 )
-from vibedpn.config import Config, Role, Upstream, check_endpoint
+from vibedpn.config import Config, Role, RoutingMode, Upstream, check_endpoint
+from vibedpn.config_edit import ConfigEditError, set_routing
 from vibedpn.detect import DetectError, HostProbe
 from vibedpn.doctor import evaluate, gather, has_failures, render, to_json
 from vibedpn.engine.myst import render_stats
@@ -320,17 +323,79 @@ def restart(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     _compose(box_dir, "up", "-d", "--remove-orphans")
 
 
+def _routing_line(config: Config) -> str:
+    if config.routing is None:
+        return "routing: -"
+    return (
+        f"routing: mode={config.routing.mode.value}"
+        f" default_upstream={config.routing.default_upstream.value}"
+        f" failopen={str(config.routing.failopen).lower()}"
+    )
+
+
+class SwitchableMode(StrEnum):
+    """Modes the router implements; ``smart`` joins in Stage 10."""
+
+    OFF = RoutingMode.OFF.value
+    FULL = RoutingMode.FULL.value
+
+
+CORE_SERVICE = "core"
+RUNNING_STATE = "running"
+
+
+def _switch_routing(
+    box_dir: Path, *, mode: RoutingMode | None = None, upstream: Upstream | None = None
+) -> None:
+    """Change routing in config.yaml and, when core runs, restart only core: the router is
+    applied at its start, and the tunnel and the other containers keep running."""
+    _prepare(box_dir, refresh=False)
+    try:
+        config, changed = set_routing(box_dir / CONFIG_FILE, mode=mode, upstream=upstream)
+    except ConfigEditError as exc:
+        raise _fail(str(exc)) from None
+    if not changed:
+        typer.echo(f"{_routing_line(config)} (already set)")
+        return
+    try:
+        services = parse_ps(capture(compose_argv(box_dir, "ps", "-a", "--format", "json")))
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+    core_running = any(
+        item.service == CORE_SERVICE and item.state == RUNNING_STATE for item in services
+    )
+    if core_running:
+        _compose(box_dir, "restart", "--no-deps", CORE_SERVICE)
+        typer.echo(f"{_routing_line(config)} (applied: core restarted)")
+    else:
+        typer.echo(f"{_routing_line(config)} (saved; applies at `vibedpn up`)")
+
+
+@app.command()
+def mode(
+    value: Annotated[SwitchableMode, typer.Argument(help="off: LAN direct; full: all via uplink.")],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Switch routing.mode of the LAN router and apply it."""
+    _switch_routing(box_dir, mode=RoutingMode(value.value))
+
+
+@app.command()
+def upstream(
+    value: Annotated[Upstream, typer.Argument(help="The uplink of routing.mode full.")],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Switch routing.default_upstream and apply it."""
+    _switch_routing(box_dir, upstream=value)
+
+
 @app.command()
 def status(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     """Role and routing from config.yaml, then the state of every container."""
     config = _prepare(box_dir, refresh=False)
     typer.echo(f"role: {config.role.value}")
     if config.routing is not None:
-        typer.echo(
-            f"routing: mode={config.routing.mode.value}"
-            f" default_upstream={config.routing.default_upstream.value}"
-            f" failopen={str(config.routing.failopen).lower()}"
-        )
+        typer.echo(_routing_line(config))
     uplinks = [name for name in ("vps", "dpn") if config.upstreams.is_enabled(Upstream(name))]
     typer.echo(f"uplinks: {', '.join(uplinks) or '-'}")
     typer.echo(f"profiles: {','.join(profile.value for profile in config.compose_profiles())}")

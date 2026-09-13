@@ -80,7 +80,8 @@
 
 ## python
 
-- [yamlBooleans.md](python/yamlBooleans.md) — почему конфиг читается загрузчиком YAML 1.2
+- [yamlBooleans.md](python/yamlBooleans.md) — правка `config.yaml` командой: round-trip `ruamel` с отступами
+  шаблона меняет одну строку и сохраняет комментарии; почему конфиг читается загрузчиком YAML 1.2
   (`ruamel.yaml`), а не PyYAML: в YAML 1.1 `mode: off` и `country: NO` — это `false`
 
 ## process
