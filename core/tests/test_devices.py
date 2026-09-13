@@ -15,8 +15,10 @@ from vibedpn.api import client as core_api
 from vibedpn.api import discovery
 from vibedpn.api.app import create_app
 from vibedpn.api.client import DeviceRequestError, list_devices
+from vibedpn.api.models import DeviceView
 from vibedpn.bootstrap import render_config
 from vibedpn.config import Config
+from vibedpn.device_view import render_devices
 from vibedpn.engine.devices import (
     DeviceError,
     DeviceStore,
@@ -182,3 +184,31 @@ def test_client_and_cli_list_devices(tmp_path: Path, monkeypatch: pytest.MonkeyP
     result = CliRunner().invoke(cli.app, ["device", "list", "--dir", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert "phone.lan" in result.output and "192.168.1.2" in result.output
+
+
+def test_a_policy_for_a_device_not_seen_yet_is_listed(tmp_path: Path) -> None:
+    raw = client_config()
+    raw["devices"] = [
+        {"name": "phone", "mac": "F6:5F:32:9D:FC:41", "policy": "bypass"},
+        {"name": "printer", "ip": "192.168.1.77", "policy": "block"},
+        {"name": "old-tv", "mac": "aa:bb:cc:dd:ee:ff", "policy": "vps"},
+    ]
+    config = Config.model_validate(raw)
+    store = DeviceStore(tmp_path / "devices.db")
+    store.record(
+        [Neighbour("f6:5f:32:9d:fc:41", IPv4Address("192.168.1.2"))], 200.0, lambda _a: None
+    )
+    body = TestClient(create_app(config, device_store=store)).get("/devices").json()
+    assert [(item["name"], item["seen"]) for item in body] == [
+        ("phone", True),
+        ("printer", False),
+        ("old-tv", False),
+    ]
+    printer = body[1]
+    assert (
+        printer["mac"] is None and printer["ip"] == "192.168.1.77" and printer["last_seen"] is None
+    )
+    views = [DeviceView.model_validate(item) for item in body]
+    lines = render_devices(views, 300.0)
+    assert any(line.startswith("printer") and line.endswith("never seen") for line in lines)
+    assert any("old-tv" in line and "aa:bb:cc:dd:ee:ff" in line for line in lines)

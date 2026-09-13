@@ -117,9 +117,32 @@ def _device_view(seen: SeenDevice, configured: list[DeviceConfig]) -> DeviceView
         name=None if own is None else own.name,
         hostname=seen.hostname,
         policy=None if own is None else own.policy.value,
+        seen=True,
         first_seen=datetime.fromtimestamp(seen.first_seen, tz=UTC),
         last_seen=datetime.fromtimestamp(seen.last_seen, tz=UTC),
     )
+
+
+def _unseen_views(seen: list[SeenDevice], configured: list[DeviceConfig]) -> list[DeviceView]:
+    """Devices with a policy in config.yaml that discovery has not met: without them a policy
+    set by address before the device ever showed up could not be seen or removed."""
+    macs = {item.mac for item in seen}
+    ips = {item.ip for item in seen}
+    return [
+        DeviceView(
+            mac=item.mac,
+            ip=item.ip,
+            name=item.name,
+            hostname=None,
+            policy=item.policy.value,
+            seen=False,
+            first_seen=None,
+            last_seen=None,
+        )
+        for item in configured
+        if (item.mac is not None and item.mac not in macs)
+        or (item.mac is None and item.ip not in ips)
+    ]
 
 
 def _add_device_routes(
@@ -178,7 +201,7 @@ def _add_device_routes(
             seen = device_store.devices()
         except DeviceError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return [_device_view(item, box.devices) for item in seen]
+        return [_device_view(item, box.devices) for item in seen] + _unseen_views(seen, box.devices)
 
     @application.put("/devices/{ident}", response_model=DevicePolicyView)
     def put_device(ident: str, request: DevicePolicyUpdate) -> DevicePolicyView:

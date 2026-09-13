@@ -43,15 +43,17 @@ class PeerFile(BaseModel):
 
 
 class DeviceView(BaseModel):
-    """A LAN device the box has seen, with the name and policy config.yaml gives it."""
+    """A LAN device: seen by discovery, named in config.yaml, or both. A device only in
+    config.yaml (``seen: false``) has no address, host name or times yet."""
 
-    mac: str
-    ip: IPv4Address
+    mac: str | None
+    ip: IPv4Address | None
     name: str | None
     hostname: str | None
     policy: str | None
-    first_seen: datetime
-    last_seen: datetime
+    seen: bool
+    first_seen: datetime | None
+    last_seen: datetime | None
 
 
 class DevicePolicyUpdate(BaseModel):

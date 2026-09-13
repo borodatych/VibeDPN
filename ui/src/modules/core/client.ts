@@ -12,19 +12,23 @@ const CORE_TIMEOUT_MS = 10_000
  * @tags core
  * @related coreApiProxy
  */
-export const coreRequest = async <T>(path: string, init?: { method: 'PUT'; body: unknown }): Promise<T> => {
+export const coreRequest = async <T>(
+  path: string,
+  init?: { method: 'PUT'; body: unknown } | { method: 'DELETE' },
+): Promise<T> => {
   let response: Response
   try {
     response = await fetch(`http://${CORE_API_HOST}:${serverEnv.CORE_API_PORT}${path}`, {
       method: init?.method ?? 'GET',
-      headers: init ? { 'Content-Type': 'application/json' } : undefined,
-      body: init ? JSON.stringify(init.body) : undefined,
+      headers: init && 'body' in init ? { 'Content-Type': 'application/json' } : undefined,
+      body: init && 'body' in init ? JSON.stringify(init.body) : undefined,
       signal: AbortSignal.timeout(CORE_TIMEOUT_MS),
     })
   } catch {
     throw new AppError('The core of the box does not answer', { status: 502 })
   }
-  const body: unknown = await response.json().catch(() => null)
+  // 204 of a DELETE has no body
+  const body: unknown = response.status === 204 ? null : await response.json().catch(() => null)
   if (!response.ok) {
     const detail =
       body && typeof body === 'object' && 'detail' in body && typeof body.detail === 'string'

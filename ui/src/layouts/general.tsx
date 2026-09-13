@@ -20,7 +20,10 @@ import { type ComponentProps, useState } from 'react'
 type NavItem = { label: string; to: string }
 
 // Left of the header — your top-level pages.
-const navLinks: NavItem[] = []
+const navLinks: NavItem[] = [
+  { label: 'Status', to: routes.home() },
+  { label: 'Devices', to: routes.devices() },
+]
 
 // Right of the header — depends on who's signed in.
 const accountLinks = (me: Me | null | undefined): NavItem[] =>
