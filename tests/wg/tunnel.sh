@@ -13,6 +13,10 @@ GATEWAY=10.99.0.1
 SERVER_IP=10.99.0.2
 CLIENT_IP=10.99.0.3
 SPLIT_IP=10.99.0.4
+LAN_IP=10.99.0.5
+PROBE_PORT=8443
+# The client file sets MTU 1400: an IPv4 SYN through it may carry at most 1400 - 40.
+CLAMPED_MSS=1360
 SERVER_WG=10.78.0.1
 CLIENT_WG=10.78.0.2
 SPLIT_WG=10.78.0.3
@@ -27,7 +31,7 @@ log() {
 }
 
 cleanup() {
-  docker rm -f vibedpn-wg-server vibedpn-wg-client vibedpn-wg-split vibedpn-wg-host vibedpn-wg-empty \
+  docker rm -f vibedpn-wg-server vibedpn-wg-client vibedpn-wg-split vibedpn-wg-host vibedpn-wg-empty vibedpn-wg-lan \
     >/dev/null 2>&1 || true
   # The host-namespace part of the test may leave wg0 behind; remove it without needing root.
   docker run --rm --network host --cap-add NET_ADMIN --entrypoint ip "$IMAGE" \
@@ -216,6 +220,63 @@ fails in_client ping -c 1 -W 2 "$GATEWAY"
 fails in_client ping -c 1 -W 2 "$OUTSIDE"
 in_client nft list chain inet vibedpn_wg output | grep -q "policy drop"
 in_client nft list chain inet vibedpn_wg forward | grep -q "policy drop"
+
+log "the client is a gateway: another host routes through it into the tunnel"
+# A LAN host with no WireGuard of its own and the client as its default gateway — the way core
+# steers LAN traffic to 10.77.0.10. It reaches the server only through the client, masqueraded
+# as the client's tunnel address (the server's AllowedIPs for it is a /32).
+docker run -d --name vibedpn-wg-lan --network "$NETWORK" --ip "$LAN_IP" --cap-add NET_ADMIN \
+  --entrypoint sleep "$IMAGE" 600 >/dev/null
+in_lan() {
+  docker exec vibedpn-wg-lan "$@"
+}
+in_lan ip route replace default via "$CLIENT_IP"
+# -i: without it `docker exec` hands nft an empty stdin, and `nft -f -` quietly loads nothing.
+docker exec -i vibedpn-wg-server nft -f - <<EOF
+table inet vibedpn_test {
+  chain input {
+    type filter hook input priority filter; policy accept;
+    iifname "wg0" ip saddr $CLIENT_WG tcp dport $PROBE_PORT tcp flags syn counter comment "syn"
+    iifname "wg0" tcp dport $PROBE_PORT tcp flags syn tcp option maxseg size > $CLAMPED_MSS counter comment "big"
+  }
+}
+EOF
+in_lan ping -c 2 -W 2 "$SERVER_WG"
+# Nothing listens on the port: the SYN arrives all the same, and that is all the counters need.
+in_lan nc -w 2 "$SERVER_WG" "$PROBE_PORT" </dev/null >/dev/null 2>&1 || true
+# A counter that cannot be read is a failure, never a zero: an empty value would let the MSS
+# check pass for the wrong reason.
+syn_count() {
+  count="$(docker exec vibedpn-wg-server nft list table inet vibedpn_test |
+    awk -v tag="\"$1\"" '$0 ~ tag { for (i = 1; i < NF; i++) if ($i == "packets") print $(i + 1) }')"
+  case "$count" in
+    '' | *[!0-9]*)
+      echo "FAIL: cannot read the '$1' counter on the server" >&2
+      exit 1
+      ;;
+  esac
+  printf '%s\n' "$count"
+}
+syn="$(syn_count syn)"
+big="$(syn_count big)"
+if [ "$syn" -lt 1 ]; then
+  echo "FAIL: no SYN of the LAN host reached the server as $CLIENT_WG" >&2
+  exit 1
+fi
+if [ "$big" -ne 0 ]; then
+  echo "FAIL: a SYN crossed the gateway with an MSS above $CLAMPED_MSS (tunnel MTU 1400)" >&2
+  exit 1
+fi
+docker exec vibedpn-wg-server nft delete table inet vibedpn_test
+# The split box is next door on the bridge: directly it answers, through the gateway it must not —
+# the gateway forwards into wg0 and nowhere else.
+in_lan ping -c 1 -W 2 "$SPLIT_IP" >/dev/null
+in_lan ip route replace "$SPLIT_IP/32" via "$CLIENT_IP"
+if in_lan ping -c 1 -W 2 "$SPLIT_IP" >/dev/null 2>&1; then
+  echo "FAIL: the gateway forwarded LAN traffic past the tunnel" >&2
+  exit 1
+fi
+docker rm -f vibedpn-wg-lan >/dev/null
 
 log "a peer added to a running server is applied without a restart"
 extra_pub="$(wg_tool genkey | wg_tool pubkey)"

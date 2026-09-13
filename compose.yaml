@@ -115,7 +115,8 @@ services:
       - daemon
 
   # WireGuard client = uplink `vps`: a gateway container at 10.77.0.10 (role client). Uses the
-  # host kernel WireGuard module (no /dev/net/tun); kill switch in nftables (Stage 3).
+  # host kernel WireGuard module (no /dev/net/tun). A gateway in its own netns: forwarding into wg0
+  # only, MASQUERADE, TCP MSS clamping and the kill switch in nftables (images/wg/entrypoint.sh).
   wg-client:
     image: ghcr.io/borodatych/vibedpn-wg:${VIBEDPN_TAG:-latest}
     build:

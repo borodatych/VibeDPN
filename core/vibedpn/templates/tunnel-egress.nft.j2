@@ -9,6 +9,8 @@ delete table inet vibedpn_egress
 table inet vibedpn_egress {
   chain forward {
     type filter hook forward priority filter; policy accept;
+    iifname "{{ wg_interface }}" tcp flags syn tcp option maxseg size set rt mtu comment "peers have a smaller MTU than the internet: clamp MSS"
+    oifname "{{ wg_interface }}" tcp flags syn tcp option maxseg size set rt mtu comment "and the replies into the tunnel"
     ip saddr {{ tunnel_subnet }} iifname != "{{ wg_interface }}" drop comment "tunnel addresses come only from the tunnel"
     ip daddr {{ tunnel_subnet }} oifname "{{ wg_interface }}" ct state != { established, related } drop comment "the internet opens nothing into the tunnel"
     ip saddr {{ tunnel_subnet }} oifname "docker0" drop comment "peers never reach containers directly"

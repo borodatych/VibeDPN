@@ -401,6 +401,13 @@ def test_egress_keeps_peers_off_containers_and_private_networks() -> None:
     assert "169.254.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10" in text
 
 
+def test_egress_clamps_mss_both_ways() -> None:
+    text = egress_ruleset(vps())
+    assert text is not None
+    assert 'iifname "wg0" tcp flags syn tcp option maxseg size set rt mtu' in text
+    assert 'oifname "wg0" tcp flags syn tcp option maxseg size set rt mtu' in text
+
+
 def fake_iptables(
     monkeypatch: pytest.MonkeyPatch, listings: dict[str, SimpleNamespace]
 ) -> list[list[str]]:

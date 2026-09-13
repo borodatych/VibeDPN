@@ -57,6 +57,8 @@
   снятие таблицы парой `add table` + `delete table`
 - [tunnelEgress.md](linux/tunnelEgress.md) — `accept` в своей nft-таблице не отменяет DROP от Docker,
   правила в `DOCKER-USER` по `iptables -S`, выбор бэкенда `nft`/`legacy`, NAT пиров туннеля
+- [gatewayContainer.md](linux/gatewayContainer.md) — шлюз с туннелем меньшего MTU подрезает TCP MSS
+  (`rt mtu` в `forward`), проверка транзита и kill-switch шлюза счётчиками nft
 
 ## security
 

@@ -212,6 +212,7 @@ table $NFT_FAMILY $NFT_TABLE {
   }
   chain forward {
     type filter hook forward priority filter; policy drop;
+    tcp flags syn tcp option maxseg size set rt mtu comment "LAN MTU 1500, tunnel less: clamp MSS both ways"
     oifname "$IFACE" accept comment "LAN into the tunnel and nowhere else"
     iifname "$IFACE" ct state established,related accept
   }
