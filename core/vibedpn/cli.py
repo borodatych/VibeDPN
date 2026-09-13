@@ -455,12 +455,20 @@ def logs(
 def doctor(
     box_dir: BoxDir = DEFAULT_BOX_DIR,
     as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
+    network: Annotated[
+        bool,
+        typer.Option(
+            "--network",
+            help="Also ask api.ipify.org for the exit address of the host and of every uplink.",
+        ),
+    ] = False,
 ) -> None:
     """Check the host and the box: kernel modules, forwarding, ports, Docker, services.
 
-    Reports and hints only; nothing is changed. Exit code 1 when any check fails.
+    Reports and hints only; nothing is changed. Exit code 1 when any check fails. Without
+    --network nothing leaves the box.
     """
-    results = evaluate(gather(box_dir))
+    results = evaluate(gather(box_dir, network=network))
     typer.echo(to_json(results) if as_json else render(results))
     if has_failures(results):
         raise typer.Exit(EXIT_USER_ERROR)

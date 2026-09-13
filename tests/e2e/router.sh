@@ -263,6 +263,15 @@ await_exit "$VPS_IP" "the device does not leave through the VPS in mode full"
 echo "exit address: $(exit_address)"
 sudo "$CLI" doctor --dir "$BOX" | grep "router" || true
 sudo "$CLI" doctor --dir "$BOX" | grep -q "\[ ok \] router" || fail "doctor does not confirm the router"
+# doctor --network against the stand's echo server: the host goes direct, wg-client through the VPS.
+network_report="$(sudo env VIBEDPN_EXIT_IP_URL="http://$WEB_IP:$WEB_PORT/" "$CLI" doctor --network --dir "$BOX" || true)"
+printf '%s\n' "$network_report" | grep -E "exit |dns leak" || true
+printf '%s\n' "$network_report" | grep -q "\[ ok \] exit direct *$INTERNET_GATEWAY" ||
+  fail "doctor --network: wrong direct exit"
+printf '%s\n' "$network_report" | grep -q "\[ ok \] exit vps *$VPS_IP" ||
+  fail "doctor --network: uplink vps does not exit through the VPS"
+printf '%s\n' "$network_report" | grep -q "\[warn\] dns leak" ||
+  fail "doctor --network: no DoH warning in mode full"
 
 log "the LAN never reaches a gateway container directly"
 in_device "$PY" -c "$PROBE" "$BOX_LAN_IP" ||

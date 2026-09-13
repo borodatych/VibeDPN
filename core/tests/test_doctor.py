@@ -3,6 +3,7 @@
 import json
 import os
 import stat
+import urllib.request
 from ipaddress import IPv4Address
 from pathlib import Path
 
@@ -332,12 +333,14 @@ def test_secrets_probe_is_per_file(tmp_path: Path) -> None:
 
 def test_doctor_command_exit_codes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runner = CliRunner()
-    monkeypatch.setattr(cli, "gather", lambda _box: facts())
+    monkeypatch.setattr(cli, "gather", lambda _box, **_kwargs: facts())
     result = runner.invoke(cli.app, ["doctor", "--dir", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert "0 fail" in result.output
     monkeypatch.setattr(
-        cli, "gather", lambda _box: facts(docker_error="docker not found; run install.sh")
+        cli,
+        "gather",
+        lambda _box, **_kwargs: facts(docker_error="docker not found; run install.sh"),
     )
     result = runner.invoke(cli.app, ["doctor", "--dir", str(tmp_path), "--json"])
     assert result.exit_code == 1
@@ -451,6 +454,71 @@ def test_lan_ipv6_verdict_only_in_full() -> None:
     assert by_name(evaluate(facts(config=full, lan_ipv6=False)))["ipv6"].verdict is Verdict.OK
     assert by_name(evaluate(facts(config=full, lan_ipv6=None)))["ipv6"].verdict is Verdict.WARN
     assert "ipv6" not in by_name(evaluate(facts(lan_ipv6=True)))  # home in mode off
+
+
+def full_client() -> Config:
+    return Config.model_validate(
+        {
+            "version": 1,
+            "role": "client",
+            "network": {
+                "lan_interface": "eth0",
+                "lan_subnet": "192.168.1.0/24",
+                "lan_address": "192.168.1.50",
+            },
+            "routing": {"mode": "full", "default_upstream": "vps"},
+            "upstreams": {"vps": {"enabled": True}},
+        }
+    )
+
+
+def test_exit_address_parsing() -> None:
+    assert doctor.parse_exit_address("203.0.113.7\n") == "203.0.113.7"
+    assert doctor.parse_exit_address("<html>") is None
+    assert doctor.parse_exit_address("") is None
+
+
+def test_exit_verdicts_compare_the_uplink_with_the_direct_address() -> None:
+    direct = doctor.ExitFact("direct", "203.0.113.7")
+
+    def names(*exits: doctor.ExitFact) -> dict[str, CheckResult]:
+        return by_name(evaluate(facts(config=full_client(), exits=[direct, *exits])))
+
+    through = names(doctor.ExitFact("vps", "198.51.100.20"))
+    assert through["exit direct"].detail == "203.0.113.7"
+    assert (
+        through["exit vps"].verdict is Verdict.OK and through["exit vps"].detail == "198.51.100.20"
+    )
+    bypass = names(doctor.ExitFact("vps", "203.0.113.7"))["exit vps"]
+    assert bypass.verdict is Verdict.FAIL and "bypasses the tunnel" in bypass.hint
+    silent = names(doctor.ExitFact("vps", None, "wg-client is not running"))["exit vps"]
+    assert silent.verdict is Verdict.FAIL and "not running" in silent.detail
+    offline = by_name(
+        evaluate(facts(config=full_client(), exits=[doctor.ExitFact("direct", None, "timed out")]))
+    )["exit direct"]
+    assert offline.verdict is Verdict.WARN
+
+
+def test_dns_leak_is_a_warning_only_in_full() -> None:
+    leak = by_name(evaluate(facts(config=full_client(), exits=[])))["dns leak"]
+    assert leak.verdict is Verdict.WARN and "DoH" in leak.detail
+    assert by_name(evaluate(facts(exits=[])))["dns leak"].verdict is Verdict.OK  # home, mode off
+
+
+def test_without_network_nothing_is_asked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The exit probes are the only requests to the internet; gather must not even reach them."""
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("doctor probed the network without --network")
+
+    monkeypatch.setattr(doctor, "_exits", refuse)
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    gathered = gather(tmp_path)  # an empty directory: no config, and still no network
+    assert gathered.exits is None
+    assert not any(
+        name.startswith(("exit", "dns leak"))
+        for name in by_name(evaluate(facts(config=full_client())))
+    )
 
 
 def test_router_verdicts() -> None:

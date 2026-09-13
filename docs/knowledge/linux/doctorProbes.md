@@ -27,3 +27,21 @@ forwarding не трогает вовсе. Для Stage 4 это значит: �
 **Источники:** https://man7.org/linux/man-pages/man8/ss.8.html , фикстуры `core/tests/fixtures/ss_*.txt`,
 https://man7.org/linux/man-pages/man8/modprobe.8.html (`-n`),
 https://docs.docker.com/engine/network/packet-filtering-firewalls/ (IP forwarding, `ip-forward-no-drop`).
+
+## [провайдер] Адрес выхода аплинка — изнутри его шлюза; утечка DNS при DoH — структурная
+
+**Контекст:** `vibedpn doctor --network`, Stage 4 (2026-09-13).
+**Суть:** трафик хоста не метится роутером и в туннели не идёт, поэтому адрес выхода аплинка
+спрашивается изнутри его контейнера — `docker compose exec -T <сервис> wget -qO- https://api.ipify.org`.
+В `vibedpn/wg` и `mysteriumnetwork/myst:1.39.5-alpine` (Alpine 3.22.5) есть busybox `wget`,
+`ssl_client` и `ca-certificates` — HTTPS работает в обоих (проверено исполнением). Прямой адрес —
+запрос из процесса `doctor` на хосте. Аплинк с адресом, равным прямому, выпускает трафик мимо
+туннеля; на стенде с одной машиной (fake-VPS выходит через тот же NAT, что и хост) это сравнение
+всегда ложно, поэтому проверяется на E2E-стенде с его эхо-сервером (`VIBEDPN_EXIT_IP_URL`), где у
+двух путей разные адреса. ipify: адрес простым текстом, HTTPS, «No visitor information is ever
+logged» — всё равно адрес коробки уходит третьей стороне, поэтому только по флагу `--network`.
+**DNS:** публичные тесты утечки (кто спросил авторитативный сервер) при DoH показывают адрес
+провайдера DoH, а не коробки — ничего не доказывают. Реальная утечка структурная: AdGuard ходит к
+DoH с хоста напрямую, и в `full` провайдер DoH видит адрес коробки; `doctor` так и пишет (WARN) до
+маршрутизации AdGuard через аплинк.
+**Источники:** https://www.ipify.org/ , `tests/e2e/router.sh`.

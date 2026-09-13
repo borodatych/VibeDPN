@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import urllib.request
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
+from ipaddress import IPv4Address
 from pathlib import Path
 
 from vibedpn.bootstrap import (
@@ -29,7 +31,7 @@ from vibedpn.compose import (
     parse_ps,
     preflight,
 )
-from vibedpn.config import Config, Profile, Role, RoutingMode, parse_port_range
+from vibedpn.config import Config, Profile, Role, RoutingMode, Upstream, parse_port_range
 from vibedpn.detect import SSHD, WIREGUARD_MODULE, module_present
 from vibedpn.engine.myst import NODEUI_PORT, TEQUILAPI_PORT
 from vibedpn.engine.router import (
@@ -65,6 +67,14 @@ WILDCARD = "*"
 RUNNING_STATE = "running"
 NEVER_STARTED_STATE = "created"
 SUDO_HINT = "sudo vibedpn doctor"
+# `doctor --network` asks a third party for the public address; the service logs nothing
+# (https://www.ipify.org/). The environment variable points a test stand at its own echo server.
+EXIT_IP_URL = "https://api.ipify.org"
+EXIT_IP_URL_ENV = "VIBEDPN_EXIT_IP_URL"
+EXIT_IP_TIMEOUT_SECONDS = 8
+DIRECT_EXIT = "direct"
+# The gateway container of each uplink; both images carry busybox wget with TLS (verified).
+UPLINK_SERVICES = {Upstream.VPS: "wg-client", Upstream.DPN: "myst-consumer"}
 STRICT_RP_FILTER = 1
 
 
@@ -116,6 +126,15 @@ class PortNeed:
 
 
 @dataclass(frozen=True)
+class ExitFact:
+    """The public address seen from one path: the host itself, or inside an uplink gateway."""
+
+    name: str  # DIRECT_EXIT or an uplink
+    address: str | None
+    error: str = ""
+
+
+@dataclass(frozen=True)
 class DoctorFacts:
     config: Config | None
     config_error: str
@@ -147,6 +166,7 @@ class DoctorFacts:
     last_resort_route: bool | None = None  # the kill-switch route of the active uplink table
     rp_filter: int | None = None  # max of all and the gateway bridge, as the kernel uses it
     lan_ipv6: bool | None = None  # a global IPv6 address on lan_interface; None: not checked
+    exits: list[ExitFact] | None = None  # None: `doctor` ran without --network
 
 
 def parse_ss(output: str) -> list[Listener]:
@@ -247,10 +267,7 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
         if config.wg_server is not None:
             results.append(_egress_result(config, facts))
     if config is not None and config.network is not None:
-        results.append(_router_result(config, facts))
-        ipv6 = _lan_ipv6_result(config, facts)
-        if ipv6 is not None:
-            results.append(ipv6)
+        results.extend(_lan_results(config, facts))
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -503,6 +520,84 @@ def _router_result(config: Config, facts: DoctorFacts) -> CheckResult:  # noqa: 
     )
 
 
+def _lan_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
+    """Checks of a box that routes a LAN: the router, IPv6 around it, and — with --network —
+    where its traffic really leaves."""
+    results = [_router_result(config, facts)]
+    ipv6 = _lan_ipv6_result(config, facts)
+    if ipv6 is not None:
+        results.append(ipv6)
+    if facts.exits is not None:
+        results.extend(_exit_results(config, facts.exits))
+    return results
+
+
+def parse_exit_address(text: str) -> str | None:
+    """The IPv4 address an echo service answered with, or ``None`` for anything else."""
+    try:
+        return str(IPv4Address(text.strip()))
+    except ValueError:
+        return None
+
+
+def _exit_results(config: Config, exits: list[ExitFact]) -> list[CheckResult]:
+    """An uplink that answers with the direct address carries nothing through its tunnel."""
+    direct = next((item for item in exits if item.name == DIRECT_EXIT), None)
+    results = []
+    if direct is not None:
+        if direct.address is None:
+            results.append(
+                CheckResult(
+                    "exit direct",
+                    Verdict.WARN,
+                    f"no public address from the host: {direct.error}",
+                    "check the internet connection of the box",
+                )
+            )
+        else:
+            results.append(CheckResult("exit direct", Verdict.OK, direct.address))
+    for item in exits:
+        if item.name == DIRECT_EXIT:
+            continue
+        name = f"exit {item.name}"
+        service = UPLINK_SERVICES[Upstream(item.name)]
+        if item.address is None:
+            results.append(
+                CheckResult(
+                    name,
+                    Verdict.FAIL,
+                    f"no public address through uplink {item.name}: {item.error}",
+                    f"vibedpn logs {service}",
+                )
+            )
+        elif direct is not None and item.address == direct.address:
+            results.append(
+                CheckResult(
+                    name,
+                    Verdict.FAIL,
+                    f"uplink {item.name} leaves with the direct address {item.address}",
+                    f"its traffic bypasses the tunnel; vibedpn logs {service}",
+                )
+            )
+        else:
+            results.append(CheckResult(name, Verdict.OK, item.address))
+    if config.routing is not None and config.dns.enabled:
+        if config.routing.mode is RoutingMode.FULL:
+            results.append(
+                CheckResult(
+                    "dns leak",
+                    Verdict.WARN,
+                    "AdGuard sends its DoH queries directly: the DoH provider sees the box address"
+                    " (routing AdGuard through the uplink is planned)",
+                )
+            )
+        else:
+            results.append(
+                CheckResult("dns leak", Verdict.OK, "routing.mode off: DNS goes direct by design")
+            )
+    return results
+
+
 def _lan_ipv6_result(config: Config, facts: DoctorFacts) -> CheckResult | None:
     """In full, IPv6 from the main router's RA takes the devices around the box: the uplinks
     are IPv4 and the box is not their IPv6 router. AdGuard answers AAAA empty, but addresses
@@ -648,8 +743,9 @@ def _service_results(facts: DoctorFacts) -> list[CheckResult]:
     return [CheckResult("services", Verdict.OK, f"{len(facts.active_services)} running")]
 
 
-def gather(box_dir: Path) -> DoctorFacts:
-    """Collect every fact the checks need; failures become facts, not exceptions."""
+def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
+    """Collect every fact the checks need; failures become facts, not exceptions. Only
+    ``network`` makes requests to the internet (the exit-address service)."""
     config: Config | None = None
     config_error = config_hint = ""
     try:
@@ -734,6 +830,7 @@ def gather(box_dir: Path) -> DoctorFacts:
         last_resort_route=last_resort_route,
         rp_filter=rp_filter,
         lan_ipv6=lan_ipv6,
+        exits=_exits(box_dir, config, services) if network and config is not None else None,
     )
 
 
@@ -822,6 +919,44 @@ def _router_routing(config: Config) -> tuple[bool | None, bool | None, bool | No
         for entry in entries
     )
     return rules_current, gateway, last_resort
+
+
+def _exits(box_dir: Path, config: Config, services: list[ServiceStatus]) -> list[ExitFact] | None:
+    if config.network is None:
+        return None
+    url = os.environ.get(EXIT_IP_URL_ENV, EXIT_IP_URL)
+    exits = [_direct_exit(url)]
+    running = {item.service for item in services if item.state == RUNNING_STATE}
+    for upstream in (Upstream.VPS, Upstream.DPN):
+        if not config.upstreams.is_enabled(upstream):
+            continue
+        service = UPLINK_SERVICES[upstream]
+        if service not in running:
+            exits.append(ExitFact(upstream.value, None, f"{service} is not running"))
+            continue
+        argv = compose_argv(
+            box_dir, "exec", "-T", service,
+            "wget", "-qO-", "-T", str(EXIT_IP_TIMEOUT_SECONDS), url,
+        )  # fmt: skip
+        try:
+            answer = capture(argv)
+        except ComposeError as exc:
+            exits.append(ExitFact(upstream.value, None, str(exc) or "no answer"))
+            continue
+        address = parse_exit_address(answer)
+        error = "" if address else f"unexpected answer {answer.strip()[:40]!r}"
+        exits.append(ExitFact(upstream.value, address, error))
+    return exits
+
+
+def _direct_exit(url: str) -> ExitFact:
+    try:
+        with urllib.request.urlopen(url, timeout=EXIT_IP_TIMEOUT_SECONDS) as response:
+            answer = response.read(64).decode("ascii", "replace")
+    except (OSError, ValueError) as exc:
+        return ExitFact(DIRECT_EXIT, None, str(getattr(exc, "reason", exc)))
+    address = parse_exit_address(answer)
+    return ExitFact(DIRECT_EXIT, address, "" if address else f"unexpected answer {answer[:40]!r}")
 
 
 def _read_lan_ipv6(interface: str) -> bool | None:
