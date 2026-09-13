@@ -63,7 +63,7 @@
 
 ## Stage 5 — Политики по устройствам
 
-- [ ] Обнаружение устройств LAN (ARP/neighbour + DHCP-lease при наличии), имена, персист в SQLite
+- [x] **Обнаружение устройств LAN (ARP/neighbour), имена, персист в SQLite** — ✅ (2026-09-13, `next`) `engine/devices.py`: разбор `ip -j -4 neigh show dev <lan>` — устройство, если у записи есть MAC, адрес из `lan_subnet`, это не сама коробка и состояние не `FAILED`/`INCOMPLETE`/`NOARP`/`NONE` (формат и состояния сняты исполнением на VM и по ip-neighbour(8)); коробка видит тех, кто ходит через неё как через шлюз или DNS, сеть не сканирует. Хранилище SQLite `/var/lib/vibedpn/devices.db` (MAC — ключ, последний адрес, PTR-имя, первое и последнее появление, версия схемы в `user_version`, база новее — отказ старта). Имя из `config.yaml` важнее PTR; PTR — через резолвер хоста, только для новых устройств и сменивших адрес, до транзакции. Фоновая задача ядра раз в 30 с, ошибка — одна строка в журнал. Read-only `GET /devices` и `vibedpn device list`. E2E-стенд: устройство из netns появляется в списке со своим MAC и сохраняет `first_seen` после перезапуска ядра. DHCP-аренды перенесены в Stage 9: в sidecar у коробки их нет
 - [ ] nft-сеты `devices_vps|dpn|bypass|block`, override поверх режима
 - [ ] `vibedpn device set`, `GET/PUT /devices`
 - [ ] E2E: два lan-client с разными политиками
@@ -114,6 +114,8 @@
 > из «Предложений» сюда.
 
 - [ ] `network.mode: gateway`: WAN/LAN интерфейсы, dnsmasq DHCP на LAN, NAT
+- [ ] DHCP-аренды dnsmasq как источник устройств и имён для обнаружения (в sidecar аренд у коробки нет —
+      перенесено из Stage 5)
 - [ ] `init` и UI дают выбрать входящий и исходящий интерфейс из обнаруженных
 - [ ] Wi-Fi точка доступа (hostapd) как LAN-сторона gateway-режима
 - [ ] E2E: lan-client получает адрес по DHCP от box

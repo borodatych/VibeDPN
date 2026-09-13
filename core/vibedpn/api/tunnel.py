@@ -28,8 +28,10 @@ from typing import Any
 import uvicorn
 from starlette.responses import JSONResponse
 
+from vibedpn.api.discovery import watch_devices
 from vibedpn.api.uplink import watch_uplink
 from vibedpn.config import Config, Upstream
+from vibedpn.engine.devices import DeviceStore
 from vibedpn.engine.myst import NODEUI_PORT
 from vibedpn.engine.wg import server_address
 
@@ -301,7 +303,13 @@ async def serve(
             loop.remove_signal_handler(signum)
 
 
-def run_servers(config: Config, application: ASGIApp, *, uplink: Upstream | None = None) -> None:
+def run_servers(
+    config: Config,
+    application: ASGIApp,
+    *,
+    uplink: Upstream | None = None,
+    devices: DeviceStore | None = None,
+) -> None:
     try:
         listeners = open_listeners(config)
     except OSError as exc:
@@ -311,7 +319,11 @@ def run_servers(config: Config, application: ASGIApp, *, uplink: Upstream | None
         )
         raise SystemExit(os.EX_UNAVAILABLE) from None
     try:
-        background = [partial(watch_uplink, uplink)] if uplink is not None else []
+        background: list[Callable[[], Coroutine[Any, Any, None]]] = []
+        if uplink is not None:
+            background.append(partial(watch_uplink, uplink))
+        if devices is not None:
+            background.append(partial(watch_devices, config, devices))
         asyncio.run(serve(application, listeners, background))
     finally:
         listeners.close()

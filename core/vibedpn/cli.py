@@ -16,6 +16,7 @@ from vibedpn import __version__
 from vibedpn.api import client as core_api
 from vibedpn.api.client import (
     CoreUnreachableError,
+    DeviceRequestError,
     PeerRequestError,
     StatsUnavailableError,
     fetch_provider_stats,
@@ -50,6 +51,7 @@ from vibedpn.compose import (
 from vibedpn.config import Config, Role, RoutingMode, Upstream, check_endpoint
 from vibedpn.config_edit import ConfigEditError, set_routing
 from vibedpn.detect import DetectError, HostProbe
+from vibedpn.device_view import render_devices
 from vibedpn.doctor import evaluate, gather, has_failures, render, to_json
 from vibedpn.engine.myst import render_stats
 from vibedpn.tunnel_view import qr_code, render_peers
@@ -479,6 +481,11 @@ peer_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(peer_app, name="peer")
+device_app = typer.Typer(
+    help="LAN devices the box has seen and their policies.",
+    no_args_is_help=True,
+)
+app.add_typer(device_app, name="device")
 
 PeerName = Annotated[
     str, typer.Argument(help="Peer name: 1-32 lowercase letters, digits and hyphens.")
@@ -503,12 +510,12 @@ def _vps_box(box_dir: Path) -> Config:
 
 
 def _core_call(call: Callable[[], T]) -> T:
-    """Peers are kept by core (secrets/ is root-only): translate its failures into one line."""
+    """Peers and devices are kept by core: translate its failures into one line."""
     try:
         return call()
     except CoreUnreachableError:
         raise _fail("core is not running; start the box with `vibedpn up`") from None
-    except PeerRequestError as exc:
+    except (PeerRequestError, DeviceRequestError) as exc:
         raise _fail(str(exc)) from None
 
 
@@ -592,3 +599,17 @@ def peer_rm(
         raise typer.Exit(EXIT_USER_ERROR)
     _core_call(lambda: core_api.remove_peer(config.api.port, name))
     typer.echo(f"removed peer {name}")
+
+
+@device_app.command("list")
+def device_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Every LAN device that has used the box, with its name, address, MAC and policy."""
+    try:
+        config = check_box(box_dir)
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+    if config.network is None:
+        raise _fail(f"LAN devices live on a box with a LAN; this box has role {config.role.value}")
+    devices = _core_call(lambda: core_api.list_devices(config.api.port))
+    for line in render_devices(devices, time.time()):
+        typer.echo(line)

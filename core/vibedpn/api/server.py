@@ -15,6 +15,7 @@ from vibedpn.api.app import create_app
 from vibedpn.api.tunnel import run_servers
 from vibedpn.config import Config, ConfigError, Upstream, load_config
 from vibedpn.engine.adguard import AdguardError, ensure_adguard
+from vibedpn.engine.devices import DB_FILE, DeviceError, DeviceStore
 from vibedpn.engine.router import (
     EGRESS_TABLE,
     ROUTER_TABLE,
@@ -54,6 +55,8 @@ SECRETS_DIR_ENV = "VIBEDPN_SECRETS"
 DEFAULT_SECRETS_DIR = Path("/etc/vibedpn/secrets")  # compose.yaml mounts ./secrets here
 ADGUARD_DIR_ENV = "VIBEDPN_ADGUARD_CONF"
 DEFAULT_ADGUARD_DIR = Path("/etc/vibedpn/adguard")  # compose.yaml mounts ./data/adguard/conf
+DATA_DIR_ENV = "VIBEDPN_DATA"
+DEFAULT_DATA_DIR = Path("/var/lib/vibedpn")  # compose.yaml mounts ./data/core
 
 
 def main() -> None:
@@ -108,5 +111,13 @@ def main() -> None:
                 f"vibedpn-core: peer {moved.name} moved from {moved.old} to {moved.new};"
                 f" run `vibedpn peer export {moved.name}` for its home box\n"
             )
-    application = create_app(config, secrets_dir=secrets_dir)
-    run_servers(config, application, uplink=uplink)
+    devices = None
+    if config.network is not None:
+        data_dir = Path(os.environ.get(DATA_DIR_ENV, DEFAULT_DATA_DIR))
+        try:
+            devices = DeviceStore(data_dir / DB_FILE)
+        except DeviceError as exc:
+            sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
+            raise SystemExit(os.EX_CONFIG) from None
+    application = create_app(config, secrets_dir=secrets_dir, device_store=devices)
+    run_servers(config, application, uplink=uplink, devices=devices)

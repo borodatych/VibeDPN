@@ -273,6 +273,28 @@ printf '%s\n' "$network_report" | grep -q "\[ ok \] exit vps *$VPS_IP" ||
 printf '%s\n' "$network_report" | grep -q "\[warn\] dns leak" ||
   fail "doctor --network: no DoH warning in mode full"
 
+log "devices: the LAN device is discovered, and kept across a core restart"
+device_mac="$(in_device cat /sys/class/net/e2e-dev/address)"
+first_seen() {
+  sudo "$PY" -c 'import sqlite3, sys
+row = sqlite3.connect(sys.argv[1]).execute("SELECT first_seen FROM devices WHERE mac = ?", (sys.argv[2],)).fetchone()
+print(row[0] if row else "")' "$BOX/data/core/devices.db" "$device_mac"
+}
+i=0
+until "$CLI" device list --dir "$BOX" 2>/dev/null | grep -q "$device_mac"; do
+  i=$((i + 1))
+  [ "$i" -lt "$TIMEOUT" ] || fail "the device $device_mac never appeared in vibedpn device list"
+  sleep 2
+done
+"$CLI" device list --dir "$BOX"
+seen_before="$(first_seen)"
+[ -n "$seen_before" ] || fail "the device is listed but not stored in devices.db"
+docker restart vibedpn-core-1 >/dev/null
+wait_healthy vibedpn-core-1
+"$CLI" device list --dir "$BOX" | grep -q "$device_mac" || fail "the device is gone after a core restart"
+[ "$(first_seen)" = "$seen_before" ] || fail "a core restart reset first_seen of the device"
+echo "device $device_mac listed and kept across a core restart"
+
 log "the LAN never reaches a gateway container directly"
 in_device "$PY" -c "$PROBE" "$BOX_LAN_IP" ||
   fail "the ICMP probe does not work from the device netns, so the next check would prove nothing"

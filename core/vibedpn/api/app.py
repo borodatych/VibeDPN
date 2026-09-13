@@ -1,6 +1,7 @@
 """ASGI application factory: health, provider statistics (Stage 2) and tunnel peers (Stage 3)."""
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -8,8 +9,9 @@ from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
 from vibedpn import __version__
-from vibedpn.api.models import PeerCreate, PeerFile, PeerView
-from vibedpn.config import Config
+from vibedpn.api.models import DeviceView, PeerCreate, PeerFile, PeerView
+from vibedpn.config import Config, DeviceConfig
+from vibedpn.engine.devices import DeviceError, DeviceStore, SeenDevice
 from vibedpn.engine.myst import MystError, ProviderStats, TequilaClient, provider_stats
 from vibedpn.engine.wg import (
     Peer,
@@ -77,11 +79,28 @@ def _view(peer: Peer, links: dict[str, PeerLink] | None) -> PeerView:
     )
 
 
+def _device_view(seen: SeenDevice, configured: list[DeviceConfig]) -> DeviceView:
+    """config.yaml names a device by MAC first, by address second."""
+    own = next((item for item in configured if item.mac == seen.mac), None) or next(
+        (item for item in configured if item.mac is None and item.ip == seen.ip), None
+    )
+    return DeviceView(
+        mac=seen.mac,
+        ip=seen.ip,
+        name=None if own is None else own.name,
+        hostname=seen.hostname,
+        policy=None if own is None else own.policy.value,
+        first_seen=datetime.fromtimestamp(seen.first_seen, tz=UTC),
+        last_seen=datetime.fromtimestamp(seen.last_seen, tz=UTC),
+    )
+
+
 def create_app(
     config: Config | None = None,
     stats_source: StatsSource = _default_stats,
     secrets_dir: Path | None = None,
     link_source: LinkSource = read_wg_dump,
+    device_store: DeviceStore | None = None,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -108,6 +127,16 @@ def create_app(
             return stats_source()
         except MystError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @application.get("/devices", response_model=list[DeviceView])
+    def devices() -> list[DeviceView]:
+        if config is None or config.network is None or device_store is None:
+            raise HTTPException(status_code=404, detail="this box routes no LAN")
+        try:
+            seen = device_store.devices()
+        except DeviceError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return [_device_view(item, config.devices) for item in seen]
 
     @application.get("/peers", response_model=list[PeerView])
     def peers() -> list[PeerView]:

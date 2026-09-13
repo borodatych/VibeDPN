@@ -37,3 +37,15 @@ class PeerFile(BaseModel):
     name: str
     address: IPv4Address
     config: str
+
+
+class DeviceView(BaseModel):
+    """A LAN device the box has seen, with the name and policy config.yaml gives it."""
+
+    mac: str
+    ip: IPv4Address
+    name: str | None
+    hostname: str | None
+    policy: str | None
+    first_seen: datetime
+    last_seen: datetime

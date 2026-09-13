@@ -12,7 +12,7 @@ from urllib.parse import quote
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
-from vibedpn.api.models import PeerCreate, PeerFile, PeerView
+from vibedpn.api.models import DeviceView, PeerCreate, PeerFile, PeerView
 from vibedpn.engine.myst import STATS_DEADLINE_SECONDS, ProviderStats
 
 CORE_API_HOST = "127.0.0.1"
@@ -20,6 +20,7 @@ CORE_API_HOST = "127.0.0.1"
 CORE_API_TIMEOUT_SECONDS = STATS_DEADLINE_SECONDS + 2.0
 VERSION_HINT = "CLI and core versions differ?"
 PEER_LIST: TypeAdapter[list[PeerView]] = TypeAdapter(list[PeerView])
+DEVICE_LIST: TypeAdapter[list[DeviceView]] = TypeAdapter(list[DeviceView])
 
 
 class CoreUnreachableError(RuntimeError):
@@ -36,6 +37,10 @@ class StatsUnavailableError(RuntimeError):
 
 class PeerRequestError(RuntimeError):
     """``core`` refused or failed a peer request; the text is its ``detail``."""
+
+
+class DeviceRequestError(RuntimeError):
+    """``core`` refused or failed a device request; the text is its ``detail``."""
 
 
 def _send(
@@ -91,14 +96,27 @@ def _peer_request(
     *,
     body: dict[str, str | bool] | None = None,
     transport: httpx.BaseTransport | None = None,
+    error: type[RuntimeError] = PeerRequestError,
 ) -> httpx.Response:
     try:
         response = _send(port, method, path, body=body, transport=transport)
     except CoreNoAnswerError as exc:
-        raise PeerRequestError(str(exc)) from exc
+        raise error(str(exc)) from exc
     if response.status_code != expected:
-        raise PeerRequestError(_detail(response))
+        raise error(_detail(response))
     return response
+
+
+def list_devices(port: int, transport: httpx.BaseTransport | None = None) -> list[DeviceView]:
+    response = _peer_request(
+        port, "GET", "/devices", httpx.codes.OK, transport=transport, error=DeviceRequestError
+    )
+    try:
+        return DEVICE_LIST.validate_python(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise DeviceRequestError(
+            f"core answered something that is not a device list ({VERSION_HINT})"
+        ) from exc
 
 
 def _peer_file(response: httpx.Response) -> PeerFile:

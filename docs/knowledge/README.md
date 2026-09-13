@@ -60,6 +60,8 @@
   правила в `DOCKER-USER` по `iptables -S`, выбор бэкенда `nft`/`legacy`, NAT пиров туннеля
 - [lanRouter.md](linux/lanRouter.md) — метки LAN, `ip rule` и таблицы аплинков, kill-switch маршрутом
   `unreachable` и проверка шлюза ICMP, `/proc/sys` только для чтения в `core`, формат `ip -j`
+- [neighbourDevices.md](linux/neighbourDevices.md) — устройства LAN из `ip -j neigh`: состояния, кого видит
+  коробка, имена из PTR вместо аренд, SQLite с версией схемы
 - [gatewayContainer.md](linux/gatewayContainer.md) — шлюз с туннелем меньшего MTU подрезает TCP MSS
   (`rt mtu` в `forward`), проверка транзита и kill-switch шлюза счётчиками nft
 
