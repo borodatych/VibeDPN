@@ -42,7 +42,31 @@
   `/Volumes/Storage` (`writable: true`), после правки — `colima stop && colima start`. Сборка образов
   этого не требует (контекст CLI отправляет сам), а вот `docker compose up` и smoke-тесты — требуют.
 
+## E2E-стенд
+
+`tests/e2e/router.sh` поднимает на одном Linux-хосте коробку роли `client` из образов репозитория,
+fake-VPS и устройство LAN — и проверяет продукт целиком: адрес выхода в режимах `full` и `off`
+(через VPS или напрямую), kill-switch и `failopen`, недоступность сети шлюзов из LAN, `vibedpn mode`,
+`doctor` и AdGuard. «Интернет» стенда — своя Docker-сеть 198.18.0.0/24 с веб-сервером, который
+отвечает адресом клиента; настоящий интернет нужен только DNS-проверкам (DoH-апстрим AdGuard), их
+выключает `VIBEDPN_E2E_OFFLINE=1`. Почему устроено так — [knowledge/ci/e2eStand.md](../knowledge/ci/e2eStand.md).
+
+На macOS — внутри VM colima (путь проекта смонтирован, см. выше), образы собираются тем же демоном:
+
+```bash
+docker build -t ghcr.io/borodatych/vibedpn-core:e2e core && docker build -t ghcr.io/borodatych/vibedpn-wg:e2e images/wg
+```
+
+```bash
+colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && VIBEDPN_TAG=e2e sh tests/e2e/router.sh'
+```
+
+Стенд требует sudo, модуль WireGuard и Docker Engine ≥ 28, ставит CLI в свой venv (или берёт
+`VIBEDPN_E2E_PYTHON`) и при любом исходе убирает за собой контейнеры, сети, netns `e2e-lanhost`,
+мост `lan0` и свои правила в `DOCKER-USER`. В CI его гоняет задача `e2e`.
+
 ## Что не проверить локально
 
-Сетевую часть (nft, ip rule, WireGuard) — только на Linux-хосте или в e2e-стенде `tests/e2e`
-(Stage 4). На macOS ядро colima — Linux, но сеть хоста — это сеть виртуальной машины.
+Сетевую часть (nft, ip rule, WireGuard) — только на Linux-хосте или в E2E-стенде выше. На macOS ядро
+colima — Linux, но сеть хоста — это сеть виртуальной машины. Коробку на одном порту, где роутер
+провайдера в одном L2 с интерфейсом хоста, не воспроизводит и стенд.
