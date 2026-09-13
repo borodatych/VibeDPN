@@ -292,6 +292,8 @@ jobs:
             nft list table inet vibedpn_router | tee /tmp/router.nft
             grep -q "meta mark set 0x00000010" /tmp/router.nft
             grep -q "icmp type redirect drop" /tmp/router.nft
+            # nat-unprotected leaves the gateway ports to us: the LAN reaches them only through a gateway.
+            grep -q "iifname \"eth0\" ip daddr 10.77.0.0/24 drop" /tmp/router.nft
             test "$(ip rule show | grep -c "fwmark 0x10 lookup 7710")" = 1
             ip route show table 7710 | grep -q "unreachable default"
             test "$(iptables-nft -S DOCKER-USER | grep -c vibedpn-router)" = 5
