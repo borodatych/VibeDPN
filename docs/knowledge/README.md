@@ -83,7 +83,9 @@
 ## frontend
 
 - [toolchain.md](frontend/toolchain.md) — версии для Stage 6; TypeScript 7 против typescript-eslint,
-  шаблон Vite с oxlint вместо ESLint
+  шаблон Vite с oxlint вместо ESLint; устарело — UI на start0
+- [start0Build.md](frontend/start0Build.md) — start0 на коробке: сборка падает на 2 ГиБ (пик 2.18 ГиБ),
+  runtime ~205–283 МиБ плюс Postgres ~70 МиБ, Bun на Pi 4 исправлен в v1.3.9
 
 ## python
 

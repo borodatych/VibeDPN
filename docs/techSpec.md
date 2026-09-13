@@ -20,7 +20,7 @@
 | `core/` | Python, FastAPI, Pydantic v2, Typer, httpx, Jinja2, ruamel.yaml (YAML 1.2), uvicorn, cryptography (X25519 для ключей WireGuard), segno (QR-код файла пира в терминале) | `requires-python >= 3.11`: CLI на коробке работает на системном Python (bookworm 3.11.2, trixie 3.13.5), образ `core` — 3.12; fastapi 0.141, pydantic 2.13, typer 0.27, uvicorn 0.52 — точные версии в `core/uv.lock`, для установки без uv — `core/requirements.txt` с sha256 |
 | Тулчейн core | uv, ruff, mypy strict + плагин pydantic, pytest | uv 0.12.13, ruff 0.16.7, mypy 2.3.1, pytest 9.1.1 |
 | `images/wg/` | Alpine + `wireguard-tools-wg` + `iproute2` + `nftables` | alpine 3.24 |
-| `ui/` | React + TypeScript strict + Vite + Tailwind + shadcn/ui + Zustand, отдаёт nginx | react 19.3, vite 8.3, TypeScript **6.0.x** (typescript-eslint не поддерживает 7), tailwind 4.3, node 24 (Active LTS) — Stage 6 |
+| `ui/` | start0: Point0 + Prisma + better-auth на Bun, Postgres 17; варианты `full`/`lite` — [uiVariants.md](uiVariants.md) | пак start0 v0.1.23, `bun ^1.3.14`, `postgres:17-alpine` — Stage 6 |
 | CI | GitHub Actions: ruff, mypy, pytest, shellcheck, actionlint, `compose config`, buildx multi-arch → GHCR | checkout v7, setup-uv v10.1.0, setup-node v7, docker/* v4/v6/v7 |
 
 ## Образы
@@ -29,7 +29,7 @@
 |---|---|---|
 | `ghcr.io/borodatych/vibedpn-core` | `core/Dockerfile`, `python:3.12-slim-trixie`, зависимости из `uv.lock`; из Debian `nftables` и `wireguard-tools` | `${VIBEDPN_TAG}` (`latest` = main, `next`, `sha-…`, semver из тегов `v*`) |
 | `ghcr.io/borodatych/vibedpn-wg` | `images/wg/Dockerfile`, `alpine:3.24` | `${VIBEDPN_TAG}` |
-| `ghcr.io/borodatych/vibedpn-ui` | `ui/Dockerfile`, `nginx:1.31-alpine` (mainline) | `${VIBEDPN_TAG}` |
+| `ghcr.io/borodatych/vibedpn-ui` | `ui/Dockerfile`, сейчас `nginx:1.31-alpine`; в Stage 6 — `oven/bun:1` из готового `dist` ([uiVariants.md](uiVariants.md)) | `${VIBEDPN_TAG}`, в Stage 6 — `${VIBEDPN_TAG}-full` / `-lite` |
 | `mysteriumnetwork/myst` | Docker Hub, multi-arch amd64/arm64/arm-v7 | `1.39.5-alpine` (`${MYST_TAG}`) |
 | `adguard/adguardhome` | Docker Hub, multi-arch | `v0.107.79` (`${ADGUARD_TAG}`) |
 
