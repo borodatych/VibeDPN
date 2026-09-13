@@ -360,43 +360,34 @@ class SwitchableMode(StrEnum):
     FULL = RoutingMode.FULL.value
 
 
-CORE_SERVICE = "core"
-ADGUARD_SERVICE = "adguard"
-RUNNING_STATE = "running"
-
-
 def _switch_routing(
     box_dir: Path, *, mode: RoutingMode | None = None, upstream: Upstream | None = None
 ) -> None:
-    """Change routing in config.yaml and, when core runs, restart only core (and adguard, which
-    reads aaaa_disabled at start): the router is applied at core's start, and the tunnel and the
-    other containers keep running."""
-    _prepare(box_dir, refresh=False)
+    """Change routing through core when it runs: config.yaml, the router and AdGuard follow live
+    and nothing restarts. Without core the file is changed and applies at `vibedpn up`."""
+    config = _prepare(box_dir, refresh=False)
     try:
-        config, changed = set_routing(box_dir / CONFIG_FILE, mode=mode, upstream=upstream)
+        view = core_api.set_routing(config.api.port, mode, upstream)
+    except core_api.CoreUnreachableError:
+        pass
+    except (core_api.CoreNoAnswerError, core_api.RoutingRequestError) as exc:
+        raise _fail(str(exc)) from None
+    else:
+        note = (
+            "router applied; AdGuard catches up at the next start of core"
+            if view.adguard == "pending"
+            else "applied live, nothing restarted"
+        )
+        typer.echo(f"routing: mode={view.mode} default_upstream={view.default_upstream} ({note})")
+        return
+    try:
+        saved, changed = set_routing(box_dir / CONFIG_FILE, mode=mode, upstream=upstream)
     except ConfigEditError as exc:
         raise _fail(str(exc)) from None
     if not changed:
-        typer.echo(f"{_routing_line(config)} (already set)")
+        typer.echo(f"{_routing_line(saved)} (already set)")
         return
-    try:
-        services = parse_ps(capture(compose_argv(box_dir, "ps", "-a", "--format", "json")))
-    except ComposeError as exc:
-        raise _fail(str(exc)) from None
-    running = {item.service for item in services if item.state == RUNNING_STATE}
-    if CORE_SERVICE in running:
-        _compose(box_dir, "restart", "--no-deps", CORE_SERVICE)
-        names = [CORE_SERVICE]
-        if ADGUARD_SERVICE in running:
-            # AdGuard reads its file only at start, and core rewrites aaaa_disabled at its own
-            # start. Restarted together, AdGuard won the race and kept the old mode (smoke): it
-            # restarts only once core is healthy again.
-            _compose(box_dir, "up", "-d", "--no-deps", "--wait", CORE_SERVICE)
-            _compose(box_dir, "restart", "--no-deps", ADGUARD_SERVICE)
-            names.append(ADGUARD_SERVICE)
-        typer.echo(f"{_routing_line(config)} (applied: {', '.join(names)} restarted)")
-    else:
-        typer.echo(f"{_routing_line(config)} (saved; applies at `vibedpn up`)")
+    typer.echo(f"{_routing_line(saved)} (saved; core is not running, applies at `vibedpn up`)")
 
 
 @app.command()
@@ -426,6 +417,8 @@ def status(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
         typer.echo(_routing_line(config))
     uplinks = [name for name in ("vps", "dpn") if config.upstreams.is_enabled(Upstream(name))]
     typer.echo(f"uplinks: {', '.join(uplinks) or '-'}")
+    for line in _router_lines(config):
+        typer.echo(line)
     typer.echo(f"profiles: {','.join(profile.value for profile in config.compose_profiles())}")
     try:
         services = parse_ps(capture(compose_argv(box_dir, "ps", "-a", "--format", "json")))
@@ -439,6 +432,30 @@ def status(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
         typer.echo(f"{item.service.ljust(width)}  {item.state:<8} {item.health:<9} {item.status}")
     for line in _node_lines(config):
         typer.echo(line)
+
+
+def _router_lines(config: Config) -> list[str]:
+    """The uplinks in use as core sees them, and one line when the kill switch holds the LAN."""
+    if config.routing is None:
+        return []
+    try:
+        status = core_api.fetch_status(config.api.port)
+    except core_api.CoreUnreachableError:
+        return ["router: core is not running (run `vibedpn up`)"]
+    except (core_api.CoreNoAnswerError, core_api.RoutingRequestError) as exc:
+        return [f"router: {exc}"]
+    answers = {True: "answers", False: "does not answer", None: "not probed yet"}
+    lines = [
+        f"uplink {item.name}: gateway {answers[item.gateway_alive]}"
+        for item in status.uplinks
+        if item.in_use
+    ]
+    if status.lan_without_exit:
+        lines.append(
+            f"lan exit: none — the {status.default_upstream} gateway does not answer and"
+            " failopen is false, the kill switch holds the LAN"
+        )
+    return lines
 
 
 def _node_lines(config: Config) -> list[str]:

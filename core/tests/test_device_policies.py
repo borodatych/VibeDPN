@@ -98,7 +98,7 @@ def test_watchers_follow_the_uplinks_in_use() -> None:
     started: list[Upstream] = []
     cancelled: list[Upstream] = []
 
-    async def watch(upstream: Upstream) -> None:
+    async def watch(upstream: Upstream, _report: object) -> None:
         started.append(upstream)
         try:
             await asyncio.Event().wait()

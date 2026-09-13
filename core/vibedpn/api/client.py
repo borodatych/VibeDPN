@@ -13,14 +13,17 @@ import httpx
 from pydantic import TypeAdapter, ValidationError
 
 from vibedpn.api.models import (
+    BoxStatus,
     DevicePolicyUpdate,
     DevicePolicyView,
     DeviceView,
     PeerCreate,
     PeerFile,
     PeerView,
+    RoutingUpdate,
+    RoutingView,
 )
-from vibedpn.config import DevicePolicy
+from vibedpn.config import DevicePolicy, RoutingMode, Upstream
 from vibedpn.engine.myst import STATS_DEADLINE_SECONDS, ProviderStats
 
 CORE_API_HOST = "127.0.0.1"
@@ -51,12 +54,16 @@ class DeviceRequestError(RuntimeError):
     """``core`` refused or failed a device request; the text is its ``detail``."""
 
 
+class RoutingRequestError(RuntimeError):
+    """``core`` refused or failed a routing request or has no status; the text is its ``detail``."""
+
+
 def _send(
     port: int,
     method: str,
     path: str,
     *,
-    body: dict[str, str | bool] | None = None,
+    body: dict[str, str | bool | None] | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> httpx.Response:
     url = f"http://{CORE_API_HOST}:{port}{path}"
@@ -102,7 +109,7 @@ def _peer_request(
     path: str,
     expected: int,
     *,
-    body: dict[str, str | bool] | None = None,
+    body: dict[str, str | bool | None] | None = None,
     transport: httpx.BaseTransport | None = None,
     error: type[RuntimeError] = PeerRequestError,
 ) -> httpx.Response:
@@ -203,3 +210,35 @@ def unset_device(port: int, ident: str, transport: httpx.BaseTransport | None = 
         transport=transport,
         error=DeviceRequestError,
     )
+
+
+def set_routing(
+    port: int,
+    mode: RoutingMode | None = None,
+    upstream: Upstream | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> RoutingView:
+    body = RoutingUpdate.model_validate(
+        {"mode": None if mode is None else mode.value, "default_upstream": upstream}
+    ).model_dump(mode="json", exclude_none=True)
+    response = _send(port, "PUT", "/routing", body=body, transport=transport)
+    if response.status_code != httpx.codes.OK:
+        raise RoutingRequestError(_detail(response))
+    try:
+        return RoutingView.model_validate(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise RoutingRequestError(
+            f"core answered something that is not routing ({VERSION_HINT})"
+        ) from exc
+
+
+def fetch_status(port: int, transport: httpx.BaseTransport | None = None) -> BoxStatus:
+    response = _send(port, "GET", "/status", transport=transport)
+    if response.status_code != httpx.codes.OK:
+        raise RoutingRequestError(_detail(response))
+    try:
+        return BoxStatus.model_validate(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise RoutingRequestError(
+            f"core answered something that is not a status ({VERSION_HINT})"
+        ) from exc

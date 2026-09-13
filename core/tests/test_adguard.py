@@ -103,6 +103,7 @@ def test_ensure_writes_600_and_skips_boxes_without_adguard(tmp_path: Path) -> No
     secrets = tmp_path / "secrets"
     secrets.mkdir()
     (secrets / "htpasswd").write_text(f"admin:{HASH}\n", encoding="utf-8")
+    (secrets / "adguard-core-password").write_text("core-secret-123", encoding="utf-8")
     conf = tmp_path / "conf"
     assert ensure_adguard(lan_box(), conf, secrets, tmp_path / "data") is True
     assert stat.S_IMODE((conf / CONF_FILE).stat().st_mode) == 0o600
@@ -154,6 +155,7 @@ def test_ensure_records_the_published_name(tmp_path: Path) -> None:
     conf, secrets, data = tmp_path / "conf", tmp_path / "secrets", tmp_path / "data"
     secrets.mkdir()
     (secrets / "htpasswd").write_text(f"admin:{HASH}\n", encoding="utf-8")
+    (secrets / "adguard-core-password").write_text("core-secret-123", encoding="utf-8")
     ensure_adguard(lan_box(), conf, secrets, data)
     assert (data / HOST_NAME_STATE_FILE).read_text(encoding="utf-8") == "vibedpn.lan\n"
     raw = client_config()

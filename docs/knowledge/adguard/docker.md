@@ -47,3 +47,16 @@ AdGuard выбрасывает незнакомые ключи и коммент
 **Источники:** https://github.com/AdguardTeam/AdGuardHome/wiki/Configuration ,
 https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/filtering/rewrites.go ,
 https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/filtering/rewrite/item.go .
+
+## [провайдер] Режим DNS на лету: `disable_ipv6` через API и служебный пользователь ядра
+
+**Контекст:** Stage 6, экран статуса и `PUT /routing` (`engine/adguard.py`), 2026-09-13.
+**Суть:** AdGuard читает `dns.aaaa_disabled` из файла только при старте, поэтому `vibedpn mode` раньше перезапускал его через Compose. У ядра нет Docker, у панели тоже.
+В v0.107.79 `POST /control/dns_config` принимает поле `disable_ipv6`: `setConfig` пишет его в `AAAADisabled` в ветке без перезапуска DNS-сервера, затем `ConfModifier.Apply` сохраняет конфиг (`internal/dnsforward/http.go`).
+В OpenAPI этого тега поля `aaaa_disabled` нет — там оно называется `disable_ipv6`; сверять надо с кодом.
+API принимает Basic-авторизацию (`userFromRequestBasicAuth`, `internal/home/authhttp.go`), но пароль владельца у ядра только в bcrypt.
+Поэтому ядро держит в `users` своего пользователя `vibedpn-core` с bcrypt пароля из `secrets/adguard-core-password`; хеш переписывается, только когда пароль перестал совпадать, иначе каждый старт ядра менял бы файл новой солью.
+AdGuard не ответил — роутер уже применён, ответ `adguard: pending`: файл с тем же значением ядро пишет при своём старте.
+**Источники:** https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/dnsforward/http.go ,
+https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/home/authhttp.go ,
+https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/openapi/openapi.yaml .

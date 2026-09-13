@@ -64,7 +64,12 @@ WG_CLIENT_CONF = "wg-client.conf"
 # volume (data/ui-db) and the signed sessions depend on them. Written without a trailing newline.
 UI_DB_PASSWORD_FILE = "ui-db-password"
 UI_AUTH_SECRET_FILE = "ui-auth-secret"
-GENERATED_SECRETS = (UI_DB_PASSWORD_FILE, UI_AUTH_SECRET_FILE)
+UI_SECRETS = (UI_DB_PASSWORD_FILE, UI_AUTH_SECRET_FILE)
+# Core's own AdGuard user (engine/adguard.py): changes the DNS mode live without the owner's
+# password.
+ADGUARD_CORE_PASSWORD_FILE = "adguard-core-password"
+ADGUARD_SECRETS = (ADGUARD_CORE_PASSWORD_FILE,)
+GENERATED_SECRETS = UI_SECRETS + ADGUARD_SECRETS
 GENERATED_SECRET_BYTES = 32
 KNOWN_SECRETS = (HTPASSWD_FILE, WG_CLIENT_CONF, *GENERATED_SECRETS)
 DATA_DIR = "data"
@@ -126,8 +131,12 @@ def required_secrets(config: Config) -> list[str]:
 
 
 def generated_secrets(config: Config) -> tuple[str, ...]:
-    """Secrets ``init`` generates itself for this configuration: the panel's, when it runs one."""
-    return GENERATED_SECRETS if Profile.UI in config.compose_profiles() else ()
+    """Secrets ``init`` generates itself for this configuration: the panel's when it runs one,
+    core's AdGuard user when it runs AdGuard."""
+    profiles = config.compose_profiles()
+    return (UI_SECRETS if Profile.UI in profiles else ()) + (
+        ADGUARD_SECRETS if Profile.DNS in profiles else ()
+    )
 
 
 def _present(path: Path) -> bool | None:

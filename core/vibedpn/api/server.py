@@ -127,5 +127,7 @@ def main() -> None:
             raise SystemExit(os.EX_CONFIG) from None
     watchers = UplinkWatchers(uplinks)
     box_state = BoxState(config, config_path, watchers=watchers)
-    application = create_app(config, secrets_dir=secrets_dir, device_store=devices, state=box_state)
+    application = create_app(
+        config, secrets_dir=secrets_dir, device_store=devices, state=box_state, watchers=watchers
+    )
     run_servers(config, application, watchers=watchers, devices=devices)

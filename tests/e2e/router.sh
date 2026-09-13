@@ -344,8 +344,8 @@ echo "full, second block: first $(exit_address), second no exit"
 # 3. mode off; the first device keeps the VPS by its own policy, the second one goes direct.
 "$CLI" device unset "$device2_mac" --dir "$BOX" >/dev/null || fail "vibedpn device unset failed"
 "$CLI" device set "$device_mac" vps --dir "$BOX" >/dev/null || fail "vibedpn device set vps failed"
-sudo "$CLI" mode off --dir "$BOX" >/dev/null || fail "vibedpn mode off failed"
-wait_healthy vibedpn-core-1
+core_started="$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)"
+"$CLI" mode off --dir "$BOX" | grep -q "applied live" || fail "vibedpn mode off did not apply live through core"
 await_exit "$VPS_IP" "policy vps does not keep the first device on the VPS in mode off"
 await_exit_in "$NETNS2" "$INTERNET_GATEWAY" "the second device does not go direct in mode off"
 echo "off, first vps: first $(exit_address), second $(exit_address_in "$NETNS2")"
@@ -361,11 +361,13 @@ await_exit "$VPS_IP" "the first device did not come back through the VPS with th
   fail "the second device $device2_mac is not in vibedpn device list"
 # 5. back to the start: no own policies, mode full.
 "$CLI" device unset "$device_mac" --dir "$BOX" >/dev/null || fail "vibedpn device unset failed"
-sudo "$CLI" mode full --dir "$BOX" >/dev/null || fail "vibedpn mode full failed"
-wait_healthy vibedpn-core-1
+"$CLI" mode full --dir "$BOX" | grep -q "applied live" || fail "vibedpn mode full did not apply live through core"
 await_exit "$VPS_IP" "the first device does not return to the VPS in mode full"
 await_exit_in "$NETNS2" "$VPS_IP" "the second device does not follow mode full back to the VPS"
 echo "full again: both devices through the VPS"
+[ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)" = "$core_started" ] ||
+  fail "a routing mode change restarted core"
+"$CLI" status --dir "$BOX" | grep -q "uplink vps: gateway answers" || fail "vibedpn status does not show the vps gateway"
 
 log "the LAN never reaches a gateway container directly"
 in_device "$PY" -c "$PROBE" "$BOX_LAN_IP" ||

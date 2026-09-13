@@ -38,7 +38,6 @@ from vibedpn.engine.myst import NODEUI_PORT, TEQUILAPI_PORT
 from vibedpn.engine.router import (
     EGRESS_COMMENT,
     EGRESS_TABLE,
-    LAST_RESORT_METRIC,
     NFT_TABLE,
     ROUTER_COMMENT,
     ROUTER_TABLE,
@@ -50,7 +49,7 @@ from vibedpn.engine.router import (
     find_ip,
     find_nft,
     plan_docker_user,
-    plan_rules,
+    read_routing,
     router_docker_user_rules,
     used_uplinks,
 )
@@ -842,7 +841,12 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
     router_docker_user, router_docker_user_error = None, ""
     if config is not None and config.network is not None:
         router_table, router_error = _table_present(ROUTER_TABLE)
-        router_rules, uplink_routes, last_resort_routes = _router_routing(config)
+        routing = read_routing(config)
+        router_rules, uplink_routes, last_resort_routes = (
+            routing.rules_current,
+            routing.gateway_routes,
+            routing.last_resort_routes,
+        )
         rp_filter = _read_rp_filter()
         router_docker_user, router_docker_user_error = _docker_user_current(
             router_docker_user_rules(config), ROUTER_COMMENT
@@ -934,46 +938,6 @@ def _egress_table_current(subnet: str) -> tuple[bool | None, str]:
     if listing.returncode != 0:
         return None, f"nft cannot list {EGRESS_TABLE}: {listing.stderr.strip()}"
     return f"ip saddr {subnet} " in listing.stdout, ""
-
-
-def _router_routing(
-    config: Config,
-) -> tuple[bool | None, dict[str, bool | None], dict[str, bool | None]]:
-    """``(ip rules match config.yaml, gateway route per uplink in use, kill-switch route per
-    uplink in use)``; ``None`` for what could not be read."""
-    ip = find_ip()
-    if ip is None:
-        return None, {}, {}
-    try:
-        uplinks = used_uplinks(config)
-        rules = subprocess.run(
-            [ip, "-j", "rule", "show"], check=True, capture_output=True, text=True
-        )
-        delete, add = plan_rules(rules.stdout, uplinks)
-    except (OSError, subprocess.CalledProcessError, RouterError):
-        return None, {}, {}
-    gateways: dict[str, bool | None] = {}
-    last_resorts: dict[str, bool | None] = {}
-    for uplink in uplinks:
-        try:
-            routes = subprocess.run(
-                [ip, "-j", "route", "show", "table", str(UPLINKS[uplink].table)],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            entries = json.loads(routes.stdout or "[]")
-        except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
-            gateways[uplink.value] = last_resorts[uplink.value] = None
-            continue
-        gateways[uplink.value] = any(
-            entry.get("gateway") == UPLINKS[uplink].gateway for entry in entries
-        )
-        last_resorts[uplink.value] = any(
-            entry.get("type") == "unreachable" and entry.get("metric") == LAST_RESORT_METRIC
-            for entry in entries
-        )
-    return not delete and not add, gateways, last_resorts
 
 
 def _exits(box_dir: Path, config: Config, services: list[ServiceStatus]) -> list[ExitFact] | None:

@@ -551,3 +551,51 @@ def apply_firewall(config: Config) -> bool:
     check_ruleset(ruleset)
     apply_ruleset(ruleset)
     return True
+
+
+@dataclass(frozen=True)
+class RoutingFacts:
+    """The LAN router as the host has it: rules for the uplinks in use, and per uplink its gateway
+    route and its kill-switch route."""
+
+    rules_current: bool | None
+    gateway_routes: dict[str, bool | None]
+    last_resort_routes: dict[str, bool | None]
+
+
+def read_routing(config: Config) -> RoutingFacts:
+    """What the host routes now for the uplinks in use; ``None`` for what could not be read.
+    Read-only: ``doctor`` and the ``/status`` of core both use it."""
+    ip = find_ip()
+    if ip is None:
+        return RoutingFacts(None, {}, {})
+    try:
+        uplinks = used_uplinks(config)
+        rules = subprocess.run(
+            [ip, "-j", "rule", "show"], check=True, capture_output=True, text=True
+        )
+        delete, add = plan_rules(rules.stdout, uplinks)
+    except (OSError, subprocess.CalledProcessError, RouterError):
+        return RoutingFacts(None, {}, {})
+    gateways: dict[str, bool | None] = {}
+    last_resorts: dict[str, bool | None] = {}
+    for uplink in uplinks:
+        try:
+            routes = subprocess.run(
+                [ip, "-j", "route", "show", "table", str(UPLINKS[uplink].table)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            entries = json.loads(routes.stdout or "[]")
+        except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+            gateways[uplink.value] = last_resorts[uplink.value] = None
+            continue
+        gateways[uplink.value] = any(
+            entry.get("gateway") == UPLINKS[uplink].gateway for entry in entries
+        )
+        last_resorts[uplink.value] = any(
+            entry.get("type") == "unreachable" and entry.get("metric") == LAST_RESORT_METRIC
+            for entry in entries
+        )
+    return RoutingFacts(not delete and not add, gateways, last_resorts)

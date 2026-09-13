@@ -312,7 +312,7 @@ jobs:
           '
 
   adguard:
-    name: adguard · config from core, password, empty AAAA in full, box name, UI settings survive
+    name: adguard · config from core, password, empty AAAA in full, box name, live DNS mode, UI settings survive
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -331,6 +331,7 @@ jobs:
           from vibedpn.engine.adguard import ensure_adguard
           hashed = bcrypt.hashpw(b"ci-adguard-123", bcrypt.gensalt(12)).decode()
           Path("/work/secrets/htpasswd").write_text(f"admin:{hashed}\\n")
+          Path("/work/secrets/adguard-core-password").write_text("ci-core-secret-123")
           raw = {"version": 1, "role": "client", "network": {"lan_interface": "lo", "lan_subnet": "127.0.0.0/8", "lan_address": "127.0.0.2"}, "routing": {"mode": "full", "default_upstream": "vps"}, "upstreams": {"vps": {"enabled": True}}, "dns": {"web_port": 3001}}
           assert ensure_adguard(Config.model_validate(raw), Path("/work/conf"), Path("/work/secrets"), Path("/work/data")) is True
           PY
@@ -366,6 +367,17 @@ jobs:
           test "$(docker run --rm -i --network host python:3.12-slim-trixie python - 1 < "$work/dns.py")" -gt 0
           # The box name (ui.host_name, default vibedpn.lan) answers with the box address: core's rewrite is live.
           test "$(docker run --rm -i --network host python:3.12-slim-trixie python - 1 vibedpn.lan addr < "$work/dns.py")" = 127.0.0.2
+          # Core's own AdGuard user switches AAAA live (mode off), no restart; then back to full.
+          dns_mode() {
+            curl -s -o /dev/null -w '%{http_code}' -u vibedpn-core:ci-core-secret-123 \
+              -H 'Content-Type: application/json' -d "{\"disable_ipv6\":$1}" http://127.0.0.2:3001/control/dns_config
+          }
+          test "$(dns_mode false)" = 200
+          test "$(docker run --rm -i --network host python:3.12-slim-trixie python - 28 < "$work/dns.py")" -gt 0
+          test "$(dns_mode true)" = 200
+          test "$(docker run --rm -i --network host python:3.12-slim-trixie python - 28 < "$work/dns.py")" = 0
+          test "$(curl -s -o /dev/null -w '%{http_code}' -u vibedpn-core:wrong -H 'Content-Type: application/json' \
+            -d '{"disable_ipv6":false}' http://127.0.0.2:3001/control/dns_config)" = 401
           # A setting made in the AdGuard UI (here: a disabled filter) survives core's next pass.
           docker rm -f adguard >/dev/null
           sudo sed -i "0,/enabled: false/s//enabled: true/" "$work/conf/AdGuardHome.yaml"

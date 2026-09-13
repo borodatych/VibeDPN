@@ -6,7 +6,8 @@ import '@point0/core/server-only'
 /** Everything under this prefix goes to the core API; the rest of `/api/` belongs to the app itself. */
 export const CORE_API_PREFIX = '/api/core'
 
-const CORE_API_HOST = '127.0.0.1'
+/** Core listens on loopback only; the panel is on the host network next to it. */
+export const CORE_API_HOST = '127.0.0.1'
 
 // Hop-by-hop headers and the ones that describe the browser session, not the request to core.
 const DROPPED_REQUEST_HEADERS = ['host', 'cookie', 'connection', 'keep-alive', 'transfer-encoding', 'upgrade']

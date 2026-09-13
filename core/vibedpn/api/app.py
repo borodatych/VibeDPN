@@ -10,25 +10,32 @@ from pydantic import BaseModel
 
 from vibedpn import __version__
 from vibedpn.api.models import (
+    BoxStatus,
     DevicePolicyUpdate,
     DevicePolicyView,
     DeviceView,
     PeerCreate,
     PeerFile,
     PeerView,
+    RoutingUpdate,
+    RoutingView,
+    UplinkStatus,
 )
 from vibedpn.api.state import BoxState
-from vibedpn.config import Config, DeviceConfig
+from vibedpn.api.uplink import UplinkWatchers
+from vibedpn.config import Config, DeviceConfig, RoutingMode, Upstream
 from vibedpn.config_edit import (
     ConfigEditError,
     DeviceIdent,
     DeviceNotFoundError,
     set_device,
+    set_routing,
     unset_device,
 )
+from vibedpn.engine.adguard import AdguardError, set_aaaa_disabled
 from vibedpn.engine.devices import DeviceError, DeviceStore, SeenDevice
 from vibedpn.engine.myst import MystError, ProviderStats, TequilaClient, provider_stats
-from vibedpn.engine.router import RouterError
+from vibedpn.engine.router import RouterError, RoutingFacts, read_routing, used_uplinks
 from vibedpn.engine.wg import (
     Peer,
     PeerExistsError,
@@ -46,6 +53,10 @@ from vibedpn.engine.wg import (
 )
 
 StatsSource = Callable[[], ProviderStats]
+RoutingReader = Callable[[Config], RoutingFacts]
+# Tells the running AdGuard the DNS mode; None: no AdGuard on this box.
+DnsModeSetter = Callable[[Config], bool | None]
+NO_LAN = "this box routes no LAN"
 LinkSource = Callable[[], dict[str, PeerLink] | None]
 NO_TUNNEL = "this box runs no WireGuard server"
 # The peer errors a caller can act on, and the HTTP status each one maps to.
@@ -194,6 +205,95 @@ def _add_device_routes(
         return Response(status_code=204)
 
 
+def _uplink_statuses(
+    box: Config, watchers: UplinkWatchers | None, facts: RoutingFacts
+) -> list[UplinkStatus]:
+    in_use = used_uplinks(box)
+    states = {} if watchers is None else watchers.states()
+    result = []
+    for upstream in (Upstream.VPS, Upstream.DPN):
+        state = states.get(upstream)
+        result.append(
+            UplinkStatus(
+                name=upstream.value,
+                enabled=box.upstreams.is_enabled(upstream),
+                in_use=upstream in in_use,
+                gateway_alive=None if state is None else state.alive,
+                checked_at=None
+                if state is None
+                else datetime.fromtimestamp(state.checked_at, tz=UTC),
+                error="" if state is None else state.error,
+                gateway_route=facts.gateway_routes.get(upstream.value),
+                kill_switch_route=facts.last_resort_routes.get(upstream.value),
+            )
+        )
+    return result
+
+
+def _add_routing_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    state: BoxState | None,
+    watchers: UplinkWatchers | None,
+    routing_reader: RoutingReader,
+    dns_mode: DnsModeSetter,
+) -> None:
+    """``/status`` and ``/routing``: the LAN router at a glance, and its mode changed live."""
+
+    @application.get("/status", response_model=BoxStatus)
+    def status() -> BoxStatus:
+        box = current()
+        if box is None or box.routing is None:
+            raise HTTPException(status_code=404, detail=NO_LAN)
+        routing = box.routing
+        uplinks = _uplink_statuses(box, watchers, routing_reader(box))
+        mode_uplink = next(item for item in uplinks if item.name == routing.default_upstream.value)
+        return BoxStatus(
+            mode=routing.mode.value,
+            default_upstream=routing.default_upstream.value,
+            failopen=routing.failopen,
+            rules_current=routing_reader(box).rules_current,
+            lan_without_exit=routing.mode is RoutingMode.FULL
+            and mode_uplink.gateway_alive is False
+            and not routing.failopen,
+            uplinks=uplinks,
+        )
+
+    @application.put("/routing", response_model=RoutingView)
+    def put_routing(request: RoutingUpdate) -> RoutingView:
+        box = current()
+        if state is None or box is None or box.routing is None:
+            raise HTTPException(status_code=404, detail=NO_LAN)
+        if request.mode is None and request.default_upstream is None:
+            raise HTTPException(
+                status_code=422, detail="nothing to change: give mode or default_upstream"
+            )
+        mode = None if request.mode is None else RoutingMode(request.mode)
+        try:
+            updated = state.edit(
+                lambda path: set_routing(path, mode=mode, upstream=request.default_upstream)
+            )
+        except ConfigEditError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RouterError as exc:
+            raise HTTPException(
+                status_code=503, detail=f"router refused the change, config.yaml restored: {exc}"
+            ) from exc
+        adguard: Literal["applied", "pending", "none"]
+        try:
+            adguard = "none" if dns_mode(updated) is None else "applied"
+        except AdguardError:
+            adguard = "pending"
+        routing = updated.routing
+        if routing is None:  # set_routing refuses a box without routing; keeps the type narrow
+            raise HTTPException(status_code=404, detail=NO_LAN)
+        return RoutingView(
+            mode=routing.mode.value,
+            default_upstream=routing.default_upstream.value,
+            adguard=adguard,
+        )
+
+
 def create_app(
     config: Config | None = None,
     stats_source: StatsSource = _default_stats,
@@ -201,6 +301,9 @@ def create_app(
     link_source: LinkSource = read_wg_dump,
     device_store: DeviceStore | None = None,
     state: BoxState | None = None,
+    watchers: UplinkWatchers | None = None,
+    routing_reader: RoutingReader = read_routing,
+    dns_mode: DnsModeSetter | None = None,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -219,6 +322,15 @@ def create_app(
         if box is None or box.wg_server is None or secrets_dir is None:
             raise HTTPException(status_code=404, detail=NO_TUNNEL)
         return box, secrets_dir
+
+    def default_dns_mode(box: Config) -> bool | None:
+        if secrets_dir is None:
+            return None
+        return set_aaaa_disabled(box, secrets_dir)
+
+    _add_routing_routes(
+        application, current, state, watchers, routing_reader, dns_mode or default_dns_mode
+    )
 
     @application.get("/health", response_model=Health)
     def health() -> Health:

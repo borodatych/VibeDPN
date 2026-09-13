@@ -150,6 +150,7 @@ def test_write_box_writes_config_env_and_secrets(tmp_path: Path) -> None:
         "wg-client.conf",
         "ui-db-password",
         "ui-auth-secret",
+        "adguard-core-password",
     ]
     assert written.retired == []
     for name in ("ui-db-password", "ui-auth-secret"):
@@ -233,6 +234,7 @@ def test_force_with_a_new_role_sets_old_secrets_aside(tmp_path: Path) -> None:
     vps = Answers(Role.VPS, endpoint="vps.example.com")
     written = write_box(box, build_config(vps, LAN), vps, force=True)
     assert sorted(p.name for p in written.retired) == [
+        "adguard-core-password.bak",
         "htpasswd.bak",
         "ui-auth-secret.bak",
         "ui-db-password.bak",
@@ -342,7 +344,13 @@ def test_generated_secrets_survive_a_forced_re_run(tmp_path: Path) -> None:
 
 def test_the_panel_secrets_are_required_only_with_the_ui() -> None:
     home = build_config(Answers(Role.HOME, password="secret123"), LAN)
-    assert required_secrets(home) == ["htpasswd", "nodeui-pass", "ui-db-password", "ui-auth-secret"]
+    assert required_secrets(home) == [
+        "htpasswd",
+        "nodeui-pass",
+        "ui-db-password",
+        "ui-auth-secret",
+        "adguard-core-password",
+    ]
     vps = build_config(Answers(Role.VPS, endpoint="vps.example.com"), PUBLIC)
     assert "ui-db-password" not in required_secrets(vps)
 
