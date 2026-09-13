@@ -251,6 +251,67 @@ jobs:
             iptables-nft -S DOCKER-USER | grep -q -- "-i eth9 -j DROP"
           '
 
+  router:
+    name: router · LAN marks, ip rules, uplink tables and DOCKER-USER in a NET_ADMIN container
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Apply the LAN router twice, follow the gateway, switch modes, remove it
+        run: |
+          docker run --rm --cap-add NET_ADMIN -v "$PWD:/src:ro" python:3.12-slim-trixie bash -eu -c '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends iproute2 iptables nftables >/dev/null
+            pip install -q --require-hashes -r /src/core/requirements.txt
+            pip install -q --no-deps --no-build-isolation /src/core
+            ip link add vibedpn0 type bridge
+            ip addr add 10.77.0.1/24 dev vibedpn0
+            ip link set vibedpn0 up
+            iptables-nft -N DOCKER-USER
+            cat > /tmp/router.py <<"PY"
+          import sys
+          from vibedpn.config import Config, Upstream
+          from vibedpn.engine.router import apply_router, remove_router, set_gateway_route
+          def box(mode, failopen=False):
+              return Config.model_validate({"version": 1, "role": "client", "network": {"lan_interface": "eth0", "lan_subnet": "192.168.1.0/24", "lan_address": "192.168.1.50"}, "routing": {"mode": mode, "default_upstream": "vps", "failopen": failopen}, "upstreams": {"vps": {"enabled": True}}})
+          step = sys.argv[1]
+          if step == "full":
+              assert apply_router(box("full")) is Upstream.VPS
+          elif step == "alive":
+              set_gateway_route(Upstream.VPS, True)
+          elif step == "dead":
+              set_gateway_route(Upstream.VPS, False)
+          elif step == "failopen":
+              apply_router(box("full", failopen=True))
+          elif step == "off":
+              assert apply_router(box("off")) is None
+          elif step == "remove":
+              remove_router()
+          PY
+            python /tmp/router.py full
+            python /tmp/router.py full
+            nft list table inet vibedpn_router | tee /tmp/router.nft
+            grep -q "meta mark set 0x00000010" /tmp/router.nft
+            grep -q "icmp type redirect drop" /tmp/router.nft
+            test "$(ip rule show | grep -c "fwmark 0x10 lookup 7710")" = 1
+            ip route show table 7710 | grep -q "unreachable default"
+            test "$(iptables-nft -S DOCKER-USER | grep -c vibedpn-router)" = 5
+            # The gateway answers: its route wins; it goes quiet: only the kill switch is left.
+            python /tmp/router.py alive
+            ip route show table 7710 | grep -q "default via 10.77.0.10 dev vibedpn0"
+            python /tmp/router.py dead
+            if ip route show table 7710 | grep -q "via 10.77.0.10"; then echo "gateway route survived"; exit 1; fi
+            ip route show table 7710 | grep -q "unreachable default"
+            python /tmp/router.py failopen
+            if ip route show table 7710 | grep -q unreachable; then echo "failopen kept the kill switch"; exit 1; fi
+            python /tmp/router.py off
+            if ip rule show | grep -q "lookup 7710"; then echo "mode off kept the uplink rule"; exit 1; fi
+            if nft list table inet vibedpn_router | grep -q "meta mark set"; then echo "mode off still marks"; exit 1; fi
+            python /tmp/router.py remove
+            python /tmp/router.py remove
+            if nft list tables | grep -q vibedpn_router; then echo "router table survived"; exit 1; fi
+            if iptables-nft -S DOCKER-USER | grep -q vibedpn-router; then echo "DOCKER-USER rules survived"; exit 1; fi
+          '
+
   tunnel:
     name: tunnel · wg handshake and kill switch
     runs-on: ubuntu-24.04
@@ -267,7 +328,7 @@ jobs:
 
   images:
     name: image · ${{ matrix.image.name }}
-    needs: [python, shell, compose, install, firewall, tunnel]
+    needs: [python, shell, compose, install, firewall, router, tunnel]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

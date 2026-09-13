@@ -13,12 +13,14 @@ from pydantic import ValidationError
 
 from vibedpn.api.app import create_app
 from vibedpn.api.tunnel import run_servers
-from vibedpn.config import ConfigError, load_config
+from vibedpn.config import Config, ConfigError, Upstream, load_config
 from vibedpn.engine.router import (
     EGRESS_TABLE,
+    ROUTER_TABLE,
     Egress,
     RouterError,
     apply_firewall,
+    apply_router,
     apply_tunnel_egress,
 )
 from vibedpn.engine.wg import WgError, ensure_server
@@ -32,6 +34,19 @@ EGRESS_MESSAGES = {
         f"tunnel egress applied (table {EGRESS_TABLE}; no DOCKER-USER chain, nothing to open)"
     ),
 }
+
+
+def router_message(config: Config, uplink: Upstream | None) -> str:
+    if config.network is None:
+        return f"no LAN in this configuration; table {ROUTER_TABLE} removed if it was loaded"
+    if uplink is None:
+        return f"LAN router applied (table {ROUTER_TABLE}): routing.mode off, LAN goes direct"
+    return (
+        f"LAN router applied (table {ROUTER_TABLE}): routing.mode full through uplink {uplink};"
+        " traffic waits for its gateway to answer"
+    )
+
+
 CONFIG_PATH_ENV = "VIBEDPN_CONFIG"
 DEFAULT_CONFIG_PATH = Path("/etc/vibedpn/config.yaml")
 SECRETS_DIR_ENV = "VIBEDPN_SECRETS"
@@ -59,6 +74,8 @@ def main() -> None:
             )
         egress = apply_tunnel_egress(config)
         sys.stderr.write(f"vibedpn-core: {EGRESS_MESSAGES[egress]}\n")
+        uplink = apply_router(config)
+        sys.stderr.write(f"vibedpn-core: {router_message(config, uplink)}\n")
     except RouterError as exc:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None
@@ -79,4 +96,4 @@ def main() -> None:
                 f" run `vibedpn peer export {moved.name}` for its home box\n"
             )
     application = create_app(config, secrets_dir=secrets_dir)
-    run_servers(config, application)
+    run_servers(config, application, uplink=uplink)

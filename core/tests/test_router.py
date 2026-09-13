@@ -15,6 +15,7 @@ from vibedpn.config import Config, FirewallConfig, Role
 from vibedpn.detect import Interface
 from vibedpn.engine import router
 from vibedpn.engine.router import (
+    EGRESS_COMMENT,
     Egress,
     RouterError,
     apply_firewall,
@@ -169,6 +170,7 @@ def test_core_reports_a_configuration_without_firewall(
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=False),
         patch("vibedpn.api.server.apply_tunnel_egress", return_value=Egress.NO_DOCKER_DROP),
+        patch("vibedpn.api.server.apply_router", return_value=None),
         patch("vibedpn.api.server.run_servers"),
     ):
         server.main()
@@ -188,6 +190,7 @@ def test_core_applies_the_firewall_before_serving(tmp_path: Path) -> None:
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=True) as applied,
         patch("vibedpn.api.server.apply_tunnel_egress", return_value=Egress.DOCKER_USER) as egress,
+        patch("vibedpn.api.server.apply_router", return_value=None),
         patch("vibedpn.api.server.run_servers") as run,
     ):
         server.main()
@@ -240,6 +243,7 @@ def test_core_renders_the_tunnel_after_the_firewall_and_before_serving(tmp_path:
         ),
         patch("vibedpn.api.server.apply_firewall", side_effect=lambda _c: order.append("firewall")),
         patch("vibedpn.api.server.apply_tunnel_egress", side_effect=egress),
+        patch("vibedpn.api.server.apply_router", return_value=None),
         patch("vibedpn.api.server.ensure_server", side_effect=tunnel),
         patch("vibedpn.api.server.run_servers", side_effect=serve),
     ):
@@ -266,6 +270,7 @@ def test_core_refuses_to_start_on_a_broken_tunnel_key(
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=True),
         patch("vibedpn.api.server.apply_tunnel_egress", return_value=Egress.DOCKER_USER),
+        patch("vibedpn.api.server.apply_router", return_value=None),
         patch("vibedpn.api.server.run_servers") as run,
         pytest.raises(SystemExit) as exit_info,
     ):
@@ -302,6 +307,7 @@ def test_core_reports_peers_moved_by_a_subnet_change(
         ),
         patch("vibedpn.api.server.apply_firewall", return_value=True),
         patch("vibedpn.api.server.apply_tunnel_egress", return_value=Egress.DOCKER_USER),
+        patch("vibedpn.api.server.apply_router", return_value=None),
         patch("vibedpn.api.server.run_servers"),
     ):
         server.main()
@@ -359,7 +365,7 @@ LISTING = """# Warning: iptables-legacy tables present, use iptables-legacy to s
 
 
 def test_docker_user_plan_is_empty_when_the_rules_are_in_place() -> None:
-    assert plan_docker_user(LISTING, docker_user_rules(vps())) == ([], [])
+    assert plan_docker_user(LISTING, docker_user_rules(vps()), EGRESS_COMMENT) == ([], [])
 
 
 def test_docker_user_plan_replaces_an_old_subnet_and_keeps_foreign_rules() -> None:
@@ -371,7 +377,7 @@ def test_docker_user_plan_replaces_an_old_subnet_and_keeps_foreign_rules() -> No
     }
     moved = Config.model_validate(raw)
     listing = LISTING + "-A DOCKER-USER -i eth1 -j DROP\n"
-    delete, insert = plan_docker_user(listing, docker_user_rules(moved))
+    delete, insert = plan_docker_user(listing, docker_user_rules(moved), EGRESS_COMMENT)
     assert len(delete) == 2 and all("10.78.0.0/24" in rule for rule in delete)
     assert insert == docker_user_rules(moved)
     assert not any("eth1" in rule for rule in delete)
@@ -379,9 +385,9 @@ def test_docker_user_plan_replaces_an_old_subnet_and_keeps_foreign_rules() -> No
 
 def test_docker_user_plan_drops_duplicates_and_everything_without_a_tunnel() -> None:
     doubled = LISTING + LISTING.splitlines()[-1] + "\n"
-    delete, insert = plan_docker_user(doubled, docker_user_rules(vps()))
+    delete, insert = plan_docker_user(doubled, docker_user_rules(vps()), EGRESS_COMMENT)
     assert len(delete) == 3 and insert == docker_user_rules(vps())
-    delete, insert = plan_docker_user(LISTING, [])
+    delete, insert = plan_docker_user(LISTING, [], EGRESS_COMMENT)
     assert len(delete) == 2 and insert == []
 
 
@@ -389,7 +395,7 @@ def test_docker_user_rules_below_a_foreign_drop_are_reinserted_on_top() -> None:
     """An owner's DROP (or Docker's RETURN) above our accepts makes them dead."""
     lines = LISTING.splitlines()
     shadowed = "\n".join([*lines[:2], "-A DOCKER-USER -j RETURN", *lines[2:]]) + "\n"
-    delete, insert = plan_docker_user(shadowed, docker_user_rules(vps()))
+    delete, insert = plan_docker_user(shadowed, docker_user_rules(vps()), EGRESS_COMMENT)
     assert len(delete) == 2 and insert == docker_user_rules(vps())
 
 

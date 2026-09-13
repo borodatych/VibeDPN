@@ -204,6 +204,8 @@ networks:
     driver: bridge
     driver_opts:
       com.docker.network.bridge.gateway_mode_ipv4: nat-unprotected
+      # A fixed name the host rules of core match on (UPSTREAMS_BRIDGE in engine/router.py).
+      com.docker.network.bridge.name: vibedpn0
     ipam:
       config:
         - subnet: 10.77.0.0/24

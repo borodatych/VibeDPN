@@ -1,0 +1,28 @@
+# VibeDPN LAN router, roles home and client. Rendered by core from config.yaml at every start
+# and applied as one transaction (`add table` + `delete table` + the whole table). Chains accept
+# by default: the host's own traffic is not ours to judge. Marked packets are steered by
+# `ip rule` into the table of their uplink, whose default route is a gateway container on the
+# bridge {{ bridge }}; the host default route is never touched.
+add table inet vibedpn_router
+delete table inet vibedpn_router
+table inet vibedpn_router {
+  chain prerouting {
+    type filter hook prerouting priority mangle; policy accept;
+{% if mark %}
+    iifname "{{ lan_interface }}" ip saddr {{ lan_subnet }} ip daddr != { {{ lan_subnet }}, {{ upstreams_subnet }} } fib daddr type != local meta mark set {{ mark }} comment "routing.mode full: LAN traffic leaves through uplink {{ upstream }}"
+{% endif %}
+  }
+  chain forward {
+    type filter hook forward priority filter; policy accept;
+    iifname "{{ lan_interface }}" ip daddr {{ upstreams_subnet }} drop comment "the LAN never reaches gateway containers directly, only through them"
+    iifname "{{ lan_interface }}" meta nfproto ipv6 drop comment "the uplinks are IPv4: LAN IPv6 never crosses the box around them"
+  }
+  chain output {
+    type filter hook output priority filter; policy accept;
+    oifname "{{ lan_interface }}" icmp type redirect drop comment "one port in and out: never tell a device to bypass the box"
+  }
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    iifname "{{ lan_interface }}" oifname "{{ lan_interface }}" ip saddr {{ lan_subnet }} masquerade comment "bypass on one port: replies come back through the box"
+  }
+}

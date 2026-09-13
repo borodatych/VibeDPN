@@ -13,7 +13,11 @@ GATEWAY=10.99.0.1
 SERVER_IP=10.99.0.2
 CLIENT_IP=10.99.0.3
 SPLIT_IP=10.99.0.4
-LAN_IP=10.99.0.5
+ROUTER_IP=10.99.0.5
+LAN_NETWORK=vibedpn-wg-lan-test
+LAN_SUBNET=10.98.0.0/24
+ROUTER_LAN_IP=10.98.0.254
+LAN_HOST_IP=10.98.0.2
 PROBE_PORT=8443
 # The client file sets MTU 1400: an IPv4 SYN through it may carry at most 1400 - 40.
 CLAMPED_MSS=1360
@@ -31,12 +35,12 @@ log() {
 }
 
 cleanup() {
-  docker rm -f vibedpn-wg-server vibedpn-wg-client vibedpn-wg-split vibedpn-wg-host vibedpn-wg-empty vibedpn-wg-lan \
+  docker rm -f vibedpn-wg-server vibedpn-wg-client vibedpn-wg-split vibedpn-wg-host vibedpn-wg-empty vibedpn-wg-lan vibedpn-wg-router \
     >/dev/null 2>&1 || true
   # The host-namespace part of the test may leave wg0 behind; remove it without needing root.
   docker run --rm --network host --cap-add NET_ADMIN --entrypoint ip "$IMAGE" \
     link del wg0 >/dev/null 2>&1 || true
-  docker network rm "$NETWORK" >/dev/null 2>&1 || true
+  docker network rm "$NETWORK" "$LAN_NETWORK" >/dev/null 2>&1 || true
   rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -221,16 +225,26 @@ fails in_client ping -c 1 -W 2 "$OUTSIDE"
 in_client nft list chain inet vibedpn_wg output | grep -q "policy drop"
 in_client nft list chain inet vibedpn_wg forward | grep -q "policy drop"
 
-log "the client is a gateway: another host routes through it into the tunnel"
-# A LAN host with no WireGuard of its own and the client as its default gateway — the way core
-# steers LAN traffic to 10.77.0.10. It reaches the server only through the client, masqueraded
-# as the client's tunnel address (the server's AllowedIPs for it is a /32).
-docker run -d --name vibedpn-wg-lan --network "$NETWORK" --ip "$LAN_IP" --cap-add NET_ADMIN \
+log "the client is a gateway: a LAN host behind a router reaches the tunnel through it"
+# The shape of a real box: the LAN is not on the gateway's own network. A LAN host sits on its
+# own network behind a router (the box), the router hands its traffic to the client, and the
+# client's main default route points back at the router — as it points at 10.77.0.1 on a box.
+# Replies to the LAN host must leave the client that way, not fall into the full tunnel.
+docker network create --subnet "$LAN_SUBNET" "$LAN_NETWORK" >/dev/null
+docker run -d --name vibedpn-wg-router --network "$NETWORK" --ip "$ROUTER_IP" --cap-add NET_ADMIN \
+  --sysctl net.ipv4.ip_forward=1 --entrypoint sleep "$IMAGE" 600 >/dev/null
+docker network connect --ip "$ROUTER_LAN_IP" "$LAN_NETWORK" vibedpn-wg-router
+docker run -d --name vibedpn-wg-lan --network "$LAN_NETWORK" --ip "$LAN_HOST_IP" --cap-add NET_ADMIN \
   --entrypoint sleep "$IMAGE" 600 >/dev/null
 in_lan() {
   docker exec vibedpn-wg-lan "$@"
 }
-in_lan ip route replace default via "$CLIENT_IP"
+in_router() {
+  docker exec vibedpn-wg-router "$@"
+}
+in_lan ip route replace default via "$ROUTER_LAN_IP"
+in_router ip route replace default via "$CLIENT_IP"
+in_client ip route replace default via "$ROUTER_IP"
 # -i: without it `docker exec` hands nft an empty stdin, and `nft -f -` quietly loads nothing.
 docker exec -i vibedpn-wg-server nft -f - <<EOF
 table inet vibedpn_test {
@@ -241,7 +255,8 @@ table inet vibedpn_test {
   }
 }
 EOF
-in_lan ping -c 2 -W 2 "$SERVER_WG"
+in_lan ping -c 2 -W 2 "$SERVER_WG" ||
+  { echo "FAIL: the LAN host behind the router gets no replies through the gateway" >&2; exit 1; }
 # Nothing listens on the port: the SYN arrives all the same, and that is all the counters need.
 in_lan nc -w 2 "$SERVER_WG" "$PROBE_PORT" </dev/null >/dev/null 2>&1 || true
 # A counter that cannot be read is a failure, never a zero: an empty value would let the MSS
@@ -268,15 +283,17 @@ if [ "$big" -ne 0 ]; then
   exit 1
 fi
 docker exec vibedpn-wg-server nft delete table inet vibedpn_test
-# The split box is next door on the bridge: directly it answers, through the gateway it must not —
-# the gateway forwards into wg0 and nowhere else.
-in_lan ping -c 1 -W 2 "$SPLIT_IP" >/dev/null
-in_lan ip route replace "$SPLIT_IP/32" via "$CLIENT_IP"
-if in_lan ping -c 1 -W 2 "$SPLIT_IP" >/dev/null 2>&1; then
+# The split box is next door on the gateway network: directly the router reaches it, through the
+# gateway it must not — the gateway forwards into wg0 and nowhere else.
+in_router ping -c 1 -W 2 "$SPLIT_IP" >/dev/null
+in_router ip route replace "$SPLIT_IP/32" via "$CLIENT_IP"
+if in_router ping -c 1 -W 2 "$SPLIT_IP" >/dev/null 2>&1; then
   echo "FAIL: the gateway forwarded LAN traffic past the tunnel" >&2
   exit 1
 fi
-docker rm -f vibedpn-wg-lan >/dev/null
+in_client ip route replace default via "$GATEWAY"
+docker rm -f vibedpn-wg-lan vibedpn-wg-router >/dev/null
+docker network rm "$LAN_NETWORK" >/dev/null
 
 log "a peer added to a running server is applied without a restart"
 extra_pub="$(wg_tool genkey | wg_tool pubkey)"

@@ -9,13 +9,16 @@ and extends this module.
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
 import subprocess
+from dataclasses import dataclass
 from enum import StrEnum
+from itertools import takewhile
 
-from vibedpn.config import Config, Role, parse_port_range
+from vibedpn.config import Config, Role, RoutingMode, Upstream, parse_port_range
 from vibedpn.detect import SBIN_DIRS
 from vibedpn.engine.myst import NODEUI_PORT
 from vibedpn.templating import template_environment
@@ -33,7 +36,22 @@ EGRESS_TEARDOWN = f"add table {EGRESS_TABLE}\ndelete table {EGRESS_TABLE}\n"
 # Docker sets the iptables FORWARD policy to drop, and an accept in our own nft table cannot
 # override a drop in another one; DOCKER-USER is the chain Docker leaves to the host owner.
 DOCKER_USER = "DOCKER-USER"
+OUR_COMMENT_PREFIX = "vibedpn-"  # every group of ours in DOCKER-USER is commented with it
 EGRESS_COMMENT = "vibedpn-egress"  # marks our rules among the owner's in DOCKER-USER
+ROUTER_COMMENT = "vibedpn-router"
+ROUTER_TABLE = "inet vibedpn_router"
+ROUTER_TEMPLATE = "lan-router.nft.j2"
+ROUTER_TEARDOWN = f"add table {ROUTER_TABLE}\ndelete table {ROUTER_TABLE}\n"
+# The bridge of the `upstreams` network: com.docker.network.bridge.name in compose.yaml.
+UPSTREAMS_BRIDGE = "vibedpn0"
+UPSTREAMS_SUBNET = "10.77.0.0/24"
+IP = "ip"
+# The kill switch of an uplink table: the worst possible metric, so the gateway route always wins
+# while it exists, and marked traffic has nowhere else to go once it is gone.
+LAST_RESORT_METRIC = 4294967295
+# `ip route del` of a route that is not there, and `ip route del|flush` in a table that was
+# never created (both texts seen on iproute2 of alpine 3.24, 2026-09-13).
+MISSING_ROUTE_ERRORS = ("No such process", "FIB table does not exist")
 IPTABLES_BACKENDS = ("iptables-nft", "iptables-legacy")
 NO_CHAIN = "No chain/target/match by that name"
 # Peers get the internet, not the VPS's neighbourhood: link-local (cloud metadata), RFC 1918
@@ -158,20 +176,30 @@ def docker_user_rules(config: Config) -> list[list[str]]:
     ]  # fmt: skip
 
 
+def _commented_by_us(rule: list[str]) -> bool:
+    if "--comment" not in rule:
+        return False
+    position = rule.index("--comment") + 1
+    return position < len(rule) and rule[position].startswith(OUR_COMMENT_PREFIX)
+
+
 def plan_docker_user(
-    listing: str, wanted: list[list[str]]
+    listing: str, wanted: list[list[str]], comment: str
 ) -> tuple[list[list[str]], list[list[str]]]:
-    """``(delete, insert)`` that turns our rules in ``iptables -S DOCKER-USER`` into ``wanted``:
-    rules of an old subnet and duplicates go, missing ones come; foreign rules are untouched.
-    Ours count only as the first rules of the chain: an owner's DROP or Docker's RETURN above
-    them would make them dead, so then all of ours are reinserted at the top."""
+    """``(delete, insert)`` that turns our ``comment`` group in ``iptables -S DOCKER-USER`` into
+    ``wanted``: rules of an old subnet and duplicates go, missing ones come; foreign rules are
+    untouched. A group counts as in place only above every foreign rule — an owner's DROP or
+    Docker's RETURN above it would make it dead — so then the whole group is reinserted at the
+    top. Other VibeDPN groups may sit among ours: two groups must not push each other down."""
     rules = [
         args[2:]
         for line in listing.splitlines()
         if (args := shlex.split(line))[:2] == ["-A", DOCKER_USER]
     ]
-    ours = [rule for rule in rules if EGRESS_COMMENT in rule]
-    if wanted and sorted(rules[: len(wanted)]) == sorted(wanted) and len(ours) == len(wanted):
+    head = list(takewhile(_commented_by_us, rules))
+    ours = [rule for rule in rules if comment in rule]
+    in_head = [rule for rule in head if comment in rule]
+    if len(ours) == len(wanted) and sorted(in_head) == sorted(wanted):
         return [], []
     return ours, list(wanted)
 
@@ -207,13 +235,14 @@ def docker_user_chain() -> tuple[str, str] | None:
     return None
 
 
-def sync_docker_user(wanted: list[list[str]]) -> bool:
-    """Make our ``DOCKER-USER`` rules exactly ``wanted``; ``False`` when there is no such chain."""
+def sync_docker_user(wanted: list[list[str]], comment: str) -> bool:
+    """Make our ``comment`` group in ``DOCKER-USER`` exactly ``wanted``; ``False`` when there
+    is no such chain."""
     found = docker_user_chain()
     if found is None:
         return False
     binary, listing = found
-    delete, insert = plan_docker_user(listing, wanted)
+    delete, insert = plan_docker_user(listing, wanted, comment)
     commands = [["-D", DOCKER_USER, *rule] for rule in delete]
     # Inserted at the top: Docker may end the chain with RETURN on older versions.
     commands += [["-I", DOCKER_USER, "1", *rule] for rule in reversed(insert)]
@@ -235,14 +264,212 @@ def apply_tunnel_egress(config: Config) -> Egress:
     if ruleset is None:
         # DOCKER-USER first: a failing nft must not leave the forward drop opened.
         if find_iptables():  # without iptables nothing of ours can be in DOCKER-USER either
-            sync_docker_user([])
+            sync_docker_user([], EGRESS_COMMENT)
         _nft(["-f", "-"], EGRESS_TEARDOWN)
         return Egress.NONE
     check_ruleset(ruleset)
     apply_ruleset(ruleset)
-    if sync_docker_user(docker_user_rules(config)):
+    if sync_docker_user(docker_user_rules(config), EGRESS_COMMENT):
         return Egress.DOCKER_USER
     return Egress.NO_DOCKER_DROP
+
+
+@dataclass(frozen=True)
+class Uplink:
+    mark: int  # fwmark the LAN router sets on traffic of this uplink
+    table: int  # routing table id, also the priority of its ip rule
+    gateway: str  # static address of the gateway container in compose.yaml
+
+
+UPLINKS: dict[Upstream, Uplink] = {
+    Upstream.VPS: Uplink(mark=0x10, table=7710, gateway="10.77.0.10"),
+    Upstream.DPN: Uplink(mark=0x20, table=7720, gateway="10.77.0.20"),
+}
+
+
+def active_uplink(config: Config) -> Upstream | None:
+    """The uplink LAN traffic leaves through, or ``None`` when everything goes direct."""
+    if config.network is None or config.routing is None:
+        return None
+    if config.routing.mode is RoutingMode.SMART:
+        raise RouterError("routing.mode smart is not implemented yet; use off or full")
+    if config.routing.mode is RoutingMode.OFF:
+        return None
+    return config.routing.default_upstream
+
+
+def router_ruleset(config: Config) -> str | None:
+    """The nftables ruleset of a LAN box, or ``None`` when this box routes no LAN."""
+    if config.network is None:
+        return None
+    active = active_uplink(config)
+    return (
+        template_environment()
+        .get_template(ROUTER_TEMPLATE)
+        .render(
+            lan_interface=config.network.lan_interface,
+            lan_subnet=str(config.network.lan_subnet),
+            upstreams_subnet=UPSTREAMS_SUBNET,
+            bridge=UPSTREAMS_BRIDGE,
+            upstream=active.value if active else "",
+            mark=hex(UPLINKS[active].mark) if active else "",
+        )
+    )
+
+
+def router_docker_user_rules(config: Config) -> list[list[str]]:
+    """Transit Docker's forward drop would kill: LAN ↔ gateway bridge, and LAN ↔ LAN for the
+    direct path of a one-port box. In ``iptables -S`` form, like ``docker_user_rules``, and in
+    this order: ``sync_docker_user`` inserts a group keeping it."""
+    if config.network is None:
+        return []
+    lan = config.network.lan_interface
+    subnet = str(config.network.lan_subnet)
+    comment = ["-m", "comment", "--comment", ROUTER_COMMENT]
+    replies = ["-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED"]
+    return [
+        ["-s", subnet, "-i", lan, "-o", UPSTREAMS_BRIDGE, *comment, "-j", "ACCEPT"],
+        ["-d", subnet, "-i", UPSTREAMS_BRIDGE, "-o", lan, *replies, *comment, "-j", "ACCEPT"],
+        # A gateway container is a third-party image: it answers the LAN, it never calls into it.
+        ["-i", UPSTREAMS_BRIDGE, "-o", lan, *comment, "-j", "DROP"],
+        ["-s", subnet, "-i", lan, "-o", lan, *comment, "-j", "ACCEPT"],
+        ["-d", subnet, "-i", lan, "-o", lan, *replies, *comment, "-j", "ACCEPT"],
+    ]
+
+
+def find_ip() -> str | None:
+    search = os.pathsep.join([*os.get_exec_path(), *SBIN_DIRS])
+    return shutil.which(IP, path=search)
+
+
+def _ip(args: list[str], *, missing_ok: bool = False) -> str:
+    ip = find_ip()
+    if ip is None:
+        raise RouterError(
+            "ip not found (the core image installs iproute2; on a host: apt install iproute2)"
+        )
+    try:
+        completed = subprocess.run([ip, *args], check=False, capture_output=True, text=True)
+    except OSError as exc:
+        raise RouterError(f"cannot run ip: {exc.strerror}") from exc
+    if completed.returncode != 0:
+        if missing_ok and any(text in completed.stderr for text in MISSING_ROUTE_ERRORS):
+            return ""
+        raise RouterError(f"ip {' '.join(args)} failed: {completed.stderr.strip()}")
+    return completed.stdout
+
+
+def _rule_selector(entry: dict[str, object]) -> list[str]:
+    """``ip rule del`` arguments that match exactly this listed rule, not everything at its
+    priority: a stale rule goes without taking a fresh one at the same priority with it."""
+    selector = ["priority", str(entry.get("priority"))]
+    if "fwmark" in entry:
+        selector += ["fwmark", str(entry["fwmark"])]
+    if "table" in entry:
+        selector += ["table", str(entry["table"])]
+    return selector
+
+
+def plan_rules(listing: str, active: Upstream | None) -> tuple[list[list[str]], list[Upstream]]:
+    """``(rules to delete, uplinks to add)`` from ``ip -j rule show``: exactly one rule per
+    active uplink at its own priority, nothing at the priorities of the others. Adding comes
+    first and deleting last, so marked traffic always has its rule (see ``apply_router``)."""
+    try:
+        entries = json.loads(listing or "[]")
+    except json.JSONDecodeError as exc:
+        raise RouterError("ip -j rule show returned no JSON") from exc
+    delete: list[list[str]] = []
+    add: list[Upstream] = []
+    for upstream, uplink in UPLINKS.items():
+        wanted = upstream is active
+        kept = False
+        for entry in (item for item in entries if item.get("priority") == uplink.table):
+            exact = entry.get("fwmark") == hex(uplink.mark) and entry.get("table") == str(
+                uplink.table
+            )
+            if wanted and exact and not kept:
+                kept = True
+            else:
+                delete.append(_rule_selector(entry))
+        if wanted and not kept:
+            add.append(upstream)
+    return delete, add
+
+
+def add_rules(add: list[Upstream]) -> None:
+    for upstream in add:
+        uplink = UPLINKS[upstream]
+        _ip(
+            [
+                "rule", "add", "fwmark", hex(uplink.mark),
+                "table", str(uplink.table), "priority", str(uplink.table),
+            ]
+        )  # fmt: skip
+
+
+def delete_rules(delete: list[list[str]]) -> None:
+    for selector in delete:
+        _ip(["rule", "del", *selector])
+
+
+def last_resort_route(uplink: Uplink) -> list[str]:
+    return ["unreachable", "default", "metric", str(LAST_RESORT_METRIC), "table", str(uplink.table)]
+
+
+def gateway_route(uplink: Uplink) -> list[str]:
+    return ["default", "via", uplink.gateway, "dev", UPSTREAMS_BRIDGE, "table", str(uplink.table)]
+
+
+def set_gateway_route(upstream: Upstream, alive: bool) -> None:
+    """Point the uplink table at its gateway while the container answers, withdraw it when it
+    does not: then the last-resort route holds the traffic (``failopen: false``) or, without
+    one, the lookup falls through to the main table (``failopen: true``)."""
+    uplink = UPLINKS[upstream]
+    if alive:
+        _ip(["route", "replace", *gateway_route(uplink)])
+    else:
+        _ip(["route", "del", *gateway_route(uplink)], missing_ok=True)
+
+
+def apply_router(config: Config) -> Upstream | None:
+    """Render and apply the LAN router; returns the active uplink. The kill switch comes first:
+    the last-resort route exists before any rule steers traffic into its table. The gateway route
+    itself is set by the uplink watcher once the gateway answers."""
+    ruleset = router_ruleset(config)
+    if ruleset is None:
+        remove_router()
+        return None
+    active = active_uplink(config)
+    check_ruleset(ruleset)
+    for upstream, uplink in UPLINKS.items():
+        if upstream is not active:
+            continue
+        if config.routing is not None and not config.routing.failopen:
+            _ip(["route", "replace", *last_resort_route(uplink)])
+        else:
+            _ip(["route", "del", *last_resort_route(uplink)], missing_ok=True)
+    # Never a moment when a mark has no rule: the new rule, then the new marks, and only then the
+    # rules of the old marks go. Deleting first would send still-marked traffic to the main table.
+    delete, add = plan_rules(_ip(["-j", "rule", "show"]), active)
+    add_rules(add)
+    apply_ruleset(ruleset)
+    delete_rules(delete)
+    for upstream, uplink in UPLINKS.items():
+        if upstream is not active:
+            _ip(["route", "flush", "table", str(uplink.table)], missing_ok=True)
+    sync_docker_user(router_docker_user_rules(config), ROUTER_COMMENT)
+    return active
+
+
+def remove_router() -> None:
+    """Nothing of the LAN router stays: marks, rules, uplink tables, DOCKER-USER transit."""
+    _nft(["-f", "-"], ROUTER_TEARDOWN)
+    if find_ip() is not None:
+        delete_rules(plan_rules(_ip(["-j", "rule", "show"]), None)[0])
+        for uplink in UPLINKS.values():
+            _ip(["route", "flush", "table", str(uplink.table)], missing_ok=True)
+    if find_iptables():
+        sync_docker_user([], ROUTER_COMMENT)
 
 
 def apply_firewall(config: Config) -> bool:

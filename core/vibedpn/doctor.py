@@ -33,13 +33,23 @@ from vibedpn.config import Config, Profile, Role, parse_port_range
 from vibedpn.detect import SSHD, WIREGUARD_MODULE, module_present
 from vibedpn.engine.myst import NODEUI_PORT, TEQUILAPI_PORT
 from vibedpn.engine.router import (
+    EGRESS_COMMENT,
     EGRESS_TABLE,
+    LAST_RESORT_METRIC,
     NFT_TABLE,
+    ROUTER_COMMENT,
+    ROUTER_TABLE,
+    UPLINKS,
+    UPSTREAMS_BRIDGE,
     RouterError,
+    active_uplink,
     docker_user_chain,
     docker_user_rules,
+    find_ip,
     find_nft,
     plan_docker_user,
+    plan_rules,
+    router_docker_user_rules,
 )
 from vibedpn.engine.wg import SERVER_CONF_FILE, SERVER_KEY_FILE, server_address
 from vibedpn.engine.wg import SERVER_DIR as WG_SERVER_DIR
@@ -55,6 +65,7 @@ WILDCARD = "*"
 RUNNING_STATE = "running"
 NEVER_STARTED_STATE = "created"
 SUDO_HINT = "sudo vibedpn doctor"
+STRICT_RP_FILTER = 1
 
 
 class Verdict(StrEnum):
@@ -127,6 +138,14 @@ class DoctorFacts:
     egress_error: str = ""
     docker_user: bool | None = None  # True: rules current or no DOCKER-USER; None: see error
     docker_user_error: str = ""
+    router_table: bool | None = None  # roles with a LAN; None: see router_error
+    router_error: str = ""
+    router_rules: bool | None = None  # ip rule matches routing.mode
+    router_docker_user: bool | None = None
+    router_docker_user_error: str = ""
+    uplink_route: bool | None = None  # the gateway route of the active uplink is in its table
+    last_resort_route: bool | None = None  # the kill-switch route of the active uplink table
+    rp_filter: int | None = None  # max of all and the gateway bridge, as the kernel uses it
 
 
 def parse_ss(output: str) -> list[Listener]:
@@ -226,6 +245,8 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
             results.append(access)
         if config.wg_server is not None:
             results.append(_egress_result(config, facts))
+    if config is not None and config.network is not None:
+        results.append(_router_result(config, facts))
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -412,6 +433,72 @@ def _egress_result(config: Config, facts: DoctorFacts) -> CheckResult:
     return CheckResult("tunnel egress", Verdict.OK, f"peers of {subnet} leave through this VPS")
 
 
+def _router_result(config: Config, facts: DoctorFacts) -> CheckResult:  # noqa: PLR0911 - a verdict per fact, in order
+    """The LAN router is loaded as config.yaml says, and the active uplink has its gateway."""
+    hint = "" if facts.is_root else SUDO_HINT
+    restart = "vibedpn restart, then vibedpn logs core"
+    try:
+        uplink = active_uplink(config)
+    except RouterError as exc:
+        return CheckResult("router", Verdict.FAIL, str(exc), "set routing.mode in config.yaml")
+    if facts.router_table is None:
+        return CheckResult("router", Verdict.WARN, facts.router_error, hint)
+    if not facts.router_table:
+        return CheckResult("router", Verdict.FAIL, f"table {ROUTER_TABLE} is not loaded", restart)
+    if facts.router_rules is None or facts.router_docker_user is None:
+        detail = facts.router_docker_user_error or "cannot read ip rules"
+        return CheckResult("router", Verdict.WARN, detail, hint)
+    if not facts.router_rules:
+        return CheckResult(
+            "router", Verdict.FAIL, "ip rules do not match routing.mode in config.yaml", restart
+        )
+    if facts.rp_filter == STRICT_RP_FILTER:
+        return CheckResult(
+            "router",
+            Verdict.FAIL,
+            f"rp_filter is strict (1): replies from the gateways on {UPSTREAMS_BRIDGE} are dropped",
+            f"sysctl -w net.ipv4.conf.all.rp_filter=2 net.ipv4.conf.{UPSTREAMS_BRIDGE}.rp_filter=2"
+            " and persist it in /etc/sysctl.d/",
+        )
+    if not facts.router_docker_user:
+        return CheckResult(
+            "router",
+            Verdict.FAIL,
+            "Docker drops forwarded LAN traffic and DOCKER-USER does not let it through",
+            restart,
+        )
+    if uplink is None:
+        return CheckResult(
+            "router", Verdict.OK, "routing.mode off: LAN goes direct through the box"
+        )
+    gateway = UPLINKS[uplink].gateway
+    failopen = config.routing is not None and config.routing.failopen
+    table = UPLINKS[uplink].table
+    if facts.uplink_route is None or (not failopen and facts.last_resort_route is None):
+        return CheckResult("router", Verdict.WARN, f"cannot read routing table {table}", hint)
+    if not failopen and not facts.last_resort_route:
+        return CheckResult(
+            "router",
+            Verdict.FAIL,
+            f"routing table {table} has no kill-switch route:"
+            " a dead gateway would leak LAN traffic",
+            restart,
+        )
+    if not facts.uplink_route:
+        fate = (
+            "LAN goes direct (failopen: true)" if failopen else "LAN traffic is held (kill switch)"
+        )
+        return CheckResult(
+            "router",
+            Verdict.WARN,
+            f"uplink {uplink} gateway {gateway} does not answer; {fate}",
+            "vibedpn logs wg-client" if uplink == "vps" else "vibedpn logs myst-consumer",
+        )
+    return CheckResult(
+        "router", Verdict.OK, f"routing.mode full through uplink {uplink} ({gateway})"
+    )
+
+
 def _ssh_result(ssh_ports: list[int], listeners: list[Listener] | None) -> CheckResult | None:
     """Every port sshd actually listens on must be in ``firewall.ssh_ports``; the config-file
     reading of ``init`` is not the daemon (socket activation, a later edit), so ``ss`` decides."""
@@ -559,7 +646,20 @@ def gather(box_dir: Path) -> DoctorFacts:
         tunnel = tunnel_files(box_dir)
         if config.wg_server is not None:
             egress_table, egress_error = _egress_table_current(str(config.wg_server.subnet))
-            docker_user, docker_user_error = _docker_user_current(config)
+            docker_user, docker_user_error = _docker_user_current(
+                docker_user_rules(config), EGRESS_COMMENT
+            )
+    router_table, router_error = None, ""
+    router_rules = uplink_route = last_resort_route = None
+    rp_filter = None
+    router_docker_user, router_docker_user_error = None, ""
+    if config is not None and config.network is not None:
+        router_table, router_error = _table_present(ROUTER_TABLE)
+        router_rules, uplink_route, last_resort_route = _router_routing(config)
+        rp_filter = _read_rp_filter()
+        router_docker_user, router_docker_user_error = _docker_user_current(
+            router_docker_user_rules(config), ROUTER_COMMENT
+        )
     return DoctorFacts(
         config=config,
         config_error=config_error,
@@ -582,6 +682,14 @@ def gather(box_dir: Path) -> DoctorFacts:
         egress_error=egress_error,
         docker_user=docker_user,
         docker_user_error=docker_user_error,
+        router_table=router_table,
+        router_error=router_error,
+        router_rules=router_rules,
+        router_docker_user=router_docker_user,
+        router_docker_user_error=router_docker_user_error,
+        uplink_route=uplink_route,
+        last_resort_route=last_resort_route,
+        rp_filter=rp_filter,
     )
 
 
@@ -600,8 +708,8 @@ def tunnel_files(box_dir: Path) -> dict[str, FileFact]:
     return facts
 
 
-def _docker_user_current(config: Config) -> tuple[bool | None, str]:
-    """Whether ``DOCKER-USER`` already holds exactly our rules (or does not exist at all)."""
+def _docker_user_current(rules: list[list[str]], comment: str) -> tuple[bool | None, str]:
+    """Whether ``DOCKER-USER`` already holds exactly this group of ours (or does not exist)."""
     if os.geteuid() != 0:
         return None, "cannot read DOCKER-USER without root"
     try:
@@ -610,7 +718,7 @@ def _docker_user_current(config: Config) -> tuple[bool | None, str]:
         return None, str(exc)
     if found is None:
         return True, ""
-    delete, insert = plan_docker_user(found[1], docker_user_rules(config))
+    delete, insert = plan_docker_user(found[1], rules, comment)
     return not delete and not insert, ""
 
 
@@ -635,6 +743,53 @@ def _egress_table_current(subnet: str) -> tuple[bool | None, str]:
     if listing.returncode != 0:
         return None, f"nft cannot list {EGRESS_TABLE}: {listing.stderr.strip()}"
     return f"ip saddr {subnet} " in listing.stdout, ""
+
+
+def _router_routing(config: Config) -> tuple[bool | None, bool | None, bool | None]:
+    """``(ip rules match routing.mode, gateway route present, kill-switch route present)``;
+    ``None`` for what could not be read."""
+    ip = find_ip()
+    if ip is None:
+        return None, None, None
+    try:
+        uplink = active_uplink(config)
+        rules = subprocess.run(
+            [ip, "-j", "rule", "show"], check=True, capture_output=True, text=True
+        )
+        delete, add = plan_rules(rules.stdout, uplink)
+    except (OSError, subprocess.CalledProcessError, RouterError):
+        return None, None, None
+    rules_current = not delete and not add
+    if uplink is None:
+        return rules_current, None, None
+    try:
+        routes = subprocess.run(
+            [ip, "-j", "route", "show", "table", str(UPLINKS[uplink].table)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        entries = json.loads(routes.stdout or "[]")
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+        return rules_current, None, None
+    gateway = any(entry.get("gateway") == UPLINKS[uplink].gateway for entry in entries)
+    last_resort = any(
+        entry.get("type") == "unreachable" and entry.get("metric") == LAST_RESORT_METRIC
+        for entry in entries
+    )
+    return rules_current, gateway, last_resort
+
+
+def _read_rp_filter() -> int | None:
+    """The kernel validates with the max of ``all`` and the interface (ip-sysctl.rst)."""
+    values = []
+    for name in ("all", UPSTREAMS_BRIDGE):
+        try:
+            values.append(int(Path(f"/proc/sys/net/ipv4/conf/{name}/rp_filter").read_text()))
+        except (OSError, ValueError):
+            if name == "all":
+                return None
+    return max(values)
 
 
 def _table_present(table: str) -> tuple[bool | None, str]:

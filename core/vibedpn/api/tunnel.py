@@ -19,7 +19,7 @@ import os
 import signal
 import socket
 import sys
-from collections.abc import Awaitable, Callable, Iterator, MutableMapping
+from collections.abc import Awaitable, Callable, Coroutine, Iterator, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from ipaddress import IPv4Network, ip_address
@@ -28,7 +28,8 @@ from typing import Any
 import uvicorn
 from starlette.responses import JSONResponse
 
-from vibedpn.config import Config
+from vibedpn.api.uplink import watch_uplink
+from vibedpn.config import Config, Upstream
 from vibedpn.engine.myst import NODEUI_PORT
 from vibedpn.engine.wg import server_address
 
@@ -256,8 +257,13 @@ class _Server(uvicorn.Server):
         yield
 
 
-async def serve(application: ASGIApp, listeners: Listeners) -> None:
-    """Serve every listener until SIGTERM or SIGINT stops them all together."""
+async def serve(
+    application: ASGIApp,
+    listeners: Listeners,
+    background: Sequence[Callable[[], Coroutine[Any, Any, None]]] = (),
+) -> None:
+    """Serve every listener until SIGTERM or SIGINT stops them all together; ``background``
+    coroutines (the uplink watcher) run alongside and are cancelled with them."""
     servers: list[tuple[_Server, socket.socket]] = [
         (_Server(uvicorn.Config(application, log_level=LOG_LEVEL)), listeners.loopback_api)
     ]
@@ -283,15 +289,19 @@ async def serve(application: ASGIApp, listeners: Listeners) -> None:
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(signum, stop)
+    tasks = [asyncio.create_task(start()) for start in background]
     try:
         await asyncio.gather(*(server.serve(sockets=[sock]) for server, sock in servers))
     finally:
         stop()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         for signum in (signal.SIGINT, signal.SIGTERM):
             loop.remove_signal_handler(signum)
 
 
-def run_servers(config: Config, application: ASGIApp) -> None:
+def run_servers(config: Config, application: ASGIApp, *, uplink: Upstream | None = None) -> None:
     try:
         listeners = open_listeners(config)
     except OSError as exc:
@@ -301,6 +311,7 @@ def run_servers(config: Config, application: ASGIApp) -> None:
         )
         raise SystemExit(os.EX_UNAVAILABLE) from None
     try:
-        asyncio.run(serve(application, listeners))
+        background = [partial(watch_uplink, uplink)] if uplink is not None else []
+        asyncio.run(serve(application, listeners, background))
     finally:
         listeners.close()

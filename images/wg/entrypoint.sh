@@ -17,6 +17,13 @@ NFT_TABLE=vibedpn_wg
 # routing of a full tunnel and the kill switch key on that mark; wg-quick uses the number as
 # the routing table id too, and so do we.
 FWMARK=51820
+# A gateway: replies to a LAN host must leave through the interface the request came in on.
+# The full-tunnel rules below consult only the main table's specific routes, and a LAN behind
+# the box is reachable only through the main default route (the bridge gateway, i.e. the box),
+# so those replies would fall into the tunnel. Connections from outside the tunnel carry this
+# conntrack mark; their replies get it as a packet mark and look up the main table first.
+RETURN_MARK=0x1
+RETURN_RULE_PRIORITY=100
 DEFAULT_MTU=1420
 WATCH_SECONDS=5
 # The tunnel gets this long to come up before the watchdog starts judging its handshakes.
@@ -124,9 +131,11 @@ route_everything_into_the_tunnel() {
   remove_policy_rules  # a peer sync runs this again; `ip rule add` would stack duplicates
   ip rule add not fwmark "$FWMARK" table "$FWMARK"
   ip rule add table main suppress_prefixlength 0
+  ip rule add fwmark "$RETURN_MARK" table main priority "$RETURN_RULE_PRIORITY"
 }
 
 remove_policy_rules() {
+  while ip rule del fwmark "$RETURN_MARK" table main priority "$RETURN_RULE_PRIORITY" 2>/dev/null; do :; done
   while ip rule del not fwmark "$FWMARK" table "$FWMARK" 2>/dev/null; do :; done
   while ip rule del table main suppress_prefixlength 0 2>/dev/null; do :; done
 }
@@ -209,6 +218,11 @@ table $NFT_FAMILY $NFT_TABLE {
     meta mark $FWMARK accept comment "the tunnel itself: encrypted packets to the peer"
     fib daddr type local accept
     ct state established,related accept
+  }
+  chain prerouting {
+    type filter hook prerouting priority mangle; policy accept;
+    iifname != { "$IFACE", "lo" } ct state new ct mark set $RETURN_MARK comment "a connection this gateway carries for another host"
+    iifname "$IFACE" ct mark $RETURN_MARK meta mark set $RETURN_MARK comment "its replies go back the way it came, not into the tunnel"
   }
   chain forward {
     type filter hook forward priority filter; policy drop;

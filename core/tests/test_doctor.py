@@ -417,6 +417,52 @@ def test_core_must_listen_on_the_tunnel_address() -> None:
     assert "tunnel access" not in by_name(evaluate(facts(listeners=core)))  # a home box
 
 
+def test_router_verdicts() -> None:
+    def verdict(config: Config, **overrides: object) -> CheckResult:
+        base: dict[str, object] = {
+            "router_table": True,
+            "router_rules": True,
+            "router_docker_user": True,
+            "uplink_route": True,
+            "last_resort_route": True,
+            "rp_filter": 2,
+        }
+        base.update(overrides)
+        return by_name(evaluate(facts(config=config, **base)))["router"]
+
+    home = home_config()
+    assert verdict(home).verdict is Verdict.OK
+    assert verdict(home).detail == "routing.mode off: LAN goes direct through the box"
+    full = Config.model_validate(
+        {
+            "version": 1,
+            "role": "client",
+            "network": {
+                "lan_interface": "eth0",
+                "lan_subnet": "192.168.1.0/24",
+                "lan_address": "192.168.1.50",
+            },
+            "routing": {"mode": "full", "default_upstream": "vps"},
+            "upstreams": {"vps": {"enabled": True}},
+        }
+    )
+    assert verdict(full).detail == "routing.mode full through uplink vps (10.77.0.10)"
+    held = verdict(full, uplink_route=False)
+    assert held.verdict is Verdict.WARN and "kill switch" in held.detail
+    assert held.hint == "vibedpn logs wg-client"
+    no_kill_switch = verdict(full, last_resort_route=False)
+    assert no_kill_switch.verdict is Verdict.FAIL and "kill-switch route" in no_kill_switch.detail
+    assert verdict(full, uplink_route=None).detail == "cannot read routing table 7710"
+    strict = verdict(full, rp_filter=1)
+    assert strict.verdict is Verdict.FAIL and "rp_filter" in strict.detail
+    assert verdict(full, router_table=False).verdict is Verdict.FAIL
+    assert verdict(full, router_rules=False).verdict is Verdict.FAIL
+    assert verdict(full, router_docker_user=False).verdict is Verdict.FAIL
+    unknown = verdict(full, router_table=None, router_error="nft not found", is_root=False)
+    assert unknown.verdict is Verdict.WARN and unknown.hint == "sudo vibedpn doctor"
+    assert "router" not in by_name(evaluate(facts(config=vps_config())))
+
+
 def test_tunnel_egress_verdicts() -> None:
     def verdict(**overrides: object) -> CheckResult:
         return by_name(evaluate(facts(config=vps_config(), firewall_table=True, **overrides)))[
