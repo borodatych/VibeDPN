@@ -35,10 +35,12 @@ from vibedpn.config import (
     UpstreamsConfig,
     VpsUplink,
     WgServerConfig,
+    WifiConfig,
     check_endpoint,
     parse_yaml,
 )
 from vibedpn.detect import DEFAULT_SSH_PORT, Interface
+from vibedpn.engine.hostapd import PASSPHRASE_FILE as WIFI_PASSPHRASE_FILE
 from vibedpn.templating import template_environment
 
 DEFAULT_BOX_DIR = Path("/opt/vibedpn")  # install.sh has the same default; keep them equal
@@ -74,7 +76,9 @@ ADGUARD_SECRETS = (ADGUARD_CORE_PASSWORD_FILE,)
 # The passphrase of the dpn consumer identity (engine/consumer.py): losing it locks the identity.
 MYST_CONSUMER_PASSPHRASE_FILE = "myst-consumer-passphrase"
 CONSUMER_SECRETS = (MYST_CONSUMER_PASSPHRASE_FILE,)
-GENERATED_SECRETS = UI_SECRETS + ADGUARD_SECRETS + CONSUMER_SECRETS
+# The Wi-Fi passphrase of gateway mode: generated like the others, shown by `vibedpn wifi show`.
+WIFI_SECRETS = (WIFI_PASSPHRASE_FILE,)
+GENERATED_SECRETS = UI_SECRETS + ADGUARD_SECRETS + CONSUMER_SECRETS + WIFI_SECRETS
 GENERATED_SECRET_BYTES = 32
 KNOWN_SECRETS = (HTPASSWD_FILE, WG_CLIENT_CONF, *GENERATED_SECRETS)
 DATA_DIR = "data"
@@ -106,6 +110,7 @@ class Answers:
     ui_variant: UiVariant | None = None  # None: chosen by the memory of the host
     # gateway mode: the LAN side, another interface than the default-route one (the WAN)
     lan_interface: str | None = None
+    wifi: WifiConfig | None = None  # the access point on that LAN interface
 
 
 @dataclass(frozen=True)
@@ -146,6 +151,7 @@ def generated_secrets(config: Config) -> tuple[str, ...]:
         (UI_SECRETS if Profile.UI in profiles else ())
         + (ADGUARD_SECRETS if Profile.DNS in profiles else ())
         + (CONSUMER_SECRETS if Profile.CONSUMER in profiles else ())
+        + (WIFI_SECRETS if Profile.WIFI in profiles else ())
     )
 
 
@@ -239,7 +245,9 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
         raise BootstrapError(
             "no interface with a default route was found; connect the box to the LAN first"
         )
-    network = network_for(answers.lan_interface, facts.interfaces, facts.interface)
+    network = network_for(
+        answers.lan_interface, facts.interfaces, facts.interface, wifi=answers.wifi
+    )
     if answers.role is Role.HOME:
         return _validated(
             version=1,
@@ -261,16 +269,25 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
 
 
 def network_for(
-    lan_interface: str | None, interfaces: list[Interface], default: Interface
+    lan_interface: str | None,
+    interfaces: list[Interface],
+    default: Interface,
+    *,
+    wifi: WifiConfig | None = None,
+    dhcp: DhcpConfig | None = None,
 ) -> NetworkConfig:
     """sidecar on the default-route interface, or gateway: that one is the WAN and the chosen
-    interface the LAN, with the static address the OS gave it (docs/decisions.md, decision 7)."""
+    interface the LAN, with the static address the OS gave it (docs/decisions.md, decision 7).
+    ``wifi`` and ``dhcp`` of an unchanged LAN are carried over; without ``dhcp`` the default pool
+    is written out, so the owner sees and edits it in config.yaml."""
     if lan_interface is None or lan_interface == default.name:
+        if wifi is not None:
+            raise BootstrapError("Wi-Fi needs a LAN interface other than the default-route one")
         return NetworkConfig(
             lan_interface=default.name, lan_subnet=default.subnet, lan_address=default.address
         )
-    lan = next((i for i in interfaces if i.name == lan_interface), None)
-    if lan is None:
+    found = next((i for i in interfaces if i.name == lan_interface), None)
+    if found is None:
         others = ", ".join(
             f"{i.name} ({i.address}/{i.prefixlen})" for i in interfaces if i != default
         )
@@ -279,16 +296,26 @@ def network_for(
             " first (docs/manuals/installation.md, gateway mode)."
             f" With an address: {others or 'none'}"
         )
-    gateway = NetworkConfig(
-        mode=NetworkMode.GATEWAY,
-        lan_interface=lan.name,
-        lan_subnet=lan.subnet,
-        lan_address=lan.address,
-        wan_interface=default.name,
-    )
-    # the pool is written out, so the owner sees and edits it in config.yaml
-    start, end = gateway.dhcp_pool()
-    return gateway.model_copy(update={"dhcp": DhcpConfig(range_start=start, range_end=end)})
+    lan: Interface = found
+
+    def gateway(pool: DhcpConfig | None) -> NetworkConfig:
+        return NetworkConfig(
+            mode=NetworkMode.GATEWAY,
+            lan_interface=lan.name,
+            lan_subnet=lan.subnet,
+            lan_address=lan.address,
+            wan_interface=default.name,
+            dhcp=pool,
+            wifi=wifi,
+        )
+
+    try:
+        if dhcp is not None:
+            return gateway(dhcp)
+        start, end = gateway(None).dhcp_pool()
+        return gateway(DhcpConfig(range_start=start, range_end=end))
+    except ValidationError as exc:
+        raise BootstrapError(f"network: {exc.errors()[0]['msg']}") from None
 
 
 def render_config(config: Config) -> str:

@@ -42,7 +42,14 @@ from vibedpn.config import (
     Upstream,
     parse_port_range,
 )
-from vibedpn.detect import SSHD, WIREGUARD_MODULE, HostProbe, module_present, parse_interface
+from vibedpn.detect import (
+    SSHD,
+    WIREGUARD_MODULE,
+    HostProbe,
+    is_wireless,
+    module_present,
+    parse_interface,
+)
 from vibedpn.engine.myst import (
     NAT_OPEN,
     NAT_PUNCHABLE,
@@ -195,6 +202,7 @@ class DoctorFacts:
     nat_error: str = ""
     # gateway mode: whether lan_address is configured on lan_interface; None: not checked
     lan_address_set: bool | None = None
+    lan_wireless: bool | None = None  # network.wifi: lan_interface is a radio
 
 
 def parse_ss(output: str) -> list[Listener]:
@@ -300,6 +308,7 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
         results.extend(_lan_results(config, facts))
     results.extend(_nat_results(facts))
     results.extend(_gateway_results(facts))
+    results.extend(_wifi_results(facts))
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -932,6 +941,7 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         memory_bytes=HostProbe().memory_bytes(),
         **_nat_facts(config, network=network),
         lan_address_set=_lan_address_set(config),
+        lan_wireless=_lan_wireless(config),
     )
 
 
@@ -1228,3 +1238,29 @@ def _gateway_results(facts: DoctorFacts) -> list[CheckResult]:
     return [
         CheckResult("lan address", Verdict.OK, f"{network.lan_address} on {network.lan_interface}")
     ]
+
+
+def _lan_wireless(config: Config | None) -> bool | None:
+    network = config.network if config is not None else None
+    if network is None or network.wifi is None:
+        return None
+    return is_wireless(network.lan_interface)
+
+
+def _wifi_results(facts: DoctorFacts) -> list[CheckResult]:
+    """network.wifi: hostapd needs the radio itself as the LAN interface."""
+    config = facts.config
+    network = config.network if config is not None else None
+    if network is None or network.wifi is None:
+        return []
+    if not facts.lan_wireless:
+        return [
+            CheckResult(
+                "wifi",
+                Verdict.FAIL,
+                f"{network.lan_interface} is not a wireless interface",
+                "network.wifi needs the radio as network.lan_interface",
+            )
+        ]
+    found = f"access point {network.wifi.ssid!r} on {network.lan_interface}"
+    return [CheckResult("wifi", Verdict.OK, found)]

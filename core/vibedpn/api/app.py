@@ -34,7 +34,7 @@ from vibedpn.api.models import (
 from vibedpn.api.state import BoxState
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.bootstrap import BootstrapError, network_for
-from vibedpn.config import Config, DeviceConfig, RoutingMode, Upstream
+from vibedpn.config import Config, DeviceConfig, NetworkMode, RoutingMode, Upstream
 from vibedpn.config_edit import (
     ConfigEditError,
     DeviceIdent,
@@ -398,8 +398,27 @@ def _add_network_routes(
         default, interfaces = detected()
         if default is None:
             raise HTTPException(status_code=503, detail="the host has no default route")
+        saved = box_state.saved.network
+        same_lan = (
+            saved is not None
+            and saved.mode is NetworkMode.GATEWAY
+            and request.lan_interface == saved.lan_interface
+        )
+        if saved is not None and saved.wifi is not None and not same_lan:
+            raise HTTPException(
+                status_code=422,
+                detail=f"the Wi-Fi access point is on {saved.lan_interface}: remove network.wifi"
+                " from config.yaml before moving the LAN",
+            )
+        kept = saved if same_lan else None
         try:
-            wanted = network_for(request.lan_interface, interfaces, default)
+            wanted = network_for(
+                request.lan_interface,
+                interfaces,
+                default,
+                wifi=kept.wifi if kept is not None else None,
+                dhcp=kept.dhcp if kept is not None else None,
+            )
             box_state.save(lambda path: set_network(path, wanted))
         except (BootstrapError, ConfigEditError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

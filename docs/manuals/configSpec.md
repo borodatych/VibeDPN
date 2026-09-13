@@ -56,6 +56,11 @@
 | `wan_interface` | имя интерфейса | — | только для `mode: gateway`, обязателен там и запрещён в `sidecar`; не равен `lan_interface` |
 | `dhcp.range_start`, `dhcp.range_end` | IPv4 внутри `lan_subnet` | со 100-го хоста до пятого с конца (у /24 — `.100`–`.249`) | только для `mode: gateway`: пул адресов, который раздаёт коробка; `lan_address` в него не входит, `lan_subnet` не меньше /28 |
 | `dhcp.lease` | `45m`, `12h`, `2d`, `infinite` | `12h` | только для `mode: gateway`: срок аренды |
+| `wifi.ssid` | строка до 32 байт UTF-8 | — | только для `mode: gateway`: имя сети точки доступа; `lan_interface` тогда — беспроводной интерфейс |
+| `wifi.country` | ISO 3166-1 alpha-2 | — | страна радио: какие каналы и мощность разрешены; регистр не важен |
+| `wifi.band` | `"2.4"` \| `"5"` (в кавычках) | `"2.4"` | диапазон, ГГц |
+| `wifi.channel` | целое | `6` | 1–13 для 2.4, 36–165 для 5 |
+| `wifi.security` | `wpa2-wpa3` \| `wpa3` | `wpa2-wpa3` | `wpa2-wpa3` пускает и старые устройства без WPA3; `wpa3` — только WPA3-SAE |
 
 В `gateway` коробка — роутер своей LAN: раздаёт адреса (шлюз и DNS — `lan_address`), выпускает прямой трафик LAN через `wan_interface` с NAT.
 Адрес `lan_address` на `lan_interface` настраивает система, не VibeDPN; `vibedpn doctor` проверяет, что он стоит.
@@ -71,7 +76,16 @@ network:
     range_start: 192.168.50.100
     range_end: 192.168.50.249
     lease: 12h
+  wifi:
+    ssid: "Home"
+    country: DE
+    band: "2.4"
+    channel: 6
+    security: wpa2-wpa3
 ```
+
+Пароля сети в `config.yaml` нет: он лежит в `secrets/wifi-passphrase`, его создаёт `vibedpn init`, а показывает `sudo vibedpn wifi show`.
+Точку доступа поднимает сервис `hostapd` (профиль Compose `wifi`); адрес на беспроводном интерфейсе, как и в любом gateway, назначает система.
 
 ### `routing` — политика LAN-трафика
 

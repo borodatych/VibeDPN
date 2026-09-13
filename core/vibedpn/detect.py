@@ -24,6 +24,7 @@ SSHD_CONFIG_ROOT = Path("/etc/ssh")  # relative Include paths resolve here (sshd
 DEFAULT_SSH_PORT = 22
 SSHD = "sshd"
 MEMINFO = Path("/proc/meminfo")
+SYS_CLASS_NET = Path("/sys/class/net")
 MEMINFO_UNIT = "kB"  # really KiB: show_val_kb shifts pages by PAGE_SHIFT - 10 (fs/proc/meminfo.c)
 KIB = 1024
 # sshd tokenizes a config line at whitespace or at a single "=" (OpenSSH misc.c, strdelim);
@@ -77,6 +78,12 @@ def parse_interfaces(text: str) -> list[Interface]:
         if interface is not None:
             found.append(interface)
     return found
+
+
+def is_wireless(name: str, sys_class_net: Path = SYS_CLASS_NET) -> bool:
+    """A radio interface: the kernel gives it a ``wireless`` directory in sysfs
+    (docs/knowledge/linux/hostapdConfigCheck.md, checked on mac80211_hwsim and a wired eth0)."""
+    return "/" not in name and (sys_class_net / name / "wireless").is_dir()
 
 
 def find_tool(name: str) -> str | None:
@@ -251,6 +258,9 @@ class HostProbe:
 
     def interfaces(self) -> list[Interface]:
         return parse_interfaces(self._ip("addr", "show"))
+
+    def is_wireless(self, name: str) -> bool:
+        return is_wireless(name)
 
     def wireguard_module_present(self) -> bool | None:
         return module_present(WIREGUARD_MODULE)

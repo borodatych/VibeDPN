@@ -330,11 +330,19 @@ def test_generated_secrets_survive_a_forced_re_run(tmp_path: Path) -> None:
     config = build_config(answers, LAN)
     write_box(tmp_path, config, answers, force=False)
     secrets = tmp_path / "secrets"
-    before = {name: (secrets / name).read_text(encoding="utf-8") for name in GENERATED_SECRETS}
+    before = {
+        name: (secrets / name).read_text(encoding="utf-8")
+        for name in GENERATED_SECRETS
+        if (secrets / name).exists()
+    }
     assert before["ui-db-password"] != before["ui-auth-secret"]
     written = write_box(tmp_path, config, Answers(Role.HOME, password="another123"), force=True)
     assert not {p.name for p in written.files} & set(GENERATED_SECRETS)
-    after = {name: (secrets / name).read_text(encoding="utf-8") for name in GENERATED_SECRETS}
+    after = {
+        name: (secrets / name).read_text(encoding="utf-8")
+        for name in GENERATED_SECRETS
+        if (secrets / name).exists()
+    }
     assert after == before
     (secrets / "ui-auth-secret").write_text("", encoding="utf-8")  # empty counts as absent
     written = write_box(tmp_path, config, answers, force=True)

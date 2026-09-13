@@ -568,9 +568,38 @@ jobs:
           VIBEDPN_E2E_PYTHON: /tmp/e2e-venv/bin/python
         run: tests/e2e/gateway.sh
 
+  e2e-wifi:
+    name: e2e · Wi-Fi access point — a device joins over WPA3-SAE on virtual radios, DHCP and NAT
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Virtual radios and the device side
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" iw wpasupplicant dhcpcd-base
+          modinfo mac80211_hwsim
+      - name: Build the images the box runs
+        run: |
+          docker build -q -t ghcr.io/borodatych/vibedpn-core:e2e core
+          docker build -q -t ghcr.io/borodatych/vibedpn-dnsmasq:e2e images/dnsmasq
+          docker build -q -t ghcr.io/borodatych/vibedpn-hostapd:e2e images/hostapd
+      - name: The CLI in a venv
+        run: |
+          uv venv /tmp/e2e-venv --python 3.12
+          uv pip install --python /tmp/e2e-venv/bin/python --require-hashes -r core/requirements.txt
+          uv pip install --python /tmp/e2e-venv/bin/python --no-deps ./core
+      - name: Run the stand
+        env:
+          VIBEDPN_TAG: e2e
+          VIBEDPN_E2E_PYTHON: /tmp/e2e-venv/bin/python
+        run: tests/e2e/wifi.sh
+
   images:
     name: image · ${{ matrix.image.name }}
-    needs: [python, shell, compose, install, firewall, router, ui, ui-image, adguard, tunnel, e2e, e2e-home, e2e-gateway]
+    needs: [python, shell, compose, install, firewall, router, ui, ui-image, adguard, tunnel, e2e, e2e-home, e2e-gateway, e2e-wifi]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -591,6 +620,9 @@ jobs:
           - name: dnsmasq
             repository: dnsmasq
             context: images/dnsmasq
+          - name: hostapd
+            repository: hostapd
+            context: images/hostapd
           - name: ui-full
             repository: ui
             context: ui

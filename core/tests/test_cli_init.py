@@ -21,6 +21,9 @@ class FakeProbe:
     def default_interface(self) -> Interface | None:
         return self.interface
 
+    def is_wireless(self, name: str) -> bool:
+        return name.startswith("wlan")
+
     def interfaces(self) -> list[Interface]:
         wifi = Interface("wlan0", IPv4Address("192.168.50.1"), 24)
         return [i for i in (self.interface, wifi) if i is not None]
@@ -351,3 +354,60 @@ def test_a_vps_has_no_lan_interface(tmp_path: Path) -> None:
     )
     assert result.exit_code == 1
     assert "--lan-interface is only used with --role home or client" in result.output
+
+
+def init_home(tmp_path: Path, *extra: str) -> tuple[int, str]:
+    result = runner.invoke(
+        cli.app,
+        [
+            "init",
+            "--dir",
+            str(tmp_path),
+            "--role",
+            "home",
+            *extra,
+            "--password-file",
+            str(password_file(tmp_path)),
+        ],
+    )
+    return result.exit_code, result.output
+
+
+def test_wifi_flags_make_an_access_point_with_a_generated_passphrase(tmp_path: Path) -> None:
+    code, output = init_home(
+        tmp_path, "--lan-interface", "wlan0", "--wifi-ssid", "Home net", "--wifi-country", "de"
+    )
+    assert code == 0, output
+    assert "Wi-Fi 'Home net'" in output
+    network = load_config(tmp_path / "config.yaml").network
+    assert network is not None and network.wifi is not None
+    assert (network.wifi.ssid, network.wifi.country) == ("Home net", "DE")
+    env = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "router,dhcp,wifi,dns" in env
+    passphrase = (tmp_path / "secrets" / "wifi-passphrase").read_text(encoding="utf-8")
+    assert 8 <= len(passphrase) <= 63 and passphrase.isascii()
+    (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    shown = runner.invoke(cli.app, ["wifi", "show", "--dir", str(tmp_path)])
+    assert shown.exit_code == 0, shown.output
+    assert "ssid: Home net" in shown.output and f"passphrase: {passphrase}" in shown.output
+
+
+def test_wifi_needs_a_radio_and_both_flags(tmp_path: Path) -> None:
+    code, output = init_home(tmp_path, "--wifi-ssid", "Home", "--wifi-country", "DE")
+    assert code == 1 and "--wifi-ssid needs --lan-interface" in output
+    code, output = init_home(tmp_path, "--lan-interface", "wlan0", "--wifi-ssid", "Home")
+    assert code == 1 and "go together" in output
+    FakeProbe.interface = Interface("wlan9", IPv4Address("192.168.1.50"), 24)
+    code, output = init_home(
+        tmp_path, "--lan-interface", "eth0", "--wifi-ssid", "Home", "--wifi-country", "DE"
+    )
+    assert code == 1 and "eth0 is not a wireless interface" in output
+    assert not (tmp_path / "config.yaml").exists()
+
+
+def test_wifi_show_on_a_box_without_wifi(tmp_path: Path) -> None:
+    code, output = init_home(tmp_path)
+    assert code == 0, output
+    (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    shown = runner.invoke(cli.app, ["wifi", "show", "--dir", str(tmp_path)])
+    assert shown.exit_code == 1 and "serves no Wi-Fi" in shown.output

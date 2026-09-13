@@ -101,6 +101,28 @@ colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && VIBEDPN_TA
 
 В CI его гоняет задача `e2e-gateway`.
 
+`tests/e2e/wifi.sh` — стенд точки доступа на виртуальном радио `mac80211_hwsim`: устройство подключается по
+WPA3-SAE с паролем из `vibedpn wifi show`, получает адрес по DHCP и выходит через NAT коробки.
+В ядре colima VM модуля нет — он в пакете `linux-modules-extra` (123 МБ), плюс нужны `iw` и `wpasupplicant`:
+
+```bash
+colima ssh -- sh -c 'sudo apt-get install -y linux-modules-extra-$(uname -r) iw wpasupplicant'
+```
+
+Образ `hostapd` собирается рядом с `core` и `dnsmasq`:
+
+```bash
+colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && docker build -q -t ghcr.io/borodatych/vibedpn-hostapd:e2e images/hostapd'
+```
+
+```bash
+colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && VIBEDPN_TAG=e2e sh tests/e2e/wifi.sh'
+```
+
+Стенд перезагружает модуль `mac80211_hwsim`: чужие виртуальные радио на хосте пропадут.
+Откат установки: `sudo apt-get remove -y linux-modules-extra-$(uname -r)`.
+В CI его гоняет задача `e2e-wifi`.
+
 ## Что не проверить локально
 
 Сетевую часть (nft, ip rule, WireGuard) — только на Linux-хосте или в E2E-стенде выше. На macOS ядро

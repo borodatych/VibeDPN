@@ -72,6 +72,8 @@
   (`rt mtu` в `forward`), проверка транзита и kill-switch шлюза счётчиками nft
 - [dnsmasqLeases.md](linux/dnsmasqLeases.md) — формат файла аренд dnsmasq (время, MAC, адрес, имя, client-id),
   снят исполнением на 2.92; как собрать образ для опыта без сети
+- [hostapdConfigCheck.md](linux/hostapdConfigCheck.md) — hostapd 2.11 без радио: ошибка конфига (`errors found in configuration file`) отличима от ошибки драйвера; виртуальное радио `mac80211_hwsim` для стенда
+- [dnsmasqNftset.md](linux/dnsmasqNftset.md) — `--nftset` есть в справке, но Alpine 3.24 собирает dnsmasq с `no-nftset`; Debian trixie — с `nftset`
 
 ## security
 

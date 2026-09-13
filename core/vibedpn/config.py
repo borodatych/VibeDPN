@@ -66,6 +66,7 @@ class Profile(StrEnum):
     WG_CLIENT = "wg-client"
     ROUTER = "router"
     DHCP = "dhcp"  # dnsmasq: gateway mode only, never next to the DHCP of an ISP router
+    WIFI = "wifi"  # hostapd: gateway mode with network.wifi, the LAN interface is the radio
     DNS = "dns"
     UI = "ui"
 
@@ -148,6 +149,60 @@ def normalize_domain(value: str) -> str:
     return domain
 
 
+class WifiBand(StrEnum):
+    BAND_2_4 = "2.4"
+    BAND_5 = "5"
+
+
+class WifiSecurity(StrEnum):
+    WPA2_WPA3 = "wpa2-wpa3"  # transition: devices without SAE still join (decision 10)
+    WPA3 = "wpa3"
+
+
+# Channels a band may carry; what a country allows is checked by the radio itself (country_code).
+WIFI_CHANNELS = {
+    WifiBand.BAND_2_4: range(1, 14),
+    WifiBand.BAND_5: range(36, 166),
+}
+SSID_MAX_BYTES = 32
+COUNTRY_PATTERN = re.compile(r"^[A-Z]{2}$")
+
+
+class WifiConfig(StrictModel):
+    """The access point of gateway mode on the LAN interface; the passphrase is a secret."""
+
+    ssid: str
+    country: str
+    band: WifiBand = WifiBand.BAND_2_4
+    channel: int = 6
+    security: WifiSecurity = WifiSecurity.WPA2_WPA3
+
+    @field_validator("ssid")
+    @classmethod
+    def check_ssid(cls, value: str) -> str:
+        if not value or len(value.encode("utf-8")) > SSID_MAX_BYTES or "\n" in value:
+            raise ValueError(f"{value!r} is not an SSID (1 to {SSID_MAX_BYTES} bytes, one line)")
+        return value
+
+    @field_validator("country")
+    @classmethod
+    def check_country(cls, value: str) -> str:
+        code = value.upper()
+        if COUNTRY_PATTERN.fullmatch(code) is None:
+            raise ValueError(f"{value!r} is not an ISO 3166-1 alpha-2 country code")
+        return code
+
+    @model_validator(mode="after")
+    def check_channel(self) -> Self:
+        if self.channel not in WIFI_CHANNELS[self.band]:
+            allowed = WIFI_CHANNELS[self.band]
+            raise ValueError(
+                f"channel {self.channel} is not in band {self.band.value} GHz"
+                f" ({allowed.start}-{allowed.stop - 1})"
+            )
+        return self
+
+
 class DhcpConfig(StrictModel):
     """DHCP of gateway mode (dnsmasq on the LAN side); empty bounds take the default pool."""
 
@@ -172,6 +227,7 @@ class NetworkConfig(StrictModel):
     lan_address: IPv4Address
     wan_interface: InterfaceName | None = None
     dhcp: DhcpConfig | None = None
+    wifi: WifiConfig | None = None
 
     def dhcp_pool(self) -> tuple[IPv4Address, IPv4Address]:
         """The addresses dnsmasq hands out: the configured bounds or the default pool."""
@@ -183,6 +239,12 @@ class NetworkConfig(StrictModel):
         start = dhcp.range_start or first + min(DHCP_POOL_FIRST_OFFSET - 1, size // 2)
         end = dhcp.range_end or last - min(DHCP_POOL_LAST_MARGIN, size // 4)
         return start, end
+
+    @model_validator(mode="after")
+    def check_wifi(self) -> Self:
+        if self.wifi is not None and self.mode is not NetworkMode.GATEWAY:
+            raise ValueError("network.wifi is only used with network.mode 'gateway'")
+        return self
 
     @model_validator(mode="after")
     def check_dhcp(self) -> Self:
@@ -563,6 +625,7 @@ class Config(StrictModel):
             Profile.WG_CLIENT: self.role is Role.CLIENT,
             Profile.ROUTER: True,
             Profile.DHCP: self.network is not None and self.network.mode is NetworkMode.GATEWAY,
+            Profile.WIFI: self.network is not None and self.network.wifi is not None,
             Profile.DNS: self.dns.enabled,
             Profile.UI: self.ui.enabled,
         }

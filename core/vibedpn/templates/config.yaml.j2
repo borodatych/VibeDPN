@@ -33,6 +33,16 @@ network:
     range_end: {{ pool[1] }}
     lease: {{ (config.network.dhcp.lease if config.network.dhcp else "12h") }}
 {% endif %}
+{% if config.network.wifi %}
+  # Точка доступа Wi-Fi на lan_interface. Пароль сети — secrets/wifi-passphrase (`sudo vibedpn wifi show`).
+  # band: 2.4 | 5; channel — в пределах диапазона; security: wpa2-wpa3 (подключатся и старые устройства) | wpa3.
+  wifi:
+    ssid: {{ config.network.wifi.ssid | tojson }}
+    country: {{ config.network.wifi.country }}
+    band: "{{ config.network.wifi.band.value }}"
+    channel: {{ config.network.wifi.channel }}
+    security: {{ config.network.wifi.security.value }}
+{% endif %}
 
 # Политика для трафика LAN.
 # mode: off — всё напрямую; full — всё через default_upstream;

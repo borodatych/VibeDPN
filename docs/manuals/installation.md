@@ -96,6 +96,26 @@ sudo vibedpn init --role home --lan-interface wlan0 --password-file ~/panels.pw
 Роутер провайдера при этом остаётся только перед WAN: второй DHCP-сервер в одной сети с коробкой
 выдаст устройствам чужой шлюз.
 
+### Точка доступа Wi-Fi
+
+Если LAN-интерфейс — радио (`wlan0`), коробка может сама раздавать Wi-Fi.
+Выключите управление этим интерфейсом у NetworkManager или wpa_supplicant системы, но оставьте ему статический адрес:
+точку доступа поднимает сервис `hostapd` коробки, и второй хозяин радио ей помешает.
+
+```bash
+sudo vibedpn init --role home --lan-interface wlan0 --wifi-ssid "Home" --wifi-country DE --password-file ~/panels.pw
+```
+
+`init` проверит, что интерфейс беспроводной, и создаст пароль сети в `secrets/wifi-passphrase`.
+Узнать его, чтобы подключить устройства:
+
+```bash
+sudo vibedpn wifi show
+```
+
+По умолчанию сеть в смешанном режиме WPA2/WPA3 на 2.4 ГГц, канал 6; диапазон, канал и `security: wpa3` меняются в `network.wifi` файла `config.yaml`, затем `sudo vibedpn restart`.
+`vibedpn doctor` проверяет, что `lan_interface` действительно радио.
+
 Что пишется в `/opt/vibedpn`:
 
 | Файл | Что | Права |

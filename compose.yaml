@@ -31,6 +31,8 @@ services:
       - ./data/adguard/conf:/etc/vibedpn/adguard
       # core renders dnsmasq.conf of gateway mode before dnsmasq starts (engine/dnsmasq.py).
       - ./data/dnsmasq:/etc/vibedpn/dnsmasq
+      # core renders hostapd.conf of the access point with its passphrase (engine/hostapd.py).
+      - ./data/hostapd:/etc/vibedpn/hostapd
     healthcheck:
       test:
         - CMD
@@ -268,6 +270,25 @@ services:
   # AdGuard Home on port 53 of the LAN address. Host network (needed for DHCP later and for real
   # client IPs); core renders AdGuardHome.yaml into ./data/adguard/conf so the setup wizard on
   # port 3000 never appears (Stage 4).
+  # Wi-Fi access point of gateway mode (network.wifi only): hostapd on the radio that is the LAN
+  # interface. Host network; the config with the passphrase comes from core (mode 600).
+  hostapd:
+    image: ghcr.io/borodatych/vibedpn-hostapd:${VIBEDPN_TAG:-latest}
+    build:
+      context: ./images/hostapd
+    profiles:
+      - wifi
+    network_mode: host
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      core:
+        condition: service_healthy
+    volumes:
+      - ./data/hostapd:/var/lib/vibedpn-hostapd:ro
+
   # DHCP of gateway mode (network.mode gateway only: the profile dhcp never runs next to the DHCP
   # server of an ISP router). Host network on the LAN interface; the config comes from core.
   dnsmasq:

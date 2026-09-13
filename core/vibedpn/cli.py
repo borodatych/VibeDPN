@@ -12,6 +12,7 @@ from typing import Annotated, TypeVar
 
 import click
 import typer
+from pydantic import ValidationError
 
 from vibedpn import __version__
 from vibedpn.api import client as core_api
@@ -27,6 +28,7 @@ from vibedpn.atomic import write_private
 from vibedpn.bootstrap import (
     CONFIG_FILE,
     DEFAULT_BOX_DIR,
+    SECRETS_DIR,
     Answers,
     BootstrapError,
     HostFacts,
@@ -57,12 +59,14 @@ from vibedpn.config import (
     RoutingMode,
     UiVariant,
     Upstream,
+    WifiConfig,
     check_endpoint,
 )
 from vibedpn.config_edit import ConfigEditError, set_routing
 from vibedpn.detect import DetectError, HostProbe
 from vibedpn.device_view import render_devices
 from vibedpn.doctor import evaluate, gather, has_failures, render, to_json
+from vibedpn.engine.hostapd import HostapdError, read_passphrase
 from vibedpn.engine.myst import render_stats
 from vibedpn.tunnel_view import qr_code, render_peers
 
@@ -203,6 +207,40 @@ def _collect_answers(
     return Answers(role=role, password=password, peer_config=peer_config, endpoint=endpoint)
 
 
+def _echo_network(config: Config) -> None:
+    """What gateway mode and its access point mean for the owner, after init."""
+    network = config.network
+    if network is None or network.mode is not NetworkMode.GATEWAY:
+        return
+    typer.echo(
+        f"Gateway mode: WAN {network.wan_interface}, LAN {network.lan_interface}"
+        f" {network.lan_address}; the box hands out addresses on the LAN"
+    )
+    if network.wifi is not None:
+        typer.echo(
+            f"Wi-Fi {network.wifi.ssid!r}: the passphrase is in secrets/wifi-passphrase"
+            " (`sudo vibedpn wifi show`)"
+        )
+
+
+def _wifi_answer(
+    ssid: str | None, country: str | None, lan_interface: str | None, probe: HostProbe
+) -> WifiConfig | None:
+    """The access point asked by flags, checked before anything is written."""
+    if ssid is None and country is None:
+        return None
+    if ssid is None or country is None:
+        raise _fail("--wifi-ssid and --wifi-country go together")
+    if lan_interface is None:
+        raise _fail("--wifi-ssid needs --lan-interface: the radio interface that becomes the LAN")
+    if not probe.is_wireless(lan_interface):
+        raise _fail(f"{lan_interface} is not a wireless interface; the access point needs a radio")
+    try:
+        return WifiConfig(ssid=ssid, country=country)
+    except ValidationError as exc:
+        raise _fail(f"Wi-Fi: {exc.errors()[0]['msg']}") from None
+
+
 @app.command()
 def init(
     role: Annotated[Role | None, typer.Option(help="Box role: home, vps or client.")] = None,
@@ -228,6 +266,20 @@ def init(
         typer.Option(
             help="Gateway mode: the LAN-side interface (with a static IPv4); the default-route"
             " interface becomes the WAN. Without it the box sits in the LAN on one port."
+        ),
+    ] = None,
+    wifi_ssid: Annotated[
+        str | None,
+        typer.Option(
+            help="Wi-Fi access point on the --lan-interface radio: the network name. The passphrase"
+            " is generated into secrets/wifi-passphrase (`vibedpn wifi show`)."
+        ),
+    ] = None,
+    wifi_country: Annotated[
+        str | None,
+        typer.Option(
+            help="Country of the radio, ISO 3166-1 alpha-2 (with --wifi-ssid): the channels and"
+            " power its law allows."
         ),
     ] = None,
     password_file: Annotated[
@@ -268,10 +320,12 @@ def init(
     for other in facts.interfaces:
         if facts.interface is None or other.name != facts.interface.name:
             typer.echo(f"Also {other.name}: {other.address}/{other.prefixlen} (--lan-interface)")
+    wifi = _wifi_answer(wifi_ssid, wifi_country, lan_interface, probe)
     answers = replace(
         _collect_answers(role, peer_config, endpoint, password_file, facts, lan_interface),
         ui_variant=ui_variant,
         lan_interface=lan_interface,
+        wifi=wifi,
     )
     try:
         config = build_config(answers, facts)
@@ -294,11 +348,7 @@ def init(
             fg=typer.colors.YELLOW,
             err=True,
         )
-    if config.network is not None and config.network.mode is NetworkMode.GATEWAY:
-        typer.echo(
-            f"Gateway mode: WAN {config.network.wan_interface}, LAN {config.network.lan_interface}"
-            f" {config.network.lan_address}; the box hands out addresses on the LAN"
-        )
+    _echo_network(config)
     if config.network is not None and config.ui.enabled:
         typer.echo(f"Panel variant {config.ui.variant.value} (ui.variant in config.yaml)")
     typer.echo(f"Role {answers.role.value} configured. Next step: vibedpn up")
@@ -438,6 +488,30 @@ dpn_app = typer.Typer(
     help="Uplink dpn: the exit through the Mysterium network.", no_args_is_help=True
 )
 app.add_typer(dpn_app, name="dpn")
+wifi_app = typer.Typer(help="The Wi-Fi access point of gateway mode.", no_args_is_help=True)
+app.add_typer(wifi_app, name="wifi")
+
+
+@wifi_app.command("show")
+def wifi_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Print the network name and the passphrase devices join with (secrets/ is root-only)."""
+    try:
+        config = check_box(box_dir)
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+    wifi = config.network.wifi if config.network is not None else None
+    if wifi is None:
+        raise _fail("this box serves no Wi-Fi: network.wifi is not set in config.yaml")
+    try:
+        passphrase = read_passphrase(box_dir / SECRETS_DIR)
+    except HostapdError as exc:
+        raise _fail(str(exc)) from None
+    typer.echo(f"ssid: {wifi.ssid}")
+    typer.echo(f"passphrase: {passphrase}")
+    typer.echo(
+        f"security: {wifi.security.value}, band {wifi.band.value} GHz, channel {wifi.channel}"
+    )
+
 
 ANY_COUNTRY = "any"
 

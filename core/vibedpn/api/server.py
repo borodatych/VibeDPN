@@ -20,6 +20,7 @@ from vibedpn.api.state import BoxState
 from vibedpn.api.tunnel import run_servers
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.config import Config, ConfigError, Upstream, load_config
+from vibedpn.engine import hostapd
 from vibedpn.engine.adguard import AdguardError, ensure_adguard
 from vibedpn.engine.devices import DB_FILE, DeviceError, DeviceStore
 from vibedpn.engine.dnsmasq import DnsmasqError, core_dir, ensure_dnsmasq
@@ -106,7 +107,7 @@ def main() -> None:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None
     _report("AdGuard Home", adguard)
-    _report("dnsmasq", _write_dnsmasq(config))
+    _render_lan_services(config, secrets_dir)
     # Before the API: compose starts wg-server only once core is healthy, so the file it reads
     # is always the one rendered from the current config.
     try:
@@ -163,6 +164,17 @@ def _report(what: str, written: bool | None) -> None:
     if written is not None:
         state = "updated" if written else "already current"
         sys.stderr.write(f"vibedpn-core: {what} configuration {state}\n")
+
+
+def _render_lan_services(config: Config, secrets_dir: Path) -> None:
+    """dnsmasq and hostapd of gateway mode, rendered before the API like AdGuard."""
+    _report("dnsmasq", _write_dnsmasq(config))
+    try:
+        written = hostapd.ensure_hostapd(config, hostapd.core_dir(), secrets_dir)
+    except hostapd.HostapdError as exc:
+        sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
+        raise SystemExit(os.EX_CONFIG) from None
+    _report("hostapd", written)
 
 
 def _write_dnsmasq(config: Config) -> bool | None:
