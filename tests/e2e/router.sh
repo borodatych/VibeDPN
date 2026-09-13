@@ -40,6 +40,9 @@ LAN_SUBNET=192.168.77.0/24
 BOX_LAN_IP=192.168.77.1
 DEVICE_IP=192.168.77.2
 NETNS=e2e-lanhost
+# A second device on the same LAN: policies of one must not touch the other.
+DEVICE2_IP=192.168.77.3
+NETNS2=e2e-lanhost2
 LISTENER=e2e-listener
 LISTENER_IP=10.77.0.99
 LISTENER_PORT=4050
@@ -76,6 +79,7 @@ cleanup() {
   docker rm -f "$WEB" "$VPS" "$LISTENER" >/dev/null 2>&1 || true
   docker network rm "$INTERNET" >/dev/null 2>&1 || true
   sudo ip netns del "$NETNS" 2>/dev/null || true
+  sudo ip netns del "$NETNS2" 2>/dev/null || true
   sudo ip link del "$LAN" 2>/dev/null || true
   isp_rules -D 2>/dev/null || true
   sudo rm -rf "$WORK"
@@ -147,6 +151,14 @@ in_device ip addr add "$DEVICE_IP/24" dev e2e-dev
 in_device ip link set e2e-dev up
 in_device ip link set lo up
 in_device ip route add default via "$BOX_LAN_IP"
+sudo ip netns add "$NETNS2"
+sudo ip link add e2e-dev2 type veth peer name e2e-lan2
+sudo ip link set e2e-lan2 master "$LAN" up
+sudo ip link set e2e-dev2 netns "$NETNS2"
+sudo ip netns exec "$NETNS2" ip addr add "$DEVICE2_IP/24" dev e2e-dev2
+sudo ip netns exec "$NETNS2" ip link set e2e-dev2 up
+sudo ip netns exec "$NETNS2" ip link set lo up
+sudo ip netns exec "$NETNS2" ip route add default via "$BOX_LAN_IP"
 isp_rules -A
 
 log "stand: the fake VPS end of the tunnel, with its own way out"
@@ -215,21 +227,27 @@ wait_healthy() {
     sleep 2
   done
 }
-# The address the web server sees for the device, or nothing when the device gets no answer.
-exit_address() {
-  in_device curl -s --max-time 4 "http://$WEB_IP:$WEB_PORT/" 2>/dev/null || true
+# The address the web server sees for the device in netns $1, or nothing when it gets no answer.
+exit_address_in() {
+  sudo ip netns exec "$1" curl -s --max-time 4 "http://$WEB_IP:$WEB_PORT/" 2>/dev/null || true
 }
-# $1: the wanted exit address, or "none"; $2: what failed.
-await_exit() {
+exit_address() {
+  exit_address_in "$NETNS"
+}
+# $1: the device netns; $2: the wanted exit address, or "none"; $3: what failed.
+await_exit_in() {
   i=0
   while :; do
-    seen="$(exit_address)"
-    [ "$1" = none ] && [ -z "$seen" ] && return 0
-    [ "$seen" = "$1" ] && return 0
+    seen="$(exit_address_in "$1")"
+    [ "$2" = none ] && [ -z "$seen" ] && return 0
+    [ "$seen" = "$2" ] && return 0
     i=$((i + 1))
-    [ "$i" -lt "$TIMEOUT" ] || fail "$2 (the web server sees '${seen:-no connection}')"
+    [ "$i" -lt "$TIMEOUT" ] || fail "$3 (the web server sees '${seen:-no connection}')"
     sleep 1
   done
+}
+await_exit() {
+  await_exit_in "$NETNS" "$1" "$2"
 }
 # The ICMP probe core itself uses (the host may have no ping), and a plain TCP connect.
 PROBE='import sys; from vibedpn.engine.probe import ping; sys.exit(0 if ping(sys.argv[1], 2.0) else 1)'
@@ -309,6 +327,45 @@ await_exit "$VPS_IP" "after unset the device does not follow routing.mode full a
 echo "unset: exit address $(exit_address)"
 [ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)" = "$core_started" ] ||
   fail "a device policy change restarted core"
+
+log "two devices, different policies at the same time"
+device2_mac="$(sudo ip netns exec "$NETNS2" cat /sys/class/net/e2e-dev2/address)"
+# 1. full; the second device bypasses: one through the VPS, the other direct.
+"$CLI" device set "$device2_mac" bypass --name e2e-device-2 --dir "$BOX" >/dev/null ||
+  fail "vibedpn device set bypass for the second device failed"
+await_exit_in "$NETNS2" "$INTERNET_GATEWAY" "the second device (bypass) does not go direct"
+await_exit "$VPS_IP" "the first device left the VPS when the second one got bypass"
+echo "full, second bypass: first $(exit_address), second $(exit_address_in "$NETNS2")"
+# 2. the second device is blocked; the first one keeps its way out.
+"$CLI" device set "$device2_mac" block --dir "$BOX" >/dev/null || fail "vibedpn device set block failed"
+await_exit_in "$NETNS2" none "the blocked second device still gets out"
+await_exit "$VPS_IP" "the first device lost the VPS when the second one was blocked"
+echo "full, second block: first $(exit_address), second no exit"
+# 3. mode off; the first device keeps the VPS by its own policy, the second one goes direct.
+"$CLI" device unset "$device2_mac" --dir "$BOX" >/dev/null || fail "vibedpn device unset failed"
+"$CLI" device set "$device_mac" vps --dir "$BOX" >/dev/null || fail "vibedpn device set vps failed"
+sudo "$CLI" mode off --dir "$BOX" >/dev/null || fail "vibedpn mode off failed"
+wait_healthy vibedpn-core-1
+await_exit "$VPS_IP" "policy vps does not keep the first device on the VPS in mode off"
+await_exit_in "$NETNS2" "$INTERNET_GATEWAY" "the second device does not go direct in mode off"
+echo "off, first vps: first $(exit_address), second $(exit_address_in "$NETNS2")"
+# 4. the gateway stops (failopen false): the first device is held, the second one stays direct.
+docker stop vibedpn-wg-client-1 >/dev/null
+await_exit none "the first device (policy vps) still gets out with the gateway stopped"
+await_exit_in "$NETNS2" "$INTERNET_GATEWAY" "the kill switch of vps took the direct device down too"
+echo "gateway stopped: first held, second $(exit_address_in "$NETNS2")"
+docker start vibedpn-wg-client-1 >/dev/null
+wait_healthy vibedpn-wg-client-1
+await_exit "$VPS_IP" "the first device did not come back through the VPS with the gateway"
+"$CLI" device list --dir "$BOX" | grep -q "$device2_mac" ||
+  fail "the second device $device2_mac is not in vibedpn device list"
+# 5. back to the start: no own policies, mode full.
+"$CLI" device unset "$device_mac" --dir "$BOX" >/dev/null || fail "vibedpn device unset failed"
+sudo "$CLI" mode full --dir "$BOX" >/dev/null || fail "vibedpn mode full failed"
+wait_healthy vibedpn-core-1
+await_exit "$VPS_IP" "the first device does not return to the VPS in mode full"
+await_exit_in "$NETNS2" "$VPS_IP" "the second device does not follow mode full back to the VPS"
+echo "full again: both devices through the VPS"
 
 log "the LAN never reaches a gateway container directly"
 in_device "$PY" -c "$PROBE" "$BOX_LAN_IP" ||
