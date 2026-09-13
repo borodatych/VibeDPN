@@ -13,7 +13,8 @@
 ## adguard
 
 - [docker.md](adguard/docker.md) — тома, `AdGuardHome.yaml` со `schema_version: 34` вместо мастера
-  на 3000, ключи привязки и апстримов, порт 53 против systemd-resolved
+  на 3000, ключи привязки и апстримов, порт 53 против systemd-resolved; первый старт переписывает
+  файл (600, умолчания), ядро правит только свои ключи, bcrypt `$2b$` принимается, `aaaa_disabled`
 
 ## compose
 

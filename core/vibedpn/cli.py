@@ -341,14 +341,16 @@ class SwitchableMode(StrEnum):
 
 
 CORE_SERVICE = "core"
+ADGUARD_SERVICE = "adguard"
 RUNNING_STATE = "running"
 
 
 def _switch_routing(
     box_dir: Path, *, mode: RoutingMode | None = None, upstream: Upstream | None = None
 ) -> None:
-    """Change routing in config.yaml and, when core runs, restart only core: the router is
-    applied at its start, and the tunnel and the other containers keep running."""
+    """Change routing in config.yaml and, when core runs, restart only core (and adguard, which
+    reads aaaa_disabled at start): the router is applied at core's start, and the tunnel and the
+    other containers keep running."""
     _prepare(box_dir, refresh=False)
     try:
         config, changed = set_routing(box_dir / CONFIG_FILE, mode=mode, upstream=upstream)
@@ -361,12 +363,18 @@ def _switch_routing(
         services = parse_ps(capture(compose_argv(box_dir, "ps", "-a", "--format", "json")))
     except ComposeError as exc:
         raise _fail(str(exc)) from None
-    core_running = any(
-        item.service == CORE_SERVICE and item.state == RUNNING_STATE for item in services
-    )
-    if core_running:
+    running = {item.service for item in services if item.state == RUNNING_STATE}
+    if CORE_SERVICE in running:
         _compose(box_dir, "restart", "--no-deps", CORE_SERVICE)
-        typer.echo(f"{_routing_line(config)} (applied: core restarted)")
+        names = [CORE_SERVICE]
+        if ADGUARD_SERVICE in running:
+            # AdGuard reads its file only at start, and core rewrites aaaa_disabled at its own
+            # start. Restarted together, AdGuard won the race and kept the old mode (smoke): it
+            # restarts only once core is healthy again.
+            _compose(box_dir, "up", "-d", "--no-deps", "--wait", CORE_SERVICE)
+            _compose(box_dir, "restart", "--no-deps", ADGUARD_SERVICE)
+            names.append(ADGUARD_SERVICE)
+        typer.echo(f"{_routing_line(config)} (applied: {', '.join(names)} restarted)")
     else:
         typer.echo(f"{_routing_line(config)} (saved; applies at `vibedpn up`)")
 

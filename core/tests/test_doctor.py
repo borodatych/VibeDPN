@@ -417,6 +417,42 @@ def test_core_must_listen_on_the_tunnel_address() -> None:
     assert "tunnel access" not in by_name(evaluate(facts(listeners=core)))  # a home box
 
 
+def test_lan_ipv6_is_parsed_from_ip_json() -> None:
+    # `ip -j -6 addr show dev eth0` shape: link-local only, then a global address as well.
+    link_local = (
+        '[{"ifname":"eth0","addr_info":[{"family":"inet6","local":"fe80::1","scope":"link"}]}]'
+    )
+    assert doctor.parse_global_ipv6(link_local) is False
+    global_too = link_local.replace(
+        '"scope":"link"}]',
+        '"scope":"link"},{"family":"inet6","local":"2001:db8::5","scope":"global"}]',
+    )
+    assert doctor.parse_global_ipv6(global_too) is True
+    assert doctor.parse_global_ipv6("[]") is False
+    assert doctor.parse_global_ipv6("not json") is None
+
+
+def test_lan_ipv6_verdict_only_in_full() -> None:
+    full = Config.model_validate(
+        {
+            "version": 1,
+            "role": "client",
+            "network": {
+                "lan_interface": "eth0",
+                "lan_subnet": "192.168.1.0/24",
+                "lan_address": "192.168.1.50",
+            },
+            "routing": {"mode": "full", "default_upstream": "vps"},
+            "upstreams": {"vps": {"enabled": True}},
+        }
+    )
+    leaking = by_name(evaluate(facts(config=full, lan_ipv6=True)))["ipv6"]
+    assert leaking.verdict is Verdict.WARN and "RA/DHCPv6" in leaking.hint
+    assert by_name(evaluate(facts(config=full, lan_ipv6=False)))["ipv6"].verdict is Verdict.OK
+    assert by_name(evaluate(facts(config=full, lan_ipv6=None)))["ipv6"].verdict is Verdict.WARN
+    assert "ipv6" not in by_name(evaluate(facts(lan_ipv6=True)))  # home in mode off
+
+
 def test_router_verdicts() -> None:
     def verdict(config: Config, **overrides: object) -> CheckResult:
         base: dict[str, object] = {

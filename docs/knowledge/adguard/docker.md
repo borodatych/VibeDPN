@@ -16,6 +16,21 @@ ppc64le). Тома: `/opt/adguardhome/work` (данные) и `/opt/adguardhome/
 **Применение:** host network обязателен для DHCP и даёт реальные IP клиентов; порт 53 на хосте
 с systemd-resolved занят stub-listener'ом — лечится `DNSStubListener=no` в
 `/etc/systemd/resolved.conf.d/` или привязкой только к LAN-адресу (наш путь).
+**Факты исполнением (v0.107.79, 2026-09-13):** хеш bcrypt `$2b$` из Python `bcrypt` (его пишет
+`init`) AdGuard принимает в `users[].password`: `/control/login` — 200 с верным паролем, 403 с
+неверным. `dns.aaaa_disabled: true` — ответ на AAAA пустой (0 записей), на A — обычный. Первый старт
+**переписывает** файл: все умолчания раскрыты (~187 строк), права `600` от root, комментарии выброшены,
+`schema_version` в конце; повторные старты файл не трогают, а ключ, изменённый между стартами,
+применяется. Отсюда устройство `engine/adguard.py`: ядро до старта AdGuard (`depends_on`) пишет
+минимальный файл, если его нет, а иначе round-trip-правкой меняет только свои ключи — фильтры из UI
+живут. Грабля round-trip: `ruamel` пишет `None` пустым значением (`protection_disabled_until:`), а
+AdGuard — `null`; представление `None` задано явно, иначе правка трогала чужой ключ (поймал тест на
+реальном переписанном файле). Недоступный `http.address` роняет только веб-интерфейс (panic
+перехвачен), DNS и запись файла работают. Настройки AdGuard применяются только перезапуском
+контейнера — `vibedpn mode` перезапускает и его, но **после** ядра: `compose restart core adguard`
+перезапускает оба сразу, не дожидаясь здоровья, и AdGuard стартовал на старом файле (smoke: в `off`
+AAAA оставался пустым). Порядок — `restart core`, `up -d --no-deps --wait core` («Wait for services
+to be running|healthy», https://docs.docker.com/reference/cli/docker/compose/up/), `restart adguard`.
 **Источники:** https://hub.docker.com/r/adguard/adguardhome ,
 https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/v0.107.79/docker/build.Dockerfile ,
 https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/v0.107.79/internal/home/home.go ,

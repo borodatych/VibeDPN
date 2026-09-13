@@ -29,7 +29,7 @@ from vibedpn.compose import (
     parse_ps,
     preflight,
 )
-from vibedpn.config import Config, Profile, Role, parse_port_range
+from vibedpn.config import Config, Profile, Role, RoutingMode, parse_port_range
 from vibedpn.detect import SSHD, WIREGUARD_MODULE, module_present
 from vibedpn.engine.myst import NODEUI_PORT, TEQUILAPI_PORT
 from vibedpn.engine.router import (
@@ -146,6 +146,7 @@ class DoctorFacts:
     uplink_route: bool | None = None  # the gateway route of the active uplink is in its table
     last_resort_route: bool | None = None  # the kill-switch route of the active uplink table
     rp_filter: int | None = None  # max of all and the gateway bridge, as the kernel uses it
+    lan_ipv6: bool | None = None  # a global IPv6 address on lan_interface; None: not checked
 
 
 def parse_ss(output: str) -> list[Listener]:
@@ -247,6 +248,9 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
             results.append(_egress_result(config, facts))
     if config is not None and config.network is not None:
         results.append(_router_result(config, facts))
+        ipv6 = _lan_ipv6_result(config, facts)
+        if ipv6 is not None:
+            results.append(ipv6)
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -499,6 +503,43 @@ def _router_result(config: Config, facts: DoctorFacts) -> CheckResult:  # noqa: 
     )
 
 
+def _lan_ipv6_result(config: Config, facts: DoctorFacts) -> CheckResult | None:
+    """In full, IPv6 from the main router's RA takes the devices around the box: the uplinks
+    are IPv4 and the box is not their IPv6 router. AdGuard answers AAAA empty, but addresses
+    typed in or cached still go direct."""
+    if config.network is None or config.routing is None:
+        return None
+    if config.routing.mode is not RoutingMode.FULL:
+        return None
+    lan = config.network.lan_interface
+    if facts.lan_ipv6 is None:
+        return CheckResult("ipv6", Verdict.WARN, f"cannot read IPv6 addresses of {lan}")
+    if facts.lan_ipv6:
+        return CheckResult(
+            "ipv6",
+            Verdict.WARN,
+            f"{lan} has a global IPv6 address: devices can reach the internet over IPv6 around the"
+            " uplink",
+            "turn off IPv6 (RA/DHCPv6) for the LAN on the main router",
+        )
+    return CheckResult(
+        "ipv6", Verdict.OK, f"no global IPv6 on {lan}: routing.mode full covers the LAN"
+    )
+
+
+def parse_global_ipv6(listing: str) -> bool | None:
+    """Whether ``ip -j -6 addr show dev <lan>`` lists an address of scope global."""
+    try:
+        interfaces = json.loads(listing or "[]")
+    except json.JSONDecodeError:
+        return None
+    return any(
+        info.get("family") == "inet6" and info.get("scope") == "global"
+        for interface in interfaces
+        for info in interface.get("addr_info", [])
+    )
+
+
 def _ssh_result(ssh_ports: list[int], listeners: list[Listener] | None) -> CheckResult | None:
     """Every port sshd actually listens on must be in ``firewall.ssh_ports``; the config-file
     reading of ``init`` is not the daemon (socket activation, a later edit), so ``ss`` decides."""
@@ -651,6 +692,7 @@ def gather(box_dir: Path) -> DoctorFacts:
             )
     router_table, router_error = None, ""
     router_rules = uplink_route = last_resort_route = None
+    lan_ipv6: bool | None = None
     rp_filter = None
     router_docker_user, router_docker_user_error = None, ""
     if config is not None and config.network is not None:
@@ -660,6 +702,7 @@ def gather(box_dir: Path) -> DoctorFacts:
         router_docker_user, router_docker_user_error = _docker_user_current(
             router_docker_user_rules(config), ROUTER_COMMENT
         )
+        lan_ipv6 = _read_lan_ipv6(config.network.lan_interface)
     return DoctorFacts(
         config=config,
         config_error=config_error,
@@ -690,6 +733,7 @@ def gather(box_dir: Path) -> DoctorFacts:
         uplink_route=uplink_route,
         last_resort_route=last_resort_route,
         rp_filter=rp_filter,
+        lan_ipv6=lan_ipv6,
     )
 
 
@@ -778,6 +822,22 @@ def _router_routing(config: Config) -> tuple[bool | None, bool | None, bool | No
         for entry in entries
     )
     return rules_current, gateway, last_resort
+
+
+def _read_lan_ipv6(interface: str) -> bool | None:
+    ip = find_ip()
+    if ip is None:
+        return None
+    try:
+        listing = subprocess.run(
+            [ip, "-j", "-6", "addr", "show", "dev", interface],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return parse_global_ipv6(listing.stdout)
 
 
 def _read_rp_filter() -> int | None:

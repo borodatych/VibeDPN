@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from vibedpn.api.app import create_app
 from vibedpn.api.tunnel import run_servers
 from vibedpn.config import Config, ConfigError, Upstream, load_config
+from vibedpn.engine.adguard import AdguardError, ensure_adguard
 from vibedpn.engine.router import (
     EGRESS_TABLE,
     ROUTER_TABLE,
@@ -51,6 +52,8 @@ CONFIG_PATH_ENV = "VIBEDPN_CONFIG"
 DEFAULT_CONFIG_PATH = Path("/etc/vibedpn/config.yaml")
 SECRETS_DIR_ENV = "VIBEDPN_SECRETS"
 DEFAULT_SECRETS_DIR = Path("/etc/vibedpn/secrets")  # compose.yaml mounts ./secrets here
+ADGUARD_DIR_ENV = "VIBEDPN_ADGUARD_CONF"
+DEFAULT_ADGUARD_DIR = Path("/etc/vibedpn/adguard")  # compose.yaml mounts ./data/adguard/conf
 
 
 def main() -> None:
@@ -79,9 +82,19 @@ def main() -> None:
     except RouterError as exc:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None
+    secrets_dir = Path(os.environ.get(SECRETS_DIR_ENV, DEFAULT_SECRETS_DIR))
+    # Before the API, like the tunnel below: compose starts adguard only once core is healthy.
+    adguard_dir = Path(os.environ.get(ADGUARD_DIR_ENV, DEFAULT_ADGUARD_DIR))
+    try:
+        adguard = ensure_adguard(config, adguard_dir, secrets_dir)
+    except AdguardError as exc:
+        sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
+        raise SystemExit(os.EX_CONFIG) from None
+    if adguard is not None:
+        state = "updated" if adguard else "already current"
+        sys.stderr.write(f"vibedpn-core: AdGuard Home configuration {state}\n")
     # Before the API: compose starts wg-server only once core is healthy, so the file it reads
     # is always the one rendered from the current config.
-    secrets_dir = Path(os.environ.get(SECRETS_DIR_ENV, DEFAULT_SECRETS_DIR))
     try:
         files = ensure_server(config, secrets_dir)
     except WgError as exc:

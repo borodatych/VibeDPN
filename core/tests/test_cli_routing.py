@@ -86,3 +86,21 @@ def test_upstream_to_a_disabled_uplink_is_refused_unchanged(
     assert recorder.calls == []
     routing = load_config(tmp_path / "config.yaml").routing
     assert routing is not None and routing.default_upstream is Upstream.VPS
+
+
+def test_mode_restarts_adguard_too_when_it_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AdGuard reads aaaa_disabled only at start, and core rewrites it with the mode."""
+    recorder = make_box(tmp_path, monkeypatch, client_config())
+    recorder.ps_output = (
+        CORE_RUNNING + '{"Service":"adguard","State":"running","Health":"","Status":"Up"}\n'
+    )
+    code, output = invoke(tmp_path, "mode", "off")
+    assert code == 0 and "(applied: core, adguard restarted)" in output
+    # Not together: AdGuard must start after core has rewritten its file.
+    assert [tail(argv) for argv in recorder.calls if "restart" in argv or "up" in argv] == [
+        ["restart", "--no-deps", "core"],
+        ["up", "-d", "--no-deps", "--wait", "core"],
+        ["restart", "--no-deps", "adguard"],
+    ]

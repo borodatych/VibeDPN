@@ -29,11 +29,16 @@ class ConfigEditError(ValueError):
     """A user-facing reason why ``config.yaml`` was not changed."""
 
 
-def _round_trip() -> YAML:
+def round_trip_yaml() -> YAML:
     yaml = YAML(typ="rt", pure=True)
     yaml.preserve_quotes = True
     yaml.indent(mapping=MAPPING_INDENT, sequence=SEQUENCE_INDENT, offset=SEQUENCE_OFFSET)
     yaml.width = NO_LINE_WRAP
+    # Round-trip dumps None as an empty value; files written by others (AdGuard spells out
+    # `null`) must keep every key we do not own byte for byte.
+    yaml.representer.add_representer(
+        type(None), lambda dumper, _: dumper.represent_scalar("tag:yaml.org,2002:null", "null")
+    )
     return yaml
 
 
@@ -49,7 +54,7 @@ def set_routing(
 ) -> tuple[Config, bool]:
     """Set ``routing.mode`` and/or ``routing.default_upstream``; returns the validated result and
     whether the file changed. Nothing is written when the result would not be a valid box."""
-    yaml = _round_trip()
+    yaml = round_trip_yaml()
     try:
         text = path.read_text(encoding="utf-8")
         data = yaml.load(text)

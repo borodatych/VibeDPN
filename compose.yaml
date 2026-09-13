@@ -29,6 +29,8 @@ services:
           create_host_path: false
       - ./secrets:/etc/vibedpn/secrets
       - ./data/core:/var/lib/vibedpn
+      # core keeps its keys of AdGuardHome.yaml current before adguard starts (engine/adguard.py).
+      - ./data/adguard/conf:/etc/vibedpn/adguard
     healthcheck:
       test:
         - CMD
@@ -196,6 +198,10 @@ services:
       - dns
     restart: unless-stopped
     network_mode: host
+    depends_on:
+      # core writes bind address, upstreams, the password and aaaa_disabled into its config first.
+      core:
+        condition: service_healthy
     volumes:
       - ./data/adguard/work:/opt/adguardhome/work
       - ./data/adguard/conf:/opt/adguardhome/conf

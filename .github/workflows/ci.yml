@@ -314,6 +314,75 @@ jobs:
             if iptables-nft -S DOCKER-USER | grep -q vibedpn-router; then echo "DOCKER-USER rules survived"; exit 1; fi
           '
 
+  adguard:
+    name: adguard · config from core, password, empty AAAA in full, UI settings survive
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Let core write AdGuardHome.yaml, start the pinned AdGuard on it, restart over an edited file
+        run: |
+          set -eu
+          work="$(mktemp -d)"
+          mkdir -p "$work/conf" "$work/work" "$work/secrets"
+          docker run --rm -v "$PWD:/src:ro" -v "$work:/work" python:3.12-slim-trixie bash -eu -c '
+            pip install -q --require-hashes -r /src/core/requirements.txt
+            pip install -q --no-deps --no-build-isolation /src/core
+            python - <<"PY"
+          from pathlib import Path
+          import bcrypt
+          from vibedpn.config import Config
+          from vibedpn.engine.adguard import ensure_adguard
+          hashed = bcrypt.hashpw(b"ci-adguard-123", bcrypt.gensalt(12)).decode()
+          Path("/work/secrets/htpasswd").write_text(f"admin:{hashed}\\n")
+          raw = {"version": 1, "role": "client", "network": {"lan_interface": "lo", "lan_subnet": "127.0.0.0/8", "lan_address": "127.0.0.2"}, "routing": {"mode": "full", "default_upstream": "vps"}, "upstreams": {"vps": {"enabled": True}}, "dns": {"web_port": 3001}}
+          assert ensure_adguard(Config.model_validate(raw), Path("/work/conf"), Path("/work/secrets")) is True
+          PY
+          '
+          start_adguard() {
+            docker run -d --name adguard --network host -v "$work/conf:/opt/adguardhome/conf" \
+              -v "$work/work:/opt/adguardhome/work" adguard/adguardhome:v0.107.79 >/dev/null
+            for _ in $(seq 30); do curl -s -o /dev/null http://127.0.0.2:3001/ && return 0; sleep 1; done
+            docker logs adguard; exit 1
+          }
+          start_adguard
+          login() {
+            curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
+              -d "{\"name\":\"admin\",\"password\":\"$1\"}" http://127.0.0.2:3001/control/login
+          }
+          test "$(login ci-adguard-123)" = 200
+          test "$(login wrong-password)" = 403
+          cat > "$work/dns.py" <<"PY"
+          import socket, struct, sys
+          qtype = int(sys.argv[1])
+          query = struct.pack("!HHHHHH", 7, 0x0100, 1, 0, 0, 0) + b"\x06google\x03com\x00" + struct.pack("!HH", qtype, 1)
+          sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          sock.settimeout(5)
+          sock.sendto(query, ("127.0.0.2", 53))
+          reply, _ = sock.recvfrom(2048)
+          print(struct.unpack("!H", reply[6:8])[0])
+          PY
+          test "$(docker run --rm -i --network host python:3.12-slim-trixie python - 28 < "$work/dns.py")" = 0
+          test "$(docker run --rm -i --network host python:3.12-slim-trixie python - 1 < "$work/dns.py")" -gt 0
+          # A setting made in the AdGuard UI (here: a disabled filter) survives core's next pass.
+          docker rm -f adguard >/dev/null
+          sudo sed -i "0,/enabled: false/s//enabled: true/" "$work/conf/AdGuardHome.yaml"
+          enabled_before="$(sudo grep -c "enabled: true" "$work/conf/AdGuardHome.yaml")"
+          docker run --rm -v "$PWD:/src:ro" -v "$work:/work" python:3.12-slim-trixie bash -eu -c '
+            pip install -q --require-hashes -r /src/core/requirements.txt
+            pip install -q --no-deps --no-build-isolation /src/core
+            python - <<"PY"
+          from pathlib import Path
+          from vibedpn.config import Config
+          from vibedpn.engine.adguard import ensure_adguard
+          raw = {"version": 1, "role": "client", "network": {"lan_interface": "lo", "lan_subnet": "127.0.0.0/8", "lan_address": "127.0.0.2"}, "routing": {"mode": "off", "default_upstream": "vps"}, "upstreams": {"vps": {"enabled": True}}, "dns": {"web_port": 3001}}
+          assert ensure_adguard(Config.model_validate(raw), Path("/work/conf"), Path("/work/secrets")) is True
+          PY
+          '
+          test "$(sudo grep -c "enabled: true" "$work/conf/AdGuardHome.yaml")" = "$enabled_before"
+          start_adguard
+          test "$(docker run --rm -i --network host python:3.12-slim-trixie python - 28 < "$work/dns.py")" -gt 0
+          docker rm -f adguard >/dev/null
+
   ui-auth:
     name: ui · /api/ behind the init password
     runs-on: ubuntu-24.04
@@ -370,7 +439,7 @@ jobs:
 
   images:
     name: image · ${{ matrix.image.name }}
-    needs: [python, shell, compose, install, firewall, router, ui-auth, tunnel]
+    needs: [python, shell, compose, install, firewall, router, ui-auth, adguard, tunnel]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
