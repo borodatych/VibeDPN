@@ -105,6 +105,19 @@ def set_routing(
     return _edit(path, mutate)
 
 
+def set_vps_lan_access(path: Path, allowed: bool) -> tuple[Config, bool]:
+    """Open or close the tunnel of the VPS uplink to the LAN (``upstreams.vps.lan_access``)."""
+
+    def mutate(data: CommentedMap) -> None:
+        upstreams = data.get("upstreams")
+        vps = upstreams.get("vps") if isinstance(upstreams, dict) else None
+        if not isinstance(vps, dict):
+            raise ConfigEditError(f"{path} has no upstreams.vps section")
+        vps["lan_access"] = allowed
+
+    return _edit(path, mutate)
+
+
 class DeviceNotFoundError(ConfigEditError):
     """``config.yaml`` has no device with this MAC or address."""
 

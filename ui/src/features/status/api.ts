@@ -31,3 +31,12 @@ export const routingUpdateMutation = root.lets
     return { routing: await coreRequest<RoutingView>('/routing', { method: 'PUT', body: input }) }
   })
   .mutation()
+
+export const vpsLanAccessMutation = root.lets
+  .mutation()
+  .use(authorizedOnlyPlugin)
+  .input(z.object({ allowed: z.boolean() }))
+  .loader(async ({ input }) => {
+    return { access: await coreRequest<{ allowed: boolean }>('/uplinks/vps/lan-access', { method: 'PUT', body: input }) }
+  })
+  .mutation()

@@ -69,6 +69,8 @@ devices: []
 upstreams:
   vps:
     enabled: {{ config.upstreams.vps.enabled | tojson }}
+    # Пускать ли устройства LAN к панели ноды и API ядра VPS через туннель (по умолчанию закрыто).
+    lan_access: {{ config.upstreams.vps.lan_access | tojson }}
   dpn:
     enabled: {{ config.upstreams.dpn.enabled | tojson }}
 {% if config.upstreams.dpn.country %}

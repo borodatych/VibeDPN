@@ -378,6 +378,12 @@ def router_ruleset(config: Config) -> str | None:
             ],
             mode_upstream=active.value if active else "",
             mode_mark=hex(UPLINKS[active].mark) if active else "",
+            # The VPS forwards no peer to private ranges (tunnel egress), so the only private
+            # target behind the tunnel is the VPS itself: its node panel and core API. Closing
+            # the ranges needs no knowledge of the tunnel subnet, which the peer file lacks.
+            vps_lan_closed=config.upstreams.vps.enabled and not config.upstreams.vps.lan_access,
+            vps_mark=hex(UPLINKS[Upstream.VPS].mark),
+            private_ranges=EGRESS_BLOCKED_RANGES,
         )
     )
 

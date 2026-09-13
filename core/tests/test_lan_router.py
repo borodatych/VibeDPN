@@ -303,3 +303,24 @@ def test_two_uplinks_both_get_their_kill_switch_and_rule(monkeypatch: pytest.Mon
         rule = steps.index(f"ip rule add fwmark {mark} table {table} priority {table}")
         assert unreachable < rule < marks
     assert not any(step.startswith("ip route flush") for step in steps)
+
+
+def test_the_tunnel_of_the_vps_is_closed_to_the_lan_unless_opened() -> None:
+    closed = router_ruleset(lan_box()) or ""
+    rule = next(line for line in closed.splitlines() if "upstreams.vps.lan_access false" in line)
+    assert 'iifname "eth0" meta mark 0x10' in rule
+    assert (
+        "10.0.0.0/8" in rule
+        and "100.64.0.0/10" in rule
+        and rule.strip().split(" comment")[0].endswith("drop")
+    )
+    opened = lan_box()
+    opened = opened.model_copy(
+        update={
+            "upstreams": opened.upstreams.model_copy(
+                update={"vps": opened.upstreams.vps.model_copy(update={"lan_access": True})}
+            )
+        }
+    )
+    assert "lan_access false" not in (router_ruleset(opened) or "")
+    assert "lan_access false" not in (router_ruleset(lan_box(upstream="dpn")) or "")

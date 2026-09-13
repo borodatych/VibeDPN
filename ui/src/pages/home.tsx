@@ -1,7 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Section, Sections } from '@/components/ui/section'
-import { boxStatusQuery, routingUpdateMutation } from '@/features/status/api'
+import { boxStatusQuery, routingUpdateMutation, vpsLanAccessMutation } from '@/features/status/api'
 import { summarizeStatus, type BoxStatus, type UplinkStatus } from '@/features/status/shared'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
@@ -22,6 +22,35 @@ const killSwitchText = (uplink: UplinkStatus, failopen: boolean) => {
   return uplink.kill_switch_route ? 'armed' : 'missing — run vibedpn doctor'
 }
 
+const VpsLanAccess = ({ allowed }: { allowed: boolean }) => {
+  const mutation = vpsLanAccessMutation.useMutation()
+  const change = async (next: boolean) => {
+    await mutation.mutateAsync({ allowed: next })
+    await boxStatusQuery.refetchQuery()
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <span>{allowed ? 'open' : 'closed'}</span>
+      {allowed ? (
+        <Button variant="outline-secondary" size="sm" loading={mutation.isPending} onClick={() => void change(false)}>
+          Close to the LAN
+        </Button>
+      ) : (
+        <Button
+          variant="outline-secondary"
+          size="sm"
+          loading={mutation.isPending}
+          confirm="Let every LAN device reach the node panel and the core API of the VPS?"
+          onClick={() => void change(true)}
+        >
+          Open to the LAN
+        </Button>
+      )}
+      {mutation.isError && <span className="text-xs text-destructive">{mutation.error.message}</span>}
+    </div>
+  )
+}
+
 const UplinkCard = ({ uplink, failopen }: { uplink: UplinkStatus; failopen: boolean }) => (
   <Section h2={uplink.name.toUpperCase()} size="lg" description={uplink.in_use ? 'in use' : 'not in use'}>
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 font-accent text-sm">
@@ -29,6 +58,14 @@ const UplinkCard = ({ uplink, failopen }: { uplink: UplinkStatus; failopen: bool
       <dd>{uplink.in_use ? gatewayText(uplink.gateway_alive) : '—'}</dd>
       <dt className="text-muted-foreground">Kill switch</dt>
       <dd>{uplink.in_use ? killSwitchText(uplink, failopen) : '—'}</dd>
+      {uplink.lan_access !== null && (
+        <>
+          <dt className="text-muted-foreground">Node panel and API of the VPS for the LAN</dt>
+          <dd>
+            <VpsLanAccess allowed={uplink.lan_access} />
+          </dd>
+        </>
+      )}
       <dt className="text-muted-foreground">Checked</dt>
       <dd>{uplink.checked_at ? formatDate(new Date(uplink.checked_at), 'date-time') : '—'}</dd>
       {uplink.error && (

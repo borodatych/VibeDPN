@@ -222,6 +222,10 @@ class VpsUplink(StrictModel):
     """
 
     enabled: bool = False
+    # Whether LAN devices whose traffic goes through the tunnel reach private addresses behind it:
+    # the node panel and the core API on the tunnel address of the VPS. Closed unless the owner
+    # opens it (decision of the owner, 2026-09-13).
+    lan_access: bool = False
 
 
 class DpnUplink(StrictModel):

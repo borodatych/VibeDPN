@@ -369,6 +369,32 @@ echo "full again: both devices through the VPS"
   fail "a routing mode change restarted core"
 "$CLI" status --dir "$BOX" | grep -q "uplink vps: gateway answers" || fail "vibedpn status does not show the vps gateway"
 
+log "the node panel and core API of the VPS: closed to the LAN unless opened (upstreams.vps.lan_access)"
+TUNNEL_SERVER_IP=10.78.0.1
+# A connect to a closed port of the VPS tunnel address: refused when the path is open (the server
+# answers with a reset), a timeout when the box drops it.
+tunnel_verdict() {
+  in_device "$PY" -c 'import socket, sys
+try:
+    socket.create_connection((sys.argv[1], 9), 3).close(); print("open")
+except ConnectionRefusedError:
+    print("open")
+except OSError:
+    print("dropped")' "$TUNNEL_SERVER_IP"
+}
+lan_access() {
+  curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' \
+    -d "{\"allowed\":$1}" "http://127.0.0.1:4480/uplinks/vps/lan-access"
+}
+[ "$(tunnel_verdict)" = dropped ] || fail "the LAN reaches the tunnel address of the VPS with lan_access false"
+[ "$(lan_access true)" = 200 ] || fail "PUT /uplinks/vps/lan-access true failed"
+[ "$(tunnel_verdict)" = open ] || fail "lan_access true does not let the LAN reach the tunnel address of the VPS"
+[ "$(lan_access false)" = 200 ] || fail "PUT /uplinks/vps/lan-access false failed"
+[ "$(tunnel_verdict)" = dropped ] || fail "closing lan_access again does not drop the LAN at the tunnel"
+[ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)" = "$core_started" ] ||
+  fail "a lan_access change restarted core"
+echo "vps tunnel for the LAN: closed by default, opened and closed live"
+
 log "the LAN never reaches a gateway container directly"
 in_device "$PY" -c "$PROBE" "$BOX_LAN_IP" ||
   fail "the ICMP probe does not work from the device netns, so the next check would prove nothing"

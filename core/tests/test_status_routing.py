@@ -261,3 +261,22 @@ def test_client_reads_status_and_sets_routing() -> None:
     failing = httpx.MockTransport(lambda _request: httpx.Response(404, json={"detail": "no LAN"}))
     with pytest.raises(core_api.RoutingRequestError, match="no LAN"):
         core_api.fetch_status(4480, transport=failing)
+
+
+def test_the_vps_tunnel_opens_to_the_lan_live(tmp_path: Path) -> None:
+    applied: list[bool] = []
+
+    def apply(config: Config) -> list[Upstream]:
+        applied.append(config.upstreams.vps.lan_access)
+        return [Upstream.VPS]
+
+    client, path = box(tmp_path, apply=apply)
+    vps = next(item for item in client.get("/status").json()["uplinks"] if item["name"] == "vps")
+    assert vps["lan_access"] is False  # closed unless the owner opens it
+    response = client.put("/uplinks/vps/lan-access", json={"allowed": True})
+    assert response.status_code == 200 and response.json() == {"allowed": True}
+    assert load_config(path).upstreams.vps.lan_access is True
+    assert applied == [True]
+    assert "lan_access: true" in path.read_text(encoding="utf-8")
+    client, _ = box(tmp_path, vps_config())
+    assert client.put("/uplinks/vps/lan-access", json={"allowed": True}).status_code == 404

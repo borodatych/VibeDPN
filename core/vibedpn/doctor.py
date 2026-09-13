@@ -533,6 +533,8 @@ def _lan_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
     ipv6 = _lan_ipv6_result(config, facts)
     if ipv6 is not None:
         results.append(ipv6)
+    if config.upstreams.vps.enabled:
+        results.append(_vps_lan_access_result(config))
     if config.ui.enabled:
         results.append(_ui_name_result(config))
         variant = _ui_variant_result(config, facts.memory_bytes)
@@ -541,6 +543,21 @@ def _lan_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
     if facts.exits is not None:
         results.extend(_exit_results(config, facts.exits))
     return results
+
+
+def _vps_lan_access_result(config: Config) -> CheckResult:
+    """Informational: whether LAN devices reach the node panel and core API of the VPS."""
+    if config.upstreams.vps.lan_access:
+        return CheckResult(
+            "vps lan access",
+            Verdict.OK,
+            "open: LAN devices reach the node panel and core API of the VPS through the tunnel",
+        )
+    return CheckResult(
+        "vps lan access",
+        Verdict.OK,
+        "closed: LAN devices reach no private address through the tunnel",
+    )
 
 
 def _ui_variant_result(config: Config, memory: int | None) -> CheckResult | None:

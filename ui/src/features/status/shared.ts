@@ -8,6 +8,7 @@ export type UplinkStatus = {
   error: string
   gateway_route: boolean | null
   kill_switch_route: boolean | null
+  lan_access: boolean | null
 }
 
 export type BoxStatus = {

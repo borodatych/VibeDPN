@@ -17,6 +17,7 @@ const base: BoxStatus = {
       error: '',
       gateway_route: true,
       kill_switch_route: true,
+      lan_access: false,
     },
   ],
 }

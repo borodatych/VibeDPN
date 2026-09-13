@@ -41,6 +41,9 @@ table inet vibedpn_router {
     iifname "{{ lan_interface }}" ip daddr {{ upstreams_subnet }} drop comment "the LAN never reaches gateway containers directly, only through them"
     iifname "{{ lan_interface }}" meta nfproto ipv6 drop comment "the uplinks are IPv4: LAN IPv6 never crosses the box around them"
     iifname "{{ lan_interface }}" meta mark {{ block_mark }} drop comment "policy block: nothing beyond the LAN"
+{% if vps_lan_closed %}
+    iifname "{{ lan_interface }}" meta mark {{ vps_mark }} ip daddr { {{ private_ranges | join(", ") }} } drop comment "upstreams.vps.lan_access false: through the tunnel the LAN reaches no private address, the tunnel address of the VPS included"
+{% endif %}
   }
   chain output {
     type filter hook output priority filter; policy accept;

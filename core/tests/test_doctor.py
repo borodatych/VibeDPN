@@ -633,3 +633,11 @@ def test_a_full_panel_on_a_small_host_is_warned() -> None:
     small = by_name(evaluate(facts(memory_bytes=2 * 1024**3)))["ui variant"]
     assert small.verdict is Verdict.WARN and "lite" in small.hint
     assert by_name(evaluate(facts(memory_bytes=8 * 1024**3)))["ui variant"].verdict is Verdict.OK
+
+
+def test_the_lan_access_of_the_vps_tunnel_is_reported() -> None:
+    raw = parse_yaml(render_config(build_config(Answers(Role.CLIENT, password="secret123"), LAN)))
+    assert isinstance(raw, dict)
+    line = by_name(evaluate(facts(config=Config.model_validate(raw))))["vps lan access"]
+    assert line.verdict is Verdict.OK and line.detail.startswith("closed")
+    assert "vps lan access" not in by_name(evaluate(facts()))  # home box without the vps uplink

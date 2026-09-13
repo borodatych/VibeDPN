@@ -51,6 +51,8 @@ devices: []
 upstreams:
   vps:
     enabled: false
+    # Пускать ли устройства LAN к панели ноды и API ядра VPS через туннель (по умолчанию закрыто).
+    lan_access: false
   dpn:
     enabled: true
     country: DE

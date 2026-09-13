@@ -20,6 +20,8 @@ from vibedpn.api.models import (
     RoutingUpdate,
     RoutingView,
     UplinkStatus,
+    VpsLanAccessUpdate,
+    VpsLanAccessView,
 )
 from vibedpn.api.state import BoxState
 from vibedpn.api.uplink import UplinkWatchers
@@ -30,6 +32,7 @@ from vibedpn.config_edit import (
     DeviceNotFoundError,
     set_device,
     set_routing,
+    set_vps_lan_access,
     unset_device,
 )
 from vibedpn.engine.adguard import AdguardError, set_aaaa_disabled
@@ -248,6 +251,7 @@ def _uplink_statuses(
                 error="" if state is None else state.error,
                 gateway_route=facts.gateway_routes.get(upstream.value),
                 kill_switch_route=facts.last_resort_routes.get(upstream.value),
+                lan_access=box.upstreams.vps.lan_access if upstream is Upstream.VPS else None,
             )
         )
     return result
@@ -315,6 +319,21 @@ def _add_routing_routes(
             default_upstream=routing.default_upstream.value,
             adguard=adguard,
         )
+
+    @application.put("/uplinks/vps/lan-access", response_model=VpsLanAccessView)
+    def put_vps_lan_access(request: VpsLanAccessUpdate) -> VpsLanAccessView:
+        box = current()
+        if state is None or box is None or box.network is None:
+            raise HTTPException(status_code=404, detail=NO_LAN)
+        try:
+            updated = state.edit(lambda path: set_vps_lan_access(path, request.allowed))
+        except ConfigEditError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RouterError as exc:
+            raise HTTPException(
+                status_code=503, detail=f"router refused the change, config.yaml restored: {exc}"
+            ) from exc
+        return VpsLanAccessView(allowed=updated.upstreams.vps.lan_access)
 
 
 def create_app(

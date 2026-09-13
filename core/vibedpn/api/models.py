@@ -83,6 +83,7 @@ class UplinkStatus(BaseModel):
     error: str
     gateway_route: bool | None  # None: the route table could not be read
     kill_switch_route: bool | None
+    lan_access: bool | None  # upstreams.vps.lan_access; None for an uplink without the setting
 
 
 class BoxStatus(BaseModel):
@@ -110,3 +111,11 @@ class RoutingView(BaseModel):
     # applied: AdGuard follows the mode already; pending: it did not answer and catches up at the
     # next start of core; none: this box runs no AdGuard.
     adguard: Literal["applied", "pending", "none"]
+
+
+class VpsLanAccessUpdate(BaseModel):
+    allowed: bool
+
+
+class VpsLanAccessView(BaseModel):
+    allowed: bool
