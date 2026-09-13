@@ -280,6 +280,8 @@ def _dpn_status(consumer: ConsumerStatus | None) -> DpnStatus | None:
         connection=state.connection,
         country=state.country,
         error=state.error,
+        balance_wei=state.balance_wei,
+        channel_address=state.channel_address,
     )
 
 

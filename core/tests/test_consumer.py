@@ -43,7 +43,13 @@ class FakeNode:
             ),
             ("POST", "/identities"): self.create,
             ("GET", f"/identities/{IDENTITY}"): lambda: httpx.Response(
-                200, json={"id": IDENTITY, "registration_status": self.registration}
+                200,
+                json={
+                    "id": IDENTITY,
+                    "registration_status": self.registration,
+                    "channel_address": "0xchannel",
+                    "balance_tokens": {"wei": "1500000000000000000", "human": "1.5"},
+                },
             ),
             ("GET", "/connection"): lambda: httpx.Response(200, json={"status": self.connection}),
             ("PUT", "/connection"): self.connect,
@@ -196,3 +202,9 @@ def test_countries_group_the_proposals_with_the_lowest_prices() -> None:
         ("NL", 1, 50, 70),
     ]
     assert seen == ["http://consumer/proposals?service_type=wireguard"]
+
+
+def test_the_round_reports_the_balance_and_the_top_up_address() -> None:
+    node = FakeNode(identities=[IDENTITY], registration="Unregistered", connection="NotConnected")
+    state = reconcile(client(node), "secret", None, wanted=True)
+    assert state.balance_wei == "1500000000000000000" and state.channel_address == "0xchannel"

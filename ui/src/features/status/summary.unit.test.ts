@@ -20,6 +20,7 @@ const base: BoxStatus = {
       lan_access: false,
     },
   ],
+  dpn: null,
 }
 
 const withGateway = (alive: boolean | null): BoxStatus => ({

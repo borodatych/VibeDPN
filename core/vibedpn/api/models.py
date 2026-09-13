@@ -94,6 +94,8 @@ class DpnStatus(BaseModel):
     connection: str
     country: str | None
     error: str
+    balance_wei: str  # MYST in wei (18 decimals)
+    channel_address: str  # top-up address: MYST on Polygon
 
 
 class BoxStatus(BaseModel):

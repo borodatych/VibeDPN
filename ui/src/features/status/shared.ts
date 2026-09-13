@@ -11,6 +11,25 @@ export type UplinkStatus = {
   lan_access: boolean | null
 }
 
+/** The Mysterium consumer of uplink dpn as core last saw it. */
+export type DpnStatus = {
+  identity: string | null
+  registration: string
+  connection: string
+  country: string | null
+  error: string
+  balance_wei: string
+  channel_address: string
+}
+
+/** One country of `GET /dpn/countries`; prices in wei of MYST. */
+export type DpnCountry = {
+  country: string
+  nodes: number
+  min_per_hour_wei: string
+  min_per_gib_wei: string
+}
+
 export type BoxStatus = {
   mode: 'off' | 'full' | 'smart'
   default_upstream: 'vps' | 'dpn'
@@ -18,6 +37,7 @@ export type BoxStatus = {
   rules_current: boolean | null
   lan_without_exit: boolean
   uplinks: UplinkStatus[]
+  dpn: DpnStatus | null
 }
 
 /** The answer of core's `PUT /routing`. */

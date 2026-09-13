@@ -10,7 +10,7 @@ request carries no ``kill_switch`` field, because ``kill_switch: true`` *disable
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from vibedpn.engine.myst import MystError, TequilaClient
 
@@ -37,6 +37,8 @@ class ConsumerState:
     connection: str
     country: str | None
     error: str = ""
+    balance_wei: str = "0"  # MYST in wei; before registration it is the MYST on channel_address
+    channel_address: str = ""  # where MYST on Polygon tops the consumer up
 
 
 def _field(body: object, name: str) -> str:
@@ -63,7 +65,24 @@ def _identity(client: TequilaClient, passphrase: str) -> str:
 def reconcile(
     client: TequilaClient, passphrase: str, country: str | None, wanted: bool
 ) -> ConsumerState:
-    """One round toward config.yaml; failures of the node end the round in ``error``."""
+    """One round toward config.yaml; failures of the node end the round in ``error``. The
+    balance and the top-up address come along whenever the node gave them."""
+    known: dict[str, str] = {}
+    state = _round(client, passphrase, country, wanted, known)
+    return replace(
+        state,
+        balance_wei=known.get("balance_wei", "0"),
+        channel_address=known.get("channel_address", ""),
+    )
+
+
+def _round(
+    client: TequilaClient,
+    passphrase: str,
+    country: str | None,
+    wanted: bool,
+    known: dict[str, str],
+) -> ConsumerState:
     identity: str | None = None
     registration = "Unknown"
     connection = "Unknown"
@@ -76,6 +95,9 @@ def reconcile(
             )
         status, body = client.send("GET", f"/identities/{identity}")
         registration = _field(body, "registration_status") or "Unknown"
+        balance = body.get("balance_tokens") if isinstance(body, dict) else None
+        known["balance_wei"] = _field(balance, "wei") or "0"
+        known["channel_address"] = _field(body, "channel_address")
         status, body = client.send("GET", "/connection")
         connection = _field(body, "status") or "Unknown"
         session_country = _session_country(body)

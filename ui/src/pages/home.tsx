@@ -1,8 +1,16 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Section, Sections } from '@/components/ui/section'
-import { boxStatusQuery, routingUpdateMutation, vpsLanAccessMutation } from '@/features/status/api'
-import { summarizeStatus, type BoxStatus, type UplinkStatus } from '@/features/status/shared'
+import { XSelect } from '@/components/ui/select'
+import {
+  boxStatusQuery,
+  dpnCountriesQuery,
+  dpnCountryMutation,
+  routingUpdateMutation,
+  vpsLanAccessMutation,
+} from '@/features/status/api'
+import { formatMyst } from '@/features/node/shared'
+import { summarizeStatus, type BoxStatus, type DpnStatus, type UplinkStatus } from '@/features/status/shared'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import { formatDate } from '@/utils/date'
@@ -131,6 +139,53 @@ const RoutingControls = ({ status }: { status: BoxStatus }) => {
   )
 }
 
+const ANY_COUNTRY = 'any'
+
+const DpnCard = ({ dpn }: { dpn: DpnStatus }) => {
+  const countries = dpnCountriesQuery.useQuery()
+  const mutation = dpnCountryMutation.useMutation()
+  const offers = countries.data?.countries ?? []
+  const options = [
+    { value: ANY_COUNTRY, label: 'Any country' },
+    ...offers.map((offer) => ({
+      value: offer.country,
+      label: `${offer.country} · ${offer.nodes} nodes · from ${formatMyst(offer.min_per_gib_wei)} MYST/GiB`,
+    })),
+  ]
+  const choose = async (value: string) => {
+    await mutation.mutateAsync({ country: value === ANY_COUNTRY ? null : value })
+    await boxStatusQuery.refetchQuery()
+  }
+  return (
+    <Section h2="Mysterium exit (dpn)" size="lg" description={dpn.identity ? `identity ${dpn.identity}` : 'no identity yet'}>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 font-accent text-sm">
+        <dt className="text-muted-foreground">Registration</dt>
+        <dd>{dpn.registration}</dd>
+        <dt className="text-muted-foreground">Connection</dt>
+        <dd>{dpn.connection}</dd>
+        <dt className="text-muted-foreground">Balance</dt>
+        <dd>{formatMyst(dpn.balance_wei)} MYST</dd>
+        <dt className="text-muted-foreground">Top up (MYST on Polygon)</dt>
+        <dd className="font-mono text-xs break-all">{dpn.channel_address || '—'}</dd>
+        <dt className="text-muted-foreground">Country</dt>
+        <dd>
+          <XSelect
+            options={options}
+            value={dpn.country ?? ANY_COUNTRY}
+            disabled={mutation.isPending}
+            onValueChange={(value) => void choose(String(value))}
+          />
+          {countries.data?.reason && (
+            <p className="mt-1 text-xs text-muted-foreground">Countries unavailable: {countries.data.reason}</p>
+          )}
+        </dd>
+      </dl>
+      {dpn.error && <p className="mt-3 text-sm text-warning">{dpn.error}</p>}
+      {mutation.isError && <p className="mt-3 text-sm text-destructive">{mutation.error.message}</p>}
+    </Section>
+  )
+}
+
 export const homePage = generalLayout.lets
   .page('/')
   .head({
@@ -150,6 +205,7 @@ export const homePage = generalLayout.lets
           </div>
         </Section>
         <RoutingControls status={status} />
+        {status.dpn && <DpnCard dpn={status.dpn} />}
         {status.uplinks
           .filter((uplink) => uplink.enabled)
           .map((uplink) => (

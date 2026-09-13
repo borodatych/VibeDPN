@@ -176,6 +176,37 @@ leaked="$(device_exit)"
   fail "the LAN device leaves as $leaked through myst-consumer without a session: traffic bypasses the dpn tunnel"
 echo "routing full through dpn without a session: the LAN device has no exit"
 
+log "switching the mode never cuts a bypass device"
+routing_put() {
+  curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' \
+    -d "{\"mode\":\"$1\"}" "http://127.0.0.1:4480/routing"
+}
+"$CLI" device set "$DEVICE_IP" bypass --dir "$BOX" >/dev/null || fail "vibedpn device set bypass failed"
+i=0
+until [ "$(device_exit)" = "$host_exit" ]; do
+  i=$((i + 5))
+  [ "$i" -lt 60 ] || fail "with policy bypass the LAN device lost its exit"
+  sleep 5
+done
+: >"$WORK/bypass-probes"
+(
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    # an empty answer is written as an empty line: a lost probe must count
+    printf '%s\n' "$(device_exit)" >>"$WORK/bypass-probes"
+    sleep 1
+  done
+) &
+probes=$!
+sleep 2
+[ "$(routing_put off)" = 200 ] || fail "PUT /routing mode off failed"
+sleep 3
+[ "$(routing_put full)" = 200 ] || fail "PUT /routing mode full failed"
+wait "$probes"
+lost="$(grep -cvx "$host_exit" "$WORK/bypass-probes" || true)"
+[ "$lost" = 0 ] || fail "the bypass device lost its exit in $lost of 12 probes while the mode switched"
+echo "12 probes across off and back to full: the bypass device never lost its exit"
+"$CLI" device unset "$DEVICE_IP" --dir "$BOX" >/dev/null || fail "vibedpn device unset failed"
+
 log "TequilAPI of the consumer: core reaches it, the LAN does not"
 i=0
 until curl -s --max-time 5 "http://127.0.0.1:4480/status" | grep -q '"identity":"0x'; do

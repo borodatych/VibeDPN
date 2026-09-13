@@ -85,11 +85,11 @@ AdGuard и панель.
 для этого consumer-identity (ключ — в `data/myst-consumer`, парольная фраза — в
 `secrets/myst-consumer-passphrase`), но ни регистрировать её, ни платить молча не станет.
 
-1. **Узнайте адрес пополнения.** Это `channel_address` identity. Ядро видит identity в `/status`
-   (блок `dpn`), сам адрес отдаёт нода consumer:
+1. **Узнайте адрес пополнения.** Это `channel_address` identity — строка «Top up» в карточке
+   «Mysterium exit (dpn)» на экране статуса панели или поле `channel_address` блока `dpn` в статусе ядра:
 
    ```bash
-   curl -s http://10.77.0.20:4050/identities/<identity из /status>
+   curl -s http://127.0.0.1:4480/status
    ```
 
 2. **Переведите на него MYST в сети Polygon** — не Ethereum. Контракт MYST на Polygon —
