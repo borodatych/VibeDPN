@@ -81,6 +81,7 @@ services:
       PORT: ${VIBEDPN_UI_PORT:-80}
       SERVER_URL: http://${VIBEDPN_LAN_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}
       CLIENT_URL: http://${VIBEDPN_LAN_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}
+      UI_HOST_NAME: ${VIBEDPN_UI_HOST_NAME:-vibedpn.lan}
       CORE_API_PORT: ${VIBEDPN_API_PORT:-4480}
       UI_DB_PORT: ${VIBEDPN_UI_DB_PORT:-5480}
     healthcheck:

@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 from vibedpn import cli, doctor
 from vibedpn.bootstrap import Answers, HostFacts, build_config, render_config, secrets_present
 from vibedpn.compose import ServiceStatus
-from vibedpn.config import Config, DeviceConfig, DevicePolicy, FirewallConfig, Role
+from vibedpn.config import Config, DeviceConfig, DevicePolicy, FirewallConfig, Role, parse_yaml
 from vibedpn.detect import Interface
 from vibedpn.doctor import (
     CheckResult,
@@ -610,3 +610,17 @@ def test_tunnel_egress_verdicts() -> None:
     unlisted = verdict(egress_table=None, egress_error="nft cannot list tables: not root")
     assert unlisted.verdict is Verdict.WARN
     assert "tunnel egress" not in by_name(evaluate(facts()))  # a home box has no tunnel server
+
+
+def test_the_panel_name_is_published_only_with_dns() -> None:
+    published = by_name(evaluate(facts()))["ui name"]
+    assert published.verdict is Verdict.OK
+    assert published.detail.startswith("http://vibedpn.lan -> 192.168.1.50")
+    raw = parse_yaml(render_config(home_config()))
+    assert isinstance(raw, dict)
+    raw["dns"] = {"enabled": False}
+    raw["ui"] = {"port": 8080, "host_name": "box.home"}
+    silent = by_name(evaluate(facts(config=Config.model_validate(raw))))["ui name"]
+    assert silent.verdict is Verdict.WARN
+    assert "box.home is not published" in silent.detail
+    assert "http://192.168.1.50:8080" in silent.hint

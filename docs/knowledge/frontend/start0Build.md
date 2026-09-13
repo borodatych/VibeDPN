@@ -31,12 +31,14 @@ better-auth позволяет заменить `emailAndPassword.password.hash`
 **Грабли:**
 - Пак сам занимает `/api/auth/*` и `/api/health`, поэтому прежнее правило nginx «`/api/` → ядро» с ним несовместимо: ядро переехало под `/api/core/*`, middleware Point0 по пути (документация Point0, раздел middleware) проверяет сессию и проксирует на `127.0.0.1`.
 - Point0 разворачивает `bunServeConfig` в `Bun.serve`, а у Bun `hostname` по умолчанию `0.0.0.0`: без явного адреса панель слушала бы все интерфейсы, включая WAN.
-- Rate limit better-auth по умолчанию выключен в development; включён явно. Специальное правило `/sign-in/email` — 3 запроса за 10 с: на прогоне 429 со второй неверной попытки подряд. Клиента он узнаёт по `x-forwarded-for`, прямого прокси перед панелью нет — поведение без заголовка проверено только прогоном на loopback.
-- `trustedOrigins` — `CLIENT_URL` = `http://<LAN-адрес>:<порт>`: вход по имени хоста вместо адреса better-auth отвергнет по Origin. Имя хоста в конфиге коробки — отдельная задача.
+- Rate limit better-auth по умолчанию выключен в development; включён явно. Встроенное правило `/sign-in/email` — 3 запроса за 10 с (до ~1000 паролей в час); своё — 5 за 300 с (`customRules`).
+- **Подмена адреса обходила лимит (исправлено 2026-09-13).** better-auth берёт IP только из заголовков (по умолчанию `x-forwarded-for`), а прокси перед панелью нет: шесть неверных паролей подряд с новым `X-Forwarded-For` — все 401, без заголовка — 429. Point0 знает адрес сокета (`request.from.ip` = `bunServer.requestIP`), поэтому middleware `/api/auth/*` удаляет пересылочные заголовки и ставит `x-vibedpn-client-ip`, а `advanced.ipAddress.ipAddressHeaders` читает только его. После правки: 429 при подмене `X-Forwarded-For` и `X-Real-IP`.
+- `trustedOrigins` было `[CLIENT_URL]`: вход со страницы, открытой по имени, давал 403 *Invalid origin*. Теперь — адрес и `ui.host_name` на той же схеме и порту (`UI_HOST_NAME`). Порт 80 в `CLIENT_URL` не мешает: Origin без порта принимается (проверено исполнением).
 - Cookie без `Secure`: у панели HTTP в LAN, `useSecureCookies: false` явно, `SameSite=Strict` через `advanced.cookies.session_token.attributes`.
 - `bun install --ignore-scripts` в Dockerfile ломает сборку: `point0 build` падает с *Error: Bun's postinstall script was not run.* (первый прогон `ui-image`, воспроизведено в чистой копии). Скрипты зависимостей остаются включены; Bun и так запускает их только у доверенных пакетов.
 - `secrets/ui-db-password` пишется без перевода строки: он собирается в `DATABASE_URL`, а при смене пароль базы разошёлся бы с томом `data/ui-db` — поэтому `init` не перетирает эти секреты.
 **Источники:** https://www.better-auth.com/docs/authentication/email-password ,
 https://www.better-auth.com/docs/concepts/rate-limit , https://www.better-auth.com/docs/concepts/cookies ,
+https://www.better-auth.com/docs/reference/options (`trustedOrigins`, `advanced.ipAddress`),
 https://bun.com/docs/runtime/hashing , https://bun.com/docs/runtime/http/server ,
 https://hub.docker.com/_/postgres (`POSTGRES_PASSWORD_FILE`, `/var/lib/postgresql/data`).

@@ -37,3 +37,13 @@ https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/v0.107.79/internal/hom
 https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/v0.107.79/internal/configmigrate/configmigrate.go ,
 https://adguard-dns.io/kb/adguard-home/configuration/ , https://adguard-dns.io/kb/adguard-home/faq/ ,
 https://github.com/AdguardTeam/AdGuardHome/releases/latest .
+
+## [провайдер] Перезапись имени коробки: `filtering.rewrites` и обязательный `enabled`
+
+**Контекст:** Stage 6, имя панели `ui.host_name` (`engine/adguard.py`), 2026-09-13.
+**Суть:** перезаписи DNS живут в `filtering.rewrites` (с v0.107.37, раньше — `dns.rewrites`), запись — `domain` и `answer`.
+Документация поле `enabled` не называет, но в v0.107.79 записи конфига — `LegacyRewrite` с `Enabled bool yaml:"enabled"`, и `findRewrites` пропускает запись с `!e.Enabled`: без `enabled: true` своя запись молча не действует.
+AdGuard выбрасывает незнакомые ключи и комментарии, поэтому, какая перезапись принадлежит ядру, файл сказать не может: последнее опубликованное имя ядро хранит в `data/core/adguard-host-name` и при переименовании снимает запись с прежним именем.
+**Источники:** https://github.com/AdguardTeam/AdGuardHome/wiki/Configuration ,
+https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/filtering/rewrites.go ,
+https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/filtering/rewrite/item.go .

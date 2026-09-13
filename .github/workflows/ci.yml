@@ -411,7 +411,7 @@ jobs:
             -v "$work/secrets/ui-auth-secret:/run/secrets/ui-auth-secret:ro")
           base=http://127.0.0.1:8088
           docker run -d --name ui --network host -e UI_LISTEN_HOST=127.0.0.1 -e PORT=8088 \
-            -e SERVER_URL=$base -e CLIENT_URL=$base -e CORE_API_PORT=4480 -e UI_DB_PORT=5480 \
+            -e SERVER_URL=$base -e CLIENT_URL=$base -e UI_HOST_NAME=vibedpn.lan -e CORE_API_PORT=4480 -e UI_DB_PORT=5480 \
             "${secrets[@]}" vibedpn-ui:ci >/dev/null
           for _ in $(seq 60); do curl -fsS -o /dev/null $base/api/health && break; sleep 1; done
           code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
@@ -428,13 +428,23 @@ jobs:
           test "$(sign_in wrong-password)" = 401
           test "$(sign_in "$password")" = 200
           test "$(code -b "$work/jar" $base/api/core/health)" = 200
+          # The box name (ui.host_name) is an allowed origin; any other name is not.
+          by_origin() { curl -s -o /dev/null -w '%{http_code}' -H "Origin: $1" -H 'Content-Type: application/json' \
+            -d "{\"email\":\"admin@vibedpn.lan\",\"password\":\"$password\"}" $base/api/auth/sign-in/email; }
+          test "$(by_origin http://vibedpn.lan:8088)" = 200
+          test "$(by_origin http://evil.lan:8088)" = 403
           # Nobody signs up.
           signup="$(curl -s -o /dev/null -w '%{http_code}' -H "Origin: $base" -H 'Content-Type: application/json' \
             -d '{"email":"x@example.com","password":"12345678","name":"x"}' $base/api/auth/sign-up/email)"
           test "$signup" != 200
-          # Brute force is limited.
+          # Brute force is limited, and a forged X-Forwarded-For does not reset the count.
           limited=no
-          for _ in 1 2 3 4 5; do [ "$(sign_in wrong-password)" = 429 ] && limited=yes; done
+          for n in 1 2 3 4 5 6; do
+            answer="$(curl -s -o /dev/null -w '%{http_code}' -H "Origin: $base" -H "X-Forwarded-For: 10.9.9.$n" \
+              -H 'Content-Type: application/json' -d '{"email":"admin@vibedpn.lan","password":"wrong-password"}' \
+              $base/api/auth/sign-in/email)"
+            [ "$answer" = 429 ] && limited=yes
+          done
           test "$limited" = yes
           docker rm -f ui >/dev/null
           # A missing or empty secret: the container refuses to start.

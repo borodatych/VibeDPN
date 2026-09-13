@@ -94,8 +94,9 @@ def main() -> None:
     secrets_dir = Path(os.environ.get(SECRETS_DIR_ENV, DEFAULT_SECRETS_DIR))
     # Before the API, like the tunnel below: compose starts adguard only once core is healthy.
     adguard_dir = Path(os.environ.get(ADGUARD_DIR_ENV, DEFAULT_ADGUARD_DIR))
+    data_dir = Path(os.environ.get(DATA_DIR_ENV, DEFAULT_DATA_DIR))
     try:
-        adguard = ensure_adguard(config, adguard_dir, secrets_dir)
+        adguard = ensure_adguard(config, adguard_dir, secrets_dir, data_dir)
     except AdguardError as exc:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None
@@ -119,7 +120,6 @@ def main() -> None:
             )
     devices = None
     if config.network is not None:
-        data_dir = Path(os.environ.get(DATA_DIR_ENV, DEFAULT_DATA_DIR))
         try:
             devices = DeviceStore(data_dir / DB_FILE)
         except DeviceError as exc:

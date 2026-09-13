@@ -118,6 +118,8 @@ dns:
 ui:
   enabled: {{ config.ui.enabled | tojson }}
   port: {{ config.ui.port }}
+  # Имя, по которому устройства открывают панель: AdGuard отвечает на него адресом коробки.
+  host_name: {{ config.ui.host_name }}
 {% endif %}
 
 # API ядра: слушает только 127.0.0.1, на LAN его отдаёт панель ui под /api/core/ только после входа.

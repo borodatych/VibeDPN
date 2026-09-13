@@ -6,10 +6,31 @@ import type { Request0 } from '@point0/core/request0'
 import '@point0/core/server-only'
 import { betterAuth } from 'better-auth'
 import { hashBoxPassword, verifyBoxPassword } from './box-password'
+import { CLIENT_IP_HEADER } from './client-ip'
 import { prismaAdapter } from 'better-auth/adapters/prisma'
 import { admin as adminPlugin, testUtils } from 'better-auth/plugins'
 
 const l = logger.child('auth')
+
+const SIGN_IN_PATH = '/sign-in/email'
+const SIGN_IN_WINDOW_SECONDS = 300
+const SIGN_IN_MAX_ATTEMPTS = 5
+
+/**
+ * Origins the panel is opened from: the LAN address (`CLIENT_URL`) and the box name devices resolve through AdGuard
+ * (`UI_HOST_NAME`, `ui.host_name` in config.yaml), on the same scheme and port. Anything else is refused by origin.
+ */
+const panelOrigins = () => {
+  const byAddress = new URL(serverEnv.CLIENT_URL)
+  const origins = [byAddress.origin]
+  const hostName = serverEnv.UI_HOST_NAME
+  if (hostName) {
+    const byName = new URL(byAddress.origin)
+    byName.hostname = hostName
+    origins.push(byName.origin)
+  }
+  return origins
+}
 
 /**
  * Configured better-auth instance for the server.
@@ -22,7 +43,7 @@ const l = logger.child('auth')
 export const authServer = betterAuth({
   secret: serverEnv.BETTER_AUTH_SECRET,
   baseURL: serverEnv.SERVER_URL,
-  trustedOrigins: [serverEnv.CLIENT_URL],
+  trustedOrigins: panelOrigins(),
   database: prismaAdapter(prisma, {
     provider: 'postgresql',
   }),
@@ -35,6 +56,10 @@ export const authServer = betterAuth({
     database: {
       generateId: 'uuid',
     },
+    // Only the socket peer, set by withSocketClientIp; forwarding headers from the LAN are claims, not facts.
+    ipAddress: {
+      ipAddressHeaders: [CLIENT_IP_HEADER],
+    },
     // The panel is plain HTTP on the LAN: a Secure cookie would never come back to it.
     useSecureCookies: false,
     cookies: {
@@ -44,6 +69,10 @@ export const authServer = betterAuth({
   // On in every mode, not only in production: one password guards the panel, the core API and the node panel.
   rateLimit: {
     enabled: true,
+    customRules: {
+      // The built-in 3 per 10 s still lets ~1000 passwords an hour through.
+      [SIGN_IN_PATH]: { window: SIGN_IN_WINDOW_SECONDS, max: SIGN_IN_MAX_ATTEMPTS },
+    },
   },
   plugins: [adminPlugin(), ...(env.mode.is.test ? [testUtils()] : [])],
   databaseHooks: {

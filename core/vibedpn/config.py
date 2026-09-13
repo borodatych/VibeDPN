@@ -26,6 +26,7 @@ PORT_RANGE_PATTERN = re.compile(r"^(\d{1,5})-(\d{1,5})$")
 DOMAIN_PATTERN = re.compile(
     r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$"
 )
+DEFAULT_UI_HOST_NAME = "vibedpn.lan"
 DOH_URL_PATTERN = re.compile(r"^https://[^\s/]+/\S*$")
 HOSTNAME_PATTERN = re.compile(
     r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$"
@@ -313,6 +314,13 @@ class UiConfig(StrictModel):
 
     enabled: bool = True
     port: Port = 80
+    # The name devices open the panel by; AdGuard answers it with network.lan_address.
+    host_name: str = DEFAULT_UI_HOST_NAME
+
+    @field_validator("host_name")
+    @classmethod
+    def check_host_name(cls, value: str) -> str:
+        return normalize_domain(value)
 
 
 class ApiConfig(StrictModel):
@@ -498,6 +506,7 @@ class Config(StrictModel):
         if self.network is not None:
             env["VIBEDPN_LAN_IP"] = str(self.network.lan_address)
             env["VIBEDPN_UI_PORT"] = str(self.ui.port)
+            env["VIBEDPN_UI_HOST_NAME"] = self.ui.host_name
         if self.provider.enabled:
             start, end = parse_port_range(self.provider.udp_ports)
             env["VIBEDPN_MYST_UDP_FROM"] = str(start)

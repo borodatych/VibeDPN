@@ -25,6 +25,9 @@ CONF_FILE = "AdGuardHome.yaml"
 # migrated and rewritten, a newer one makes AdGuard refuse to start (docs/knowledge/adguard).
 SCHEMA_VERSION = 34
 DNS_PORT = 53
+# The box name core last published (ui.host_name), kept in core's data dir: AdGuard drops unknown
+# keys and comments, so the file itself cannot say which rewrite is ours after a rename.
+HOST_NAME_STATE_FILE = "adguard-host-name"
 
 
 class AdguardError(RuntimeError):
@@ -67,7 +70,40 @@ def _set_managed(data: CommentedMap, config: Config, hashed: str) -> None:
     dns["aaaa_disabled"] = config.routing is not None and config.routing.mode is RoutingMode.FULL
 
 
-def adguard_text(existing: str | None, config: Config, hashed: str) -> str:
+def _set_box_name(data: CommentedMap, config: Config, previous: str | None) -> None:
+    """Point ``ui.host_name`` at the box: one rewrite of ours (the previous name's is dropped),
+    the owner's rewrites untouched; without a panel, no rewrite of ours."""
+    network = config.network
+    if network is None:  # callers check; keeps the type narrow
+        raise AdguardError("AdGuard runs only on a box with a LAN")
+    filtering = data.setdefault("filtering", CommentedMap())
+    rewrites = filtering.get("rewrites")
+    if not isinstance(rewrites, list):
+        rewrites = CommentedSeq()
+        filtering["rewrites"] = rewrites
+    ours = {config.ui.host_name, previous}
+    kept = [
+        entry for entry in rewrites if not (isinstance(entry, dict) and entry.get("domain") in ours)
+    ]
+    del rewrites[:]
+    rewrites.extend(kept)
+    if not config.ui.enabled:
+        return
+    # `enabled` is required: v0.107.79 skips a rewrite without it (filtering/rewrites.go).
+    rewrites.append(
+        CommentedMap(
+            [
+                ("domain", config.ui.host_name),
+                ("answer", str(network.lan_address)),
+                ("enabled", True),
+            ]
+        )
+    )
+
+
+def adguard_text(
+    existing: str | None, config: Config, hashed: str, previous_name: str | None = None
+) -> str:
     """The new file: a minimal one, or ``existing`` with only core's keys changed."""
     yaml = round_trip_yaml()
     if existing is None:
@@ -87,14 +123,17 @@ def adguard_text(existing: str | None, config: Config, hashed: str) -> str:
                 " restore data/adguard/conf from a backup or pin the image tag back"
             )
     _set_managed(data, config, hashed)
+    _set_box_name(data, config, previous_name)
     buffer = io.StringIO()
     yaml.dump(data, buffer)
     return buffer.getvalue()
 
 
-def ensure_adguard(config: Config, conf_dir: Path, secrets_dir: Path) -> bool | None:
+def ensure_adguard(
+    config: Config, conf_dir: Path, secrets_dir: Path, data_dir: Path
+) -> bool | None:
     """Bring ``AdGuardHome.yaml`` in line with config.yaml; ``None`` when this box runs no
-    AdGuard, otherwise whether the file changed."""
+    AdGuard, otherwise whether the file changed. ``data_dir`` keeps the published box name."""
     if config.network is None or not config.dns.enabled:
         return None
     try:
@@ -106,9 +145,22 @@ def ensure_adguard(config: Config, conf_dir: Path, secrets_dir: Path) -> bool | 
         existing = path.read_text(encoding="utf-8") if path.exists() else None
     except OSError as exc:
         raise AdguardError(f"cannot read {path}: {exc.strerror or exc}") from exc
-    text = adguard_text(existing, config, password_hash(htpasswd))
+    state = data_dir / HOST_NAME_STATE_FILE
+    try:
+        previous = state.read_text(encoding="utf-8").strip() or None if state.exists() else None
+    except OSError as exc:
+        raise AdguardError(f"cannot read {state}: {exc.strerror or exc}") from exc
+    text = adguard_text(existing, config, password_hash(htpasswd), previous)
     try:
         conf_dir.mkdir(parents=True, exist_ok=True)
-        return write_private(path, text)
+        changed = write_private(path, text)
+        # After the file: a crash in between leaves the old name recorded, and the next start
+        # still finds and replaces that rewrite.
+        data_dir.mkdir(parents=True, exist_ok=True)
+        if config.ui.enabled:
+            write_private(state, config.ui.host_name + "\n")
+        else:
+            state.unlink(missing_ok=True)
     except OSError as exc:
-        raise AdguardError(f"cannot write {path}: {exc.strerror or exc}") from exc
+        raise AdguardError(f"cannot write {exc.filename or path}: {exc.strerror or exc}") from exc
+    return changed

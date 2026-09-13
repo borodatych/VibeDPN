@@ -14,7 +14,7 @@
 
 - [docker.md](adguard/docker.md) — тома, `AdGuardHome.yaml` со `schema_version: 34` вместо мастера
   на 3000, ключи привязки и апстримов, порт 53 против systemd-resolved; первый старт переписывает
-  файл (600, умолчания), ядро правит только свои ключи, bcrypt `$2b$` принимается, `aaaa_disabled`
+  файл (600, умолчания), ядро правит только свои ключи, bcrypt `$2b$` принимается, `aaaa_disabled`; перезапись имени коробки в `filtering.rewrites` — без `enabled: true` не действует
 
 ## compose
 
@@ -86,7 +86,8 @@
   шаблон Vite с oxlint вместо ESLint; устарело — UI на start0
 - [start0Build.md](frontend/start0Build.md) — start0 на коробке: сборка падает на 2 ГиБ (пик 2.18 ГиБ),
   runtime ~205–283 МиБ плюс Postgres ~70 МиБ, Bun на Pi 4 исправлен в v1.3.9; вход паролем коробки через
-  `password.verify` по `htpasswd`, `/api/core/*` за сессией, `hostname` Bun, rate limit и cookie в LAN
+  `password.verify` по `htpasswd`, `/api/core/*` за сессией, `hostname` Bun, cookie в LAN; подмена `x-forwarded-for` обходила
+  лимит — адрес сокета; вход по имени коробки в `trustedOrigins`
 
 ## python
 

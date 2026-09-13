@@ -6,6 +6,7 @@ import { axiomMetricsMiddleware } from '@/modules/axiom'
 import { cacheControl } from '@point0/cache-control'
 import { compress } from '@point0/compress'
 import { authServer } from '@/modules/auth/server'
+import { withSocketClientIp } from '@/modules/auth/client-ip'
 import { CORE_API_PREFIX, coreApiProxy } from '@/modules/core/proxy'
 import { CookieStore } from '@point0/core/cookie-store'
 import { Point0 } from '@point0/core'
@@ -74,6 +75,6 @@ export const root = Point0.lets
   .middleware(compress())
   .middleware(cacheControl())
   .use(CookieStore.plugin())
-  .middleware('/api/auth/*', async ({ request }) => await authServer.handler(request.original))
+  .middleware('/api/auth/*', async ({ request }) => await authServer.handler(withSocketClientIp(request)))
   .middleware(`${CORE_API_PREFIX}/*`, coreApiProxy)
   .root()

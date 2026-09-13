@@ -77,6 +77,8 @@ DIRECT_EXIT = "direct"
 UPLINK_SERVICES = {Upstream.VPS: "wg-client", Upstream.DPN: "myst-consumer"}
 STRICT_RP_FILTER = 1
 
+DEFAULT_HTTP_PORT = 80
+
 
 class Verdict(StrEnum):
     OK = "ok"
@@ -530,9 +532,31 @@ def _lan_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
     ipv6 = _lan_ipv6_result(config, facts)
     if ipv6 is not None:
         results.append(ipv6)
+    if config.ui.enabled:
+        results.append(_ui_name_result(config))
     if facts.exits is not None:
         results.extend(_exit_results(config, facts.exits))
     return results
+
+
+def _ui_name_result(config: Config) -> CheckResult:
+    """The panel by name works only where AdGuard answers it; the address always works."""
+    network = config.network
+    address = network.lan_address if network is not None else None
+    port = "" if config.ui.port == DEFAULT_HTTP_PORT else f":{config.ui.port}"
+    if not config.dns.enabled:
+        return CheckResult(
+            "ui name",
+            Verdict.WARN,
+            f"{config.ui.host_name} is not published: dns is off",
+            f"open http://{address}{port}, or point {config.ui.host_name} at {address}"
+            " in the router's DNS",
+        )
+    return CheckResult(
+        "ui name",
+        Verdict.OK,
+        f"http://{config.ui.host_name}{port} -> {address} (devices using the box as DNS)",
+    )
 
 
 def parse_exit_address(text: str) -> str | None:
