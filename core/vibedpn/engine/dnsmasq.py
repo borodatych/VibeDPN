@@ -7,6 +7,7 @@ to the DHCP server of an ISP router. Lease file format: docs/knowledge/linux/dns
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from vibedpn.atomic import write_private
@@ -16,6 +17,13 @@ CONF_FILE = "dnsmasq.conf"
 LEASE_FILE = "leases"
 # The directory compose.yaml mounts into the dnsmasq container (./data/dnsmasq).
 CONTAINER_DIR = "/var/lib/vibedpn-dnsmasq"
+# The same directory as core sees it (compose.yaml mounts ./data/dnsmasq there).
+DIR_ENV = "VIBEDPN_DNSMASQ_CONF"
+DEFAULT_DIR = Path("/etc/vibedpn/dnsmasq")
+
+
+def core_dir() -> Path:
+    return Path(os.environ.get(DIR_ENV, DEFAULT_DIR))
 
 
 class DnsmasqError(RuntimeError):

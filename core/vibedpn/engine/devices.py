@@ -26,6 +26,10 @@ SCHEMA_VERSION = 1
 # Entries without a usable address: nothing answered, or not a neighbour at all
 # (ip-neighbour(8): failed, incomplete, noarp, none).
 SKIPPED_STATES = frozenset({"FAILED", "INCOMPLETE", "NOARP", "NONE"})
+# A lease line: expiry, MAC, address, then the name dnsmasq writes as * when there is none.
+LEASE_FIELDS = 3
+LEASE_NAME_FIELD = 3
+LEASE_NO_NAME = "*"
 DB_TIMEOUT_SECONDS = 5.0
 
 Resolve = Callable[[str], str | None]
@@ -74,6 +78,47 @@ def parse_neighbours(
             continue
         seen[mac] = Neighbour(mac, address)
     return list(seen.values())
+
+
+@dataclass(frozen=True)
+class Lease:
+    mac: str
+    ip: IPv4Address
+    hostname: str | None
+
+
+def parse_leases(
+    text: str, subnet: IPv4Network, box_address: IPv4Address, now: float
+) -> list[Lease]:
+    """Live DHCP leases of dnsmasq: ``expiry mac ip hostname client-id`` per line
+    (docs/knowledge/linux/dnsmasqLeases.md). A client without a name is written as ``*``;
+    an expiry of 0 is a lease without an end."""
+    leases: dict[str, Lease] = {}
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < LEASE_FIELDS:
+            continue
+        try:
+            expiry = int(fields[0])
+            mac = normalize_mac(fields[1])
+            address = IPv4Address(fields[2])
+        except ValueError:
+            continue
+        if (expiry and expiry < now) or address not in subnet or address == box_address:
+            continue
+        name = fields[3] if len(fields) > LEASE_NAME_FIELD and fields[3] != LEASE_NO_NAME else None
+        leases[mac] = Lease(mac, address, name)
+    return list(leases.values())
+
+
+def read_leases(path: Path) -> str:
+    """The lease file; none yet (dnsmasq has handed nothing out) reads as no leases."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+    except OSError as exc:
+        raise DeviceError(f"cannot read {path}: {exc.strerror or exc}") from exc
 
 
 def read_neighbours(interface: str) -> str:

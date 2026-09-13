@@ -23,7 +23,9 @@ from vibedpn.engine.devices import (
     DeviceError,
     DeviceStore,
     Neighbour,
+    parse_leases,
     parse_neighbours,
+    read_leases,
 )
 
 from .conftest import client_config, vps_config
@@ -212,3 +214,65 @@ def test_a_policy_for_a_device_not_seen_yet_is_listed(tmp_path: Path) -> None:
     lines = render_devices(views, 300.0)
     assert any(line.startswith("printer") and line.endswith("never seen") for line in lines)
     assert any("old-tv" in line and "aa:bb:cc:dd:ee:ff" in line for line in lines)
+
+
+# dnsmasq 2.92 (Alpine 3.24) lease lines as written on the colima VM, plus an expired lease,
+# a lease without an end, a nameless client, a foreign address and a torn line.
+LEASES = (
+    "1789371673 76:39:40:76:15:d0 192.168.88.143 lab-phone 01:76:39:40:76:15:d0\n"
+    "1000 aa:bb:cc:dd:ee:01 192.168.88.144 old-tv *\n"
+    "0 aa:bb:cc:dd:ee:02 192.168.88.145 printer *\n"
+    "1789371673 aa:bb:cc:dd:ee:03 192.168.88.146 * *\n"
+    "1789371673 aa:bb:cc:dd:ee:04 10.0.0.5 stranger *\n"
+    "1789371673 aa:bb:cc\n"
+)
+
+
+def test_live_leases_of_the_lan_are_devices() -> None:
+    leases = parse_leases(LEASES, SUBNET, BOX, now=1789000000)
+    assert [(lease.mac, str(lease.ip), lease.hostname) for lease in leases] == [
+        ("76:39:40:76:15:d0", "192.168.88.143", "lab-phone"),
+        ("aa:bb:cc:dd:ee:02", "192.168.88.145", "printer"),
+        ("aa:bb:cc:dd:ee:03", "192.168.88.146", None),
+    ]
+
+
+def test_a_missing_lease_file_is_no_leases(tmp_path: Path) -> None:
+    assert read_leases(tmp_path / "leases") == ""
+
+
+def test_gateway_discovery_lists_leases_and_prefers_their_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = client_config()
+    raw["network"] |= {"mode": "gateway", "wan_interface": "eth1", "lan_subnet": "192.168.88.0/24"}
+    raw["network"]["lan_address"] = "192.168.88.1"
+    config = Config.model_validate(raw)
+    store = DeviceStore(tmp_path / "devices.db")
+    monkeypatch.setenv("VIBEDPN_DNSMASQ_CONF", str(tmp_path))
+    asked: list[Path] = []
+
+    def read_lease_file(path: Path) -> str:
+        asked.append(path)
+        return LEASES
+
+    async def sleep(_seconds: float) -> None:
+        raise StopDiscoveryError
+
+    with pytest.raises(StopDiscoveryError):
+        asyncio.run(
+            discovery.watch_devices(
+                config,
+                store,
+                read=lambda _i: LISTING,
+                read_lease_file=read_lease_file,
+                resolve=lambda _a: "ptr.lan",
+                sleep=sleep,
+            )
+        )
+    assert asked == [tmp_path / "leases"]
+    seen = {item.mac: (str(item.ip), item.hostname) for item in store.devices()}
+    assert seen["76:39:40:76:15:d0"] == ("192.168.88.143", "lab-phone")
+    assert seen["aa:bb:cc:dd:ee:03"] == ("192.168.88.146", "ptr.lan")  # no name in the lease
+    assert seen["f6:5f:32:9d:fc:41"] == ("192.168.88.2", "ptr.lan")  # neighbour without a lease
+    assert "aa:bb:cc:dd:ee:01" not in seen

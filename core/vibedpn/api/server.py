@@ -22,7 +22,7 @@ from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.config import Config, ConfigError, Upstream, load_config
 from vibedpn.engine.adguard import AdguardError, ensure_adguard
 from vibedpn.engine.devices import DB_FILE, DeviceError, DeviceStore
-from vibedpn.engine.dnsmasq import DnsmasqError, ensure_dnsmasq
+from vibedpn.engine.dnsmasq import DnsmasqError, core_dir, ensure_dnsmasq
 from vibedpn.engine.router import (
     EGRESS_TABLE,
     ROUTER_TABLE,
@@ -67,8 +67,6 @@ DEFAULT_SECRETS_DIR = Path("/etc/vibedpn/secrets")  # compose.yaml mounts ./secr
 ADGUARD_DIR_ENV = "VIBEDPN_ADGUARD_CONF"
 DEFAULT_ADGUARD_DIR = Path("/etc/vibedpn/adguard")  # compose.yaml mounts ./data/adguard/conf
 DATA_DIR_ENV = "VIBEDPN_DATA"
-DNSMASQ_DIR_ENV = "VIBEDPN_DNSMASQ_CONF"
-DEFAULT_DNSMASQ_DIR = Path("/etc/vibedpn/dnsmasq")  # compose.yaml mounts ./data/dnsmasq
 DEFAULT_DATA_DIR = Path("/var/lib/vibedpn")  # compose.yaml mounts ./data/core
 
 
@@ -169,9 +167,8 @@ def _report(what: str, written: bool | None) -> None:
 
 def _write_dnsmasq(config: Config) -> bool | None:
     """Before the API, like AdGuard: compose starts dnsmasq only once core is healthy."""
-    conf_dir = Path(os.environ.get(DNSMASQ_DIR_ENV, DEFAULT_DNSMASQ_DIR))
     try:
-        written = ensure_dnsmasq(config, conf_dir)
+        written = ensure_dnsmasq(config, core_dir())
     except DnsmasqError as exc:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None

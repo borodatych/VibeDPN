@@ -177,6 +177,23 @@ device_exit="$(sudo ip netns exec "$NETNS" curl -s --max-time 15 --resolve "$exi
   fail "the device leaves as '${device_exit:-nothing}', the box as $host_exit"
 echo "the device leaves as the box: $host_exit"
 
+log "the lease is a device of the box, named by its DHCP client"
+lease_line="$(sudo grep " $DEVICE_MAC " "$BOX/data/dnsmasq/leases")"
+echo "lease: $lease_line"
+lease_name="$(printf '%s\n' "$lease_line" | awk '{ print $4 }')"
+i=0
+until "$CLI" device list --dir "$BOX" 2>/dev/null | grep -q "$DEVICE_MAC"; do
+  i=$((i + 5))
+  [ "$i" -lt 60 ] || fail "vibedpn device list does not show the leased device $DEVICE_MAC"
+  sleep 5
+done
+listed="$("$CLI" device list --dir "$BOX" | grep "$DEVICE_MAC")"
+echo "listed: $listed"
+if [ "$lease_name" != "*" ]; then
+  printf '%s\n' "$listed" | grep -q "$lease_name" ||
+    fail "the device is listed without the name '$lease_name' its DHCP client sent"
+fi
+
 log "doctor"
 report="$(sudo "$CLI" doctor --dir "$BOX" || true)"
 printf '%s\n' "$report" | grep -q "\[ ok \] lan address" || fail "doctor does not confirm the LAN address: $report"
