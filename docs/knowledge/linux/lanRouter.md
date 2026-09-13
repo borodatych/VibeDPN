@@ -55,7 +55,19 @@ VPS, и закрыть это или считать LAN доверенной —
 **Грабли smoke:** `http://1.1.1.1/cdn-cgi/trace` по HTTP отвечает 301, а не 200 — проверка
 связности «код 200» давала ложный FAIL при исправном пути; критерий — любой HTTP-ответ. На VM
 colima нет `ping` и `nc`.
+**Политики устройств (Stage 5, 2026-09-13):** восемь nft-наборов — `devices_<политика>_mac`
+(`type ether_addr`) и `devices_<политика>_ip` (`type ipv4_addr`); устройство с MAC попадает только в
+набор MAC (адрес по DHCP меняется и чужой), без MAC — в набор адресов; пустые наборы `nft -c` принимает.
+Исполнением на VM: `ether saddr @набор` в `inet`-таблице на хуке prerouting ловит маршрутизируемый
+трафик устройства с LAN-моста (счётчик растёт), `ip saddr @набор` — тоже. Порядок в prerouting —
+первым совпадением (`return`): чужой интерфейс, не IPv4, не из LAN, трафик внутри LAN и к шлюзам,
+адреса коробки; потом `bypass` (без метки), `block` (метка 0x30), `vps` (0x10), `dpn` (0x20) и
+последней — метка режима `full`. Метку `block` не знает ни одно `ip rule`, её отбрасывает цепочка
+`forward` — устройство без выхода, но с доступом к самой коробке (DNS, UI идут в input). Аплинки «в
+использовании» — аплинк режима плюс аплинки политик: у каждого своё правило, таблица с маршрутом
+kill-switch и наблюдатель шлюза; `doctor` проверяет их все.
 **Источники:** https://man7.org/linux/man-pages/man8/ip-rule.8.html ,
 https://docs.kernel.org/networking/ip-sysctl.html (send_redirects, rp_filter),
 https://raw.githubusercontent.com/systemd/systemd/main/sysctl.d/50-default.conf ,
-https://docs.docker.com/engine/network/drivers/bridge/ (com.docker.network.bridge.name).
+https://docs.docker.com/engine/network/drivers/bridge/ (com.docker.network.bridge.name),
+https://wiki.nftables.org/wiki-nftables/index.php/Sets (именованные наборы, `ether_addr`, `ipv4_addr`).

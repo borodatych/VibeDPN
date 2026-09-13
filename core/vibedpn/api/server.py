@@ -38,14 +38,16 @@ EGRESS_MESSAGES = {
 }
 
 
-def router_message(config: Config, uplink: Upstream | None) -> str:
+def router_message(config: Config, uplinks: list[Upstream]) -> str:
     if config.network is None:
         return f"no LAN in this configuration; table {ROUTER_TABLE} removed if it was loaded"
-    if uplink is None:
-        return f"LAN router applied (table {ROUTER_TABLE}): routing.mode off, LAN goes direct"
+    mode = config.routing.mode.value if config.routing is not None else "off"
+    if not uplinks:
+        return f"LAN router applied (table {ROUTER_TABLE}): routing.mode {mode}, LAN goes direct"
+    names = ", ".join(uplink.value for uplink in uplinks)
     return (
-        f"LAN router applied (table {ROUTER_TABLE}): routing.mode full through uplink {uplink};"
-        " traffic waits for its gateway to answer"
+        f"LAN router applied (table {ROUTER_TABLE}): routing.mode {mode}, uplinks in use: {names};"
+        " their traffic waits for the gateways to answer"
     )
 
 
@@ -80,8 +82,8 @@ def main() -> None:
             )
         egress = apply_tunnel_egress(config)
         sys.stderr.write(f"vibedpn-core: {EGRESS_MESSAGES[egress]}\n")
-        uplink = apply_router(config)
-        sys.stderr.write(f"vibedpn-core: {router_message(config, uplink)}\n")
+        uplinks = apply_router(config)
+        sys.stderr.write(f"vibedpn-core: {router_message(config, uplinks)}\n")
     except RouterError as exc:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None
@@ -120,4 +122,4 @@ def main() -> None:
             sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
             raise SystemExit(os.EX_CONFIG) from None
     application = create_app(config, secrets_dir=secrets_dir, device_store=devices)
-    run_servers(config, application, uplink=uplink, devices=devices)
+    run_servers(config, application, uplinks=uplinks, devices=devices)

@@ -3,19 +3,44 @@
 # by default: the host's own traffic is not ours to judge. Marked packets are steered by
 # `ip rule` into the table of their uplink, whose default route is a gateway container on the
 # bridge {{ bridge }}; the host default route is never touched.
+#
+# Device policies from config.yaml win over routing.mode: a device with a MAC is matched by its
+# MAC only, a device without one by its address. The first match decides (return).
 add table inet vibedpn_router
 delete table inet vibedpn_router
 table inet vibedpn_router {
+{% for set in sets %}
+  set {{ set.name }} {
+    type {{ set.type }}
+{% if set.elements %}
+    elements = { {{ set.elements | join(", ") }} }
+{% endif %}
+  }
+{% endfor %}
   chain prerouting {
     type filter hook prerouting priority mangle; policy accept;
-{% if mark %}
-    iifname "{{ lan_interface }}" ip saddr {{ lan_subnet }} ip daddr != { {{ lan_subnet }}, {{ upstreams_subnet }} } fib daddr type != local meta mark set {{ mark }} comment "routing.mode full: LAN traffic leaves through uplink {{ upstream }}"
+    iifname != "{{ lan_interface }}" return
+    meta nfproto != ipv4 return
+    ip saddr != {{ lan_subnet }} return
+    ip daddr { {{ lan_subnet }}, {{ upstreams_subnet }} } return comment "inside the LAN and to the gateways: never steered"
+    fib daddr type local return comment "the box itself: never steered"
+    ether saddr @devices_bypass_mac return comment "policy bypass: direct, even in routing.mode full"
+    ip saddr @devices_bypass_ip return comment "policy bypass: direct, even in routing.mode full"
+    ether saddr @devices_block_mac meta mark set {{ block_mark }} return comment "policy block"
+    ip saddr @devices_block_ip meta mark set {{ block_mark }} return comment "policy block"
+{% for policy in uplink_policies %}
+    ether saddr @devices_{{ policy.name }}_mac meta mark set {{ policy.mark }} return comment "policy {{ policy.name }}: through uplink {{ policy.name }}"
+    ip saddr @devices_{{ policy.name }}_ip meta mark set {{ policy.mark }} return comment "policy {{ policy.name }}: through uplink {{ policy.name }}"
+{% endfor %}
+{% if mode_mark %}
+    meta mark set {{ mode_mark }} comment "routing.mode full: LAN traffic leaves through uplink {{ mode_upstream }}"
 {% endif %}
   }
   chain forward {
     type filter hook forward priority filter; policy accept;
     iifname "{{ lan_interface }}" ip daddr {{ upstreams_subnet }} drop comment "the LAN never reaches gateway containers directly, only through them"
     iifname "{{ lan_interface }}" meta nfproto ipv6 drop comment "the uplinks are IPv4: LAN IPv6 never crosses the box around them"
+    iifname "{{ lan_interface }}" meta mark {{ block_mark }} drop comment "policy block: nothing beyond the LAN"
   }
   chain output {
     type filter hook output priority filter; policy accept;

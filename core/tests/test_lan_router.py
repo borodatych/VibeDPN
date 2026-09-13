@@ -19,12 +19,14 @@ from vibedpn.engine.router import (
     RouterError,
     active_uplink,
     apply_router,
+    device_sets,
     plan_docker_user,
     plan_rules,
     remove_router,
     router_docker_user_rules,
     router_ruleset,
     set_gateway_route,
+    used_uplinks,
 )
 
 COMPOSE = Path(__file__).resolve().parents[2] / "compose.yaml"
@@ -42,7 +44,14 @@ RULES_EMPTY = (
 )
 
 
-def lan_box(mode: str = "full", upstream: str = "vps", *, failopen: bool = False) -> Config:
+def lan_box(
+    mode: str = "full",
+    upstream: str = "vps",
+    *,
+    failopen: bool = False,
+    devices: list[dict[str, Any]] | None = None,
+    also: tuple[str, ...] = (),
+) -> Config:
     raw: dict[str, Any] = {
         "version": 1,
         "role": "client" if upstream == "vps" else "home",
@@ -52,9 +61,12 @@ def lan_box(mode: str = "full", upstream: str = "vps", *, failopen: bool = False
             "lan_address": "192.168.1.50",
         },
         "routing": {"mode": mode, "default_upstream": upstream, "failopen": failopen},
-        "upstreams": {upstream: {"enabled": True}},
+        "upstreams": {name: {"enabled": True} for name in (upstream, *also)},
+        "devices": devices or [],
     }
-    if upstream == "dpn":
+    if raw["role"] == "home" or "dpn" in also:
+        raw["role"] = "home" if "vps" not in raw["upstreams"] else "client"
+    if raw["role"] == "home":
         raw["provider"] = {"enabled": True}
     return Config.model_validate(raw)
 
@@ -85,20 +97,25 @@ def test_uplinks_match_compose() -> None:
     assert network["ipam"]["config"][0]["subnet"] == UPSTREAMS_SUBNET
 
 
+MODE_RULE = "routing.mode full: LAN traffic leaves through uplink"
+
+
 def test_mode_full_marks_lan_traffic_for_its_uplink() -> None:
     text = router_ruleset(lan_box())
     assert text is not None
-    assert (
-        'iifname "eth0" ip saddr 192.168.1.0/24 ip daddr != { 192.168.1.0/24, 10.77.0.0/24 }'
-        " fib daddr type != local meta mark set 0x10"
-    ) in text
-    assert "meta mark set 0x20" in (router_ruleset(lan_box(upstream="dpn")) or "")
+    assert f'meta mark set 0x10 comment "{MODE_RULE} vps"' in text
+    # LAN-internal traffic, the gateways and the box itself return before any mark.
+    guard = text.index("ip daddr { 192.168.1.0/24, 10.77.0.0/24 } return")
+    assert guard < text.index("fib daddr type local return") < text.index(MODE_RULE)
+    assert f'meta mark set 0x20 comment "{MODE_RULE} dpn"' in (
+        router_ruleset(lan_box(upstream="dpn")) or ""
+    )
 
 
 def test_mode_off_marks_nothing_but_still_routes_direct() -> None:
     text = router_ruleset(lan_box("off"))
     assert text is not None
-    assert "meta mark set" not in text
+    assert MODE_RULE not in text
     assert 'iifname "eth0" oifname "eth0" ip saddr 192.168.1.0/24 masquerade' in text
     assert 'iifname "eth0" ip daddr 10.77.0.0/24 drop' in text
     assert 'oifname "eth0" icmp type redirect drop' in text
@@ -115,20 +132,21 @@ def test_no_router_without_a_lan_and_no_smart_mode_yet() -> None:
 
 def test_rule_plan_from_a_real_listing() -> None:
     vps_rule = ["priority", "7710", "fwmark", "0x10", "table", "7710"]
-    assert plan_rules(RULES_WITH_VPS, Upstream.VPS) == ([], [])
-    assert plan_rules(RULES_EMPTY, Upstream.VPS) == ([], [Upstream.VPS])
-    assert plan_rules(RULES_WITH_VPS, None) == ([vps_rule], [])
-    assert plan_rules(RULES_WITH_VPS, Upstream.DPN) == ([vps_rule], [Upstream.DPN])
+    assert plan_rules(RULES_WITH_VPS, [Upstream.VPS]) == ([], [])
+    assert plan_rules(RULES_EMPTY, [Upstream.VPS]) == ([], [Upstream.VPS])
+    assert plan_rules(RULES_WITH_VPS, []) == ([vps_rule], [])
+    assert plan_rules(RULES_WITH_VPS, [Upstream.DPN]) == ([vps_rule], [Upstream.DPN])
+    assert plan_rules(RULES_WITH_VPS, [Upstream.VPS, Upstream.DPN]) == ([], [Upstream.DPN])
     # A foreign rule at our priority goes by its own selector; the exact one of ours stays.
     foreign = RULES_WITH_VPS.replace(
         '{"priority":32766', '{"priority":7710,"src":"all","table":"main"},{"priority":32766'
     )
-    assert plan_rules(foreign, Upstream.VPS) == ([["priority", "7710", "table", "main"]], [])
+    assert plan_rules(foreign, [Upstream.VPS]) == ([["priority", "7710", "table", "main"]], [])
     doubled = RULES_WITH_VPS.replace(
         '{"priority":32766',
         '{"priority":7710,"src":"all","fwmark":"0x10","table":"7710"},{"priority":32766',
     )
-    assert plan_rules(doubled, Upstream.VPS) == ([vps_rule], [])
+    assert plan_rules(doubled, [Upstream.VPS]) == ([vps_rule], [])
 
 
 def as_listing(*groups: list[list[str]]) -> str:
@@ -176,7 +194,7 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, rules: str = RULES_EMPTY) -> list
 
 def test_apply_puts_the_kill_switch_before_any_rule(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = fake_host(monkeypatch)
-    assert apply_router(lan_box()) is Upstream.VPS
+    assert apply_router(lan_box()) == [Upstream.VPS]
     steps = [" ".join(argv) for argv in calls]
     unreachable = steps.index("ip route replace unreachable default metric 4294967295 table 7710")
     rule = steps.index("ip rule add fwmark 0x10 table 7710 priority 7710")
@@ -196,7 +214,7 @@ def test_switching_uplinks_never_leaves_a_mark_without_its_rule(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = fake_host(monkeypatch, RULES_WITH_VPS)
-    assert apply_router(lan_box(upstream="dpn")) is Upstream.DPN
+    assert apply_router(lan_box(upstream="dpn")) == [Upstream.DPN]
     steps = [" ".join(argv) for argv in calls]
     added = steps.index("ip rule add fwmark 0x20 table 7720 priority 7720")
     marks = steps.index("nft -f -")
@@ -214,7 +232,7 @@ def test_failopen_leaves_no_last_resort_route(monkeypatch: pytest.MonkeyPatch) -
 
 def test_mode_off_and_a_vps_remove_every_rule(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = fake_host(monkeypatch, RULES_WITH_VPS)
-    assert apply_router(lan_box("off")) is None
+    assert apply_router(lan_box("off")) == []
     steps = [" ".join(argv) for argv in calls]
     assert "ip rule del priority 7710 fwmark 0x10 table 7710" in steps
     assert not any("rule add" in step for step in steps)
@@ -234,3 +252,54 @@ def test_gateway_route_follows_the_watcher(monkeypatch: pytest.MonkeyPatch) -> N
         "ip route replace default via 10.77.0.10 dev vibedpn0 table 7710",
         "ip route del default via 10.77.0.10 dev vibedpn0 table 7710",
     ]
+
+
+PHONE = {"name": "phone", "mac": "aa:bb:cc:dd:ee:01", "policy": "bypass"}
+TV = {"name": "tv", "ip": "192.168.1.9", "policy": "block"}
+LAPTOP = {"name": "laptop", "mac": "aa:bb:cc:dd:ee:03", "ip": "192.168.1.3", "policy": "dpn"}
+
+
+def test_device_sets_match_by_mac_and_by_address_only_without_a_mac() -> None:
+    sets = {
+        item.name: item for item in device_sets(lan_box(devices=[PHONE, TV, LAPTOP], also=("dpn",)))
+    }
+    assert sets["devices_bypass_mac"].elements == ["aa:bb:cc:dd:ee:01"]
+    assert sets["devices_block_ip"].elements == ["192.168.1.9"]
+    assert sets["devices_dpn_mac"].elements == ["aa:bb:cc:dd:ee:03"]
+    assert sets["devices_dpn_ip"].elements == []  # the laptop has a MAC: its address is not trusted
+    assert (
+        sets["devices_vps_mac"].type == "ether_addr" and sets["devices_vps_ip"].type == "ipv4_addr"
+    )
+
+
+def test_device_policies_win_over_the_mode_in_order() -> None:
+    text = router_ruleset(lan_box(devices=[PHONE, TV, LAPTOP], also=("dpn",)))
+    assert text is not None
+    assert "elements = { aa:bb:cc:dd:ee:01 }" in text
+    bypass = text.index("ether saddr @devices_bypass_mac return")
+    block = text.index("ether saddr @devices_block_mac meta mark set 0x30 return")
+    vps = text.index("ether saddr @devices_vps_mac meta mark set 0x10 return")
+    dpn = text.index("ether saddr @devices_dpn_mac meta mark set 0x20 return")
+    assert bypass < block < vps < dpn < text.index(MODE_RULE)
+    assert 'iifname "eth0" meta mark 0x30 drop' in text
+
+
+def test_uplinks_in_use_come_from_the_mode_and_the_policies() -> None:
+    assert used_uplinks(lan_box("off")) == []
+    assert used_uplinks(lan_box("off", devices=[LAPTOP], also=("dpn",))) == [Upstream.DPN]
+    assert used_uplinks(lan_box(devices=[PHONE])) == [Upstream.VPS]
+    assert used_uplinks(lan_box(devices=[LAPTOP], also=("dpn",))) == [Upstream.VPS, Upstream.DPN]
+
+
+def test_two_uplinks_both_get_their_kill_switch_and_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = fake_host(monkeypatch)
+    assert apply_router(lan_box(devices=[LAPTOP], also=("dpn",))) == [Upstream.VPS, Upstream.DPN]
+    steps = [" ".join(argv) for argv in calls]
+    marks = steps.index("nft -f -")
+    for table, mark in (("7710", "0x10"), ("7720", "0x20")):
+        unreachable = steps.index(
+            f"ip route replace unreachable default metric 4294967295 table {table}"
+        )
+        rule = steps.index(f"ip rule add fwmark {mark} table {table} priority {table}")
+        assert unreachable < rule < marks
+    assert not any(step.startswith("ip route flush") for step in steps)

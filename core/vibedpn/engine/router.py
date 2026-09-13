@@ -14,11 +14,12 @@ import os
 import shlex
 import shutil
 import subprocess
+from collections.abc import Collection
 from dataclasses import dataclass
 from enum import StrEnum
 from itertools import takewhile
 
-from vibedpn.config import Config, Role, RoutingMode, Upstream, parse_port_range
+from vibedpn.config import Config, DevicePolicy, Role, RoutingMode, Upstream, parse_port_range
 from vibedpn.detect import SBIN_DIRS
 from vibedpn.engine.myst import NODEUI_PORT
 from vibedpn.templating import template_environment
@@ -285,6 +286,13 @@ UPLINKS: dict[Upstream, Uplink] = {
     Upstream.VPS: Uplink(mark=0x10, table=7710, gateway="10.77.0.10"),
     Upstream.DPN: Uplink(mark=0x20, table=7720, gateway="10.77.0.20"),
 }
+# Device policies that send a device through an uplink.
+POLICY_UPLINKS: dict[DevicePolicy, Upstream] = {
+    DevicePolicy.VPS: Upstream.VPS,
+    DevicePolicy.DPN: Upstream.DPN,
+}
+# policy block: no ip rule knows this mark, and the forward chain drops it.
+BLOCK_MARK = 0x30
 
 
 def active_uplink(config: Config) -> Upstream | None:
@@ -296,6 +304,57 @@ def active_uplink(config: Config) -> Upstream | None:
     if config.routing.mode is RoutingMode.OFF:
         return None
     return config.routing.default_upstream
+
+
+def used_uplinks(config: Config) -> list[Upstream]:
+    """Every uplink some LAN traffic may take: the one of routing.mode full, and the ones device
+    policies name. Each needs its ip rule, its table with the kill switch and a watcher."""
+    wanted: set[Upstream] = set()
+    active = active_uplink(config)
+    if active is not None:
+        wanted.add(active)
+    if config.network is not None:
+        wanted.update(
+            POLICY_UPLINKS[device.policy]
+            for device in config.devices
+            if device.policy in POLICY_UPLINKS
+        )
+    return [upstream for upstream in UPLINKS if upstream in wanted]
+
+
+@dataclass(frozen=True)
+class DeviceSet:
+    name: str
+    type: str
+    elements: list[str]
+
+
+def device_sets(config: Config) -> list[DeviceSet]:
+    """Two nft sets per policy: MACs, and the addresses of devices that have no MAC in config."""
+    sets = []
+    for policy in DevicePolicy:
+        devices = [device for device in config.devices if device.policy is policy]
+        sets.append(
+            DeviceSet(
+                f"devices_{policy.value}_mac",
+                "ether_addr",
+                [device.mac for device in devices if device.mac is not None],
+            )
+        )
+        sets.append(
+            DeviceSet(
+                f"devices_{policy.value}_ip",
+                "ipv4_addr",
+                [str(device.ip) for device in devices if device.mac is None and device.ip],
+            )
+        )
+    return sets
+
+
+@dataclass(frozen=True)
+class UplinkPolicy:
+    name: str
+    mark: str
 
 
 def router_ruleset(config: Config) -> str | None:
@@ -311,8 +370,14 @@ def router_ruleset(config: Config) -> str | None:
             lan_subnet=str(config.network.lan_subnet),
             upstreams_subnet=UPSTREAMS_SUBNET,
             bridge=UPSTREAMS_BRIDGE,
-            upstream=active.value if active else "",
-            mark=hex(UPLINKS[active].mark) if active else "",
+            sets=device_sets(config),
+            block_mark=hex(BLOCK_MARK),
+            uplink_policies=[
+                UplinkPolicy(policy.value, hex(UPLINKS[upstream].mark))
+                for policy, upstream in POLICY_UPLINKS.items()
+            ],
+            mode_upstream=active.value if active else "",
+            mode_mark=hex(UPLINKS[active].mark) if active else "",
         )
     )
 
@@ -370,7 +435,9 @@ def _rule_selector(entry: dict[str, object]) -> list[str]:
     return selector
 
 
-def plan_rules(listing: str, active: Upstream | None) -> tuple[list[list[str]], list[Upstream]]:
+def plan_rules(
+    listing: str, wanted: Collection[Upstream]
+) -> tuple[list[list[str]], list[Upstream]]:
     """``(rules to delete, uplinks to add)`` from ``ip -j rule show``: exactly one rule per
     active uplink at its own priority, nothing at the priorities of the others. Adding comes
     first and deleting last, so marked traffic always has its rule (see ``apply_router``)."""
@@ -381,17 +448,17 @@ def plan_rules(listing: str, active: Upstream | None) -> tuple[list[list[str]], 
     delete: list[list[str]] = []
     add: list[Upstream] = []
     for upstream, uplink in UPLINKS.items():
-        wanted = upstream is active
+        needed = upstream in wanted
         kept = False
         for entry in (item for item in entries if item.get("priority") == uplink.table):
             exact = entry.get("fwmark") == hex(uplink.mark) and entry.get("table") == str(
                 uplink.table
             )
-            if wanted and exact and not kept:
+            if needed and exact and not kept:
                 kept = True
             else:
                 delete.append(_rule_selector(entry))
-        if wanted and not kept:
+        if needed and not kept:
             add.append(upstream)
     return delete, add
 
@@ -431,18 +498,18 @@ def set_gateway_route(upstream: Upstream, alive: bool) -> None:
         _ip(["route", "del", *gateway_route(uplink)], missing_ok=True)
 
 
-def apply_router(config: Config) -> Upstream | None:
-    """Render and apply the LAN router; returns the active uplink. The kill switch comes first:
-    the last-resort route exists before any rule steers traffic into its table. The gateway route
-    itself is set by the uplink watcher once the gateway answers."""
+def apply_router(config: Config) -> list[Upstream]:
+    """Render and apply the LAN router; returns the uplinks in use. The kill switch comes first:
+    the last-resort route exists before any rule steers traffic into its table. The gateway
+    routes themselves are set by the uplink watchers once the gateways answer."""
     ruleset = router_ruleset(config)
     if ruleset is None:
         remove_router()
-        return None
-    active = active_uplink(config)
+        return []
+    used = used_uplinks(config)
     check_ruleset(ruleset)
     for upstream, uplink in UPLINKS.items():
-        if upstream is not active:
+        if upstream not in used:
             continue
         if config.routing is not None and not config.routing.failopen:
             _ip(["route", "replace", *last_resort_route(uplink)])
@@ -450,22 +517,22 @@ def apply_router(config: Config) -> Upstream | None:
             _ip(["route", "del", *last_resort_route(uplink)], missing_ok=True)
     # Never a moment when a mark has no rule: the new rule, then the new marks, and only then the
     # rules of the old marks go. Deleting first would send still-marked traffic to the main table.
-    delete, add = plan_rules(_ip(["-j", "rule", "show"]), active)
+    delete, add = plan_rules(_ip(["-j", "rule", "show"]), used)
     add_rules(add)
     apply_ruleset(ruleset)
     delete_rules(delete)
     for upstream, uplink in UPLINKS.items():
-        if upstream is not active:
+        if upstream not in used:
             _ip(["route", "flush", "table", str(uplink.table)], missing_ok=True)
     sync_docker_user(router_docker_user_rules(config), ROUTER_COMMENT)
-    return active
+    return used
 
 
 def remove_router() -> None:
     """Nothing of the LAN router stays: marks, rules, uplink tables, DOCKER-USER transit."""
     _nft(["-f", "-"], ROUTER_TEARDOWN)
     if find_ip() is not None:
-        delete_rules(plan_rules(_ip(["-j", "rule", "show"]), None)[0])
+        delete_rules(plan_rules(_ip(["-j", "rule", "show"]), ())[0])
         for uplink in UPLINKS.values():
             _ip(["route", "flush", "table", str(uplink.table)], missing_ok=True)
     if find_iptables():

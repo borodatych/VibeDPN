@@ -275,7 +275,7 @@ jobs:
               return Config.model_validate({"version": 1, "role": "client", "network": {"lan_interface": "eth0", "lan_subnet": "192.168.1.0/24", "lan_address": "192.168.1.50"}, "routing": {"mode": mode, "default_upstream": "vps", "failopen": failopen}, "upstreams": {"vps": {"enabled": True}}})
           step = sys.argv[1]
           if step == "full":
-              assert apply_router(box("full")) is Upstream.VPS
+              assert apply_router(box("full")) == [Upstream.VPS]
           elif step == "alive":
               set_gateway_route(Upstream.VPS, True)
           elif step == "dead":
@@ -283,7 +283,7 @@ jobs:
           elif step == "failopen":
               apply_router(box("full", failopen=True))
           elif step == "off":
-              assert apply_router(box("off")) is None
+              assert apply_router(box("off")) == []
           elif step == "remove":
               remove_router()
           PY
@@ -292,6 +292,9 @@ jobs:
             nft list table inet vibedpn_router | tee /tmp/router.nft
             grep -q "meta mark set 0x00000010" /tmp/router.nft
             grep -q "icmp type redirect drop" /tmp/router.nft
+            # Device policies: eight sets load (empty ones too) and win over the mode.
+            test "$(grep -c "set devices_" /tmp/router.nft)" = 8
+            grep -q "ether saddr @devices_bypass_mac return" /tmp/router.nft
             # nat-unprotected leaves the gateway ports to us: the LAN reaches them only through a gateway.
             grep -q "iifname \"eth0\" ip daddr 10.77.0.0/24 drop" /tmp/router.nft
             test "$(ip rule show | grep -c "fwmark 0x10 lookup 7710")" = 1
@@ -307,7 +310,7 @@ jobs:
             if ip route show table 7710 | grep -q unreachable; then echo "failopen kept the kill switch"; exit 1; fi
             python /tmp/router.py off
             if ip rule show | grep -q "lookup 7710"; then echo "mode off kept the uplink rule"; exit 1; fi
-            if nft list table inet vibedpn_router | grep -q "meta mark set"; then echo "mode off still marks"; exit 1; fi
+            if nft list table inet vibedpn_router | grep -q "routing.mode full: LAN traffic"; then echo "mode off still marks by mode"; exit 1; fi
             python /tmp/router.py remove
             python /tmp/router.py remove
             if nft list tables | grep -q vibedpn_router; then echo "router table survived"; exit 1; fi

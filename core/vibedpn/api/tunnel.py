@@ -307,7 +307,7 @@ def run_servers(
     config: Config,
     application: ASGIApp,
     *,
-    uplink: Upstream | None = None,
+    uplinks: Sequence[Upstream] = (),
     devices: DeviceStore | None = None,
 ) -> None:
     try:
@@ -320,8 +320,7 @@ def run_servers(
         raise SystemExit(os.EX_UNAVAILABLE) from None
     try:
         background: list[Callable[[], Coroutine[Any, Any, None]]] = []
-        if uplink is not None:
-            background.append(partial(watch_uplink, uplink))
+        background.extend(partial(watch_uplink, uplink) for uplink in uplinks)
         if devices is not None:
             background.append(partial(watch_devices, config, devices))
         asyncio.run(serve(application, listeners, background))

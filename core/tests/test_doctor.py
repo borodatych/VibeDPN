@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 from vibedpn import cli, doctor
 from vibedpn.bootstrap import Answers, HostFacts, build_config, render_config, secrets_present
 from vibedpn.compose import ServiceStatus
-from vibedpn.config import Config, FirewallConfig, Role
+from vibedpn.config import Config, DeviceConfig, DevicePolicy, FirewallConfig, Role
 from vibedpn.detect import Interface
 from vibedpn.doctor import (
     CheckResult,
@@ -527,8 +527,8 @@ def test_router_verdicts() -> None:
             "router_table": True,
             "router_rules": True,
             "router_docker_user": True,
-            "uplink_route": True,
-            "last_resort_route": True,
+            "uplink_routes": {"vps": True, "dpn": True},
+            "last_resort_routes": {"vps": True, "dpn": True},
             "rp_filter": 2,
         }
         base.update(overrides)
@@ -550,13 +550,29 @@ def test_router_verdicts() -> None:
             "upstreams": {"vps": {"enabled": True}},
         }
     )
-    assert verdict(full).detail == "routing.mode full through uplink vps (10.77.0.10)"
-    held = verdict(full, uplink_route=False)
+    assert verdict(full).detail == "routing.mode full, uplinks in use: vps (10.77.0.10)"
+    held = verdict(full, uplink_routes={"vps": False})
     assert held.verdict is Verdict.WARN and "kill switch" in held.detail
     assert held.hint == "vibedpn logs wg-client"
-    no_kill_switch = verdict(full, last_resort_route=False)
+    no_kill_switch = verdict(full, last_resort_routes={"vps": False})
     assert no_kill_switch.verdict is Verdict.FAIL and "kill-switch route" in no_kill_switch.detail
-    assert verdict(full, uplink_route=None).detail == "cannot read routing table 7710"
+    assert verdict(full, uplink_routes={"vps": None}).detail == "cannot read routing table 7710"
+    # A device on dpn makes a second uplink in use, with its own kill switch to check.
+    two = full.model_copy(
+        update={
+            "upstreams": full.upstreams.model_copy(
+                update={"dpn": full.upstreams.dpn.model_copy(update={"enabled": True})}
+            ),
+            "devices": [
+                DeviceConfig(name="laptop", mac="aa:bb:cc:dd:ee:03", policy=DevicePolicy.DPN)
+            ],
+        }
+    )
+    assert verdict(two).detail == (
+        "routing.mode full, uplinks in use: vps (10.77.0.10), dpn (10.77.0.20)"
+    )
+    second = verdict(two, last_resort_routes={"vps": True, "dpn": False})
+    assert second.verdict is Verdict.FAIL and "table 7720" in second.detail
     strict = verdict(full, rp_filter=1)
     assert strict.verdict is Verdict.FAIL and "rp_filter" in strict.detail
     assert verdict(full, router_table=False).verdict is Verdict.FAIL
