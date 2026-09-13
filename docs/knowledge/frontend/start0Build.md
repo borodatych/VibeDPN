@@ -34,6 +34,7 @@ better-auth позволяет заменить `emailAndPassword.password.hash`
 - Rate limit better-auth по умолчанию выключен в development; включён явно. Специальное правило `/sign-in/email` — 3 запроса за 10 с: на прогоне 429 со второй неверной попытки подряд. Клиента он узнаёт по `x-forwarded-for`, прямого прокси перед панелью нет — поведение без заголовка проверено только прогоном на loopback.
 - `trustedOrigins` — `CLIENT_URL` = `http://<LAN-адрес>:<порт>`: вход по имени хоста вместо адреса better-auth отвергнет по Origin. Имя хоста в конфиге коробки — отдельная задача.
 - Cookie без `Secure`: у панели HTTP в LAN, `useSecureCookies: false` явно, `SameSite=Strict` через `advanced.cookies.session_token.attributes`.
+- `bun install --ignore-scripts` в Dockerfile ломает сборку: `point0 build` падает с *Error: Bun's postinstall script was not run.* (первый прогон `ui-image`, воспроизведено в чистой копии). Скрипты зависимостей остаются включены; Bun и так запускает их только у доверенных пакетов.
 - `secrets/ui-db-password` пишется без перевода строки: он собирается в `DATABASE_URL`, а при смене пароль базы разошёлся бы с томом `data/ui-db` — поэтому `init` не перетирает эти секреты.
 **Источники:** https://www.better-auth.com/docs/authentication/email-password ,
 https://www.better-auth.com/docs/concepts/rate-limit , https://www.better-auth.com/docs/concepts/cookies ,

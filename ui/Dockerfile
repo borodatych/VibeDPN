@@ -7,7 +7,8 @@ FROM --platform=$BUILDPLATFORM oven/bun:1.4.2 AS build
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl && rm -rf /var/lib/apt/lists/*
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile --ignore-scripts
+# Lifecycle scripts stay on: the `bun` package's postinstall is required by `point0 build`.
+RUN bun install --frozen-lockfile
 COPY . .
 # `prisma generate` uses a throwaway URL (prisma.config.ts): no database at build time.
 RUN bunx prisma generate && bun run build:code && find dist/client -type f -name '*.map' -delete
@@ -21,7 +22,7 @@ ENV NODE_ENV=production \
     HTPASSWD_FILE=/run/secrets/htpasswd
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/package.json /app/bun.lock ./
-RUN bun install --frozen-lockfile --production --ignore-scripts
+RUN bun install --frozen-lockfile --production
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/modules/prisma/schema.prisma ./src/modules/prisma/schema.prisma
 COPY --from=build /app/src/modules/prisma/migrations ./src/modules/prisma/migrations

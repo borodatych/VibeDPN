@@ -388,7 +388,7 @@ jobs:
       - name: Build the panel image, start it with its database and a fake core, check the doors
         run: |
           set -eu
-          docker build -q -t vibedpn-ui:ci ui >/dev/null
+          docker build -t vibedpn-ui:ci ui
           work="$(mktemp -d)"
           trap 'docker rm -f ui ui-db fake-core >/dev/null 2>&1 || true' EXIT
           mkdir -p "$work/api" "$work/secrets"
