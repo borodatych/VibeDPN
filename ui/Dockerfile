@@ -10,6 +10,9 @@ COPY package.json bun.lock ./
 # Lifecycle scripts stay on: the `bun` package's postinstall is required by `point0 build`.
 RUN bun install --frozen-lockfile
 COPY . .
+# full (N100) or lite (Raspberry Pi), inlined into both bundles as a build-time constant (src/lib/variant.ts).
+ARG UI_VARIANT=full
+ENV UI_VARIANT=$UI_VARIANT
 # `prisma generate` uses a throwaway URL (prisma.config.ts): no database at build time.
 RUN bunx prisma generate && bun run build:code && find dist/client -type f -name '*.map' -delete
 
@@ -17,7 +20,9 @@ RUN bunx prisma generate && bun run build:code && find dist/client -type f -name
 # native addons), the built `dist/`, and the Prisma schema with its migrations.
 FROM oven/bun:1.4.2 AS runtime
 WORKDIR /app
-ENV NODE_ENV=production \
+ARG UI_VARIANT=full
+ENV UI_VARIANT=$UI_VARIANT \
+    NODE_ENV=production \
     HOST_ENV=prod \
     HTPASSWD_FILE=/run/secrets/htpasswd
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl && rm -rf /var/lib/apt/lists/*

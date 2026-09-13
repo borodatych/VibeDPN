@@ -624,3 +624,10 @@ def test_the_panel_name_is_published_only_with_dns() -> None:
     assert silent.verdict is Verdict.WARN
     assert "box.home is not published" in silent.detail
     assert "http://192.168.1.50:8080" in silent.hint
+
+
+def test_a_full_panel_on_a_small_host_is_warned() -> None:
+    assert "ui variant" not in by_name(evaluate(facts()))  # memory unknown: no verdict
+    small = by_name(evaluate(facts(memory_bytes=2 * 1024**3)))["ui variant"]
+    assert small.verdict is Verdict.WARN and "lite" in small.hint
+    assert by_name(evaluate(facts(memory_bytes=8 * 1024**3)))["ui variant"].verdict is Verdict.OK

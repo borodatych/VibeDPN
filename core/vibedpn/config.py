@@ -27,6 +27,9 @@ DOMAIN_PATTERN = re.compile(
     r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$"
 )
 DEFAULT_UI_HOST_NAME = "vibedpn.lan"
+# Postgres of the panel on a lite box (docs/uiVariants.md); a full box keeps the Postgres defaults.
+LITE_DB_SHARED_BUFFERS = "32MB"
+LITE_DB_MAX_CONNECTIONS = 20
 DOH_URL_PATTERN = re.compile(r"^https://[^\s/]+/\S*$")
 HOSTNAME_PATTERN = re.compile(
     r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$"
@@ -309,11 +312,19 @@ class DnsConfig(StrictModel):
         return value
 
 
+class UiVariant(StrEnum):
+    """One code base, two builds of the panel (docs/uiVariants.md)."""
+
+    FULL = "full"  # N100 and larger
+    LITE = "lite"  # Raspberry Pi: no background workers, no socket backplane, a small Postgres
+
+
 class UiConfig(StrictModel):
     """Web UI (the start0 app in ui/) on the LAN interface; it also proxies the core API."""
 
     enabled: bool = True
     port: Port = 80
+    variant: UiVariant = UiVariant.FULL
     # The name devices open the panel by; AdGuard answers it with network.lan_address.
     host_name: str = DEFAULT_UI_HOST_NAME
 
@@ -507,6 +518,10 @@ class Config(StrictModel):
             env["VIBEDPN_LAN_IP"] = str(self.network.lan_address)
             env["VIBEDPN_UI_PORT"] = str(self.ui.port)
             env["VIBEDPN_UI_HOST_NAME"] = self.ui.host_name
+            env["VIBEDPN_UI_VARIANT"] = self.ui.variant.value
+            if self.ui.variant is UiVariant.LITE:
+                env["VIBEDPN_UI_DB_SHARED_BUFFERS"] = LITE_DB_SHARED_BUFFERS
+                env["VIBEDPN_UI_DB_MAX_CONNECTIONS"] = str(LITE_DB_MAX_CONNECTIONS)
         if self.provider.enabled:
             start, end = parse_port_range(self.provider.udp_ports)
             env["VIBEDPN_MYST_UDP_FROM"] = str(start)

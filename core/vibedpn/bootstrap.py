@@ -27,6 +27,8 @@ from vibedpn.config import (
     ProviderConfig,
     Role,
     RoutingConfig,
+    UiConfig,
+    UiVariant,
     Upstream,
     UpstreamsConfig,
     VpsUplink,
@@ -50,6 +52,8 @@ UI_USER = "admin"
 MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_BYTES = 72  # bcrypt hashes at most 72 bytes, whoever verifies the hash
 MAX_PEER_FILE_BYTES = 64 * 1024
+# Below this much memory init picks the lite panel (docs/uiVariants.md); the owner can override.
+LITE_BELOW_MEMORY_BYTES = 4 * 1024**3
 CONFIG_FILE = "config.yaml"
 CONFIG_BACKUP = "config.yaml.bak"
 ENV_FILE = ".env"
@@ -89,6 +93,7 @@ class Answers:
     password: str | None = None  # panels: VibeDPN UI/API and the node's NodeUI
     peer_config: Path | None = None
     endpoint: str | None = None
+    ui_variant: UiVariant | None = None  # None: chosen by the memory of the host
 
 
 @dataclass(frozen=True)
@@ -98,6 +103,7 @@ class HostFacts:
     interface: Interface | None
     wireguard_module: bool | None  # None: could not check (no modprobe on PATH)
     ssh_ports: list[int] = field(default_factory=lambda: [DEFAULT_SSH_PORT])
+    memory_bytes: int | None = None  # None: /proc/meminfo could not be read
 
 
 @dataclass(frozen=True)
@@ -180,6 +186,16 @@ def _validated(**fields: object) -> Config:
         raise BootstrapError(problems) from None
 
 
+def ui_variant_for(answers: Answers, facts: HostFacts) -> UiVariant:
+    """The flag when given; otherwise lite below ``LITE_BELOW_MEMORY_BYTES``, full above it and
+    when the memory is unknown."""
+    if answers.ui_variant is not None:
+        return answers.ui_variant
+    if facts.memory_bytes is not None and facts.memory_bytes < LITE_BELOW_MEMORY_BYTES:
+        return UiVariant.LITE
+    return UiVariant.FULL
+
+
 def build_config(answers: Answers, facts: HostFacts) -> Config:
     """A complete role-appropriate configuration; routing starts in ``off`` on every role."""
     if answers.role is Role.VPS:
@@ -214,6 +230,7 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
             version=1,
             role=Role.HOME,
             network=network,
+            ui=UiConfig(variant=ui_variant_for(answers, facts)),
             routing=RoutingConfig(default_upstream=Upstream.DPN),
             upstreams=UpstreamsConfig(dpn=DpnUplink(enabled=True)),
             provider=ProviderConfig(enabled=True),
@@ -222,6 +239,7 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
         version=1,
         role=Role.CLIENT,
         network=network,
+        ui=UiConfig(variant=ui_variant_for(answers, facts)),
         routing=RoutingConfig(default_upstream=Upstream.VPS),
         upstreams=UpstreamsConfig(vps=VpsUplink(enabled=True)),
     )

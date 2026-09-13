@@ -271,6 +271,7 @@ def test_env_vars_are_derived_from_config(
         "VIBEDPN_LAN_IP": "192.168.1.50",
         "VIBEDPN_UI_PORT": "80",
         "VIBEDPN_UI_HOST_NAME": "vibedpn.lan",
+        "VIBEDPN_UI_VARIANT": "full",
         "VIBEDPN_MYST_UDP_FROM": "56000",
         "VIBEDPN_MYST_UDP_TO": "56100",
         "VIBEDPN_MYST_TRAVERSAL": "manual,upnp,holepunching",
@@ -288,6 +289,7 @@ def test_env_vars_are_derived_from_config(
         "VIBEDPN_LAN_IP": "192.168.1.50",
         "VIBEDPN_UI_PORT": "80",
         "VIBEDPN_UI_HOST_NAME": "vibedpn.lan",
+        "VIBEDPN_UI_VARIANT": "full",
     }
 
 
@@ -398,3 +400,11 @@ def test_server_serves_on_loopback_and_config_port(tmp_path: Path) -> None:
     assert loaded.api.port == 4499
     # The app is built from the loaded config: a vps box answers /provider/stats.
     assert {route.path for route in application.routes} >= {"/health", "/provider/stats"}
+
+
+def test_a_lite_panel_gets_a_small_postgres(client: dict[str, Any]) -> None:
+    client["ui"] = {"variant": "lite"}
+    env = Config.model_validate(client).env_vars()
+    assert env["VIBEDPN_UI_VARIANT"] == "lite"
+    assert env["VIBEDPN_UI_DB_SHARED_BUFFERS"] == "32MB"
+    assert env["VIBEDPN_UI_DB_MAX_CONNECTIONS"] == "20"

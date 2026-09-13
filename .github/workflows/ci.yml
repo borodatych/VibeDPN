@@ -387,14 +387,18 @@ jobs:
           docker rm -f adguard >/dev/null
 
   ui-image:
-    name: ui · image, sign-in with the init password, core behind the session
+    name: ui · ${{ matrix.variant }} image, sign-in with the init password, core behind the session
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [full, lite]
     steps:
       - uses: actions/checkout@v7
       - name: Build the panel image, start it with its database and a fake core, check the doors
         run: |
           set -eu
-          docker build -t vibedpn-ui:ci ui
+          docker build --build-arg UI_VARIANT=${{ matrix.variant }} -t vibedpn-ui:ci ui
           work="$(mktemp -d)"
           trap 'docker rm -f ui ui-db fake-core >/dev/null 2>&1 || true' EXIT
           mkdir -p "$work/api" "$work/secrets"
@@ -513,11 +517,19 @@ jobs:
       matrix:
         image:
           - name: core
+            repository: core
             context: core
           - name: wg
+            repository: wg
             context: images/wg
-          - name: ui
+          - name: ui-full
+            repository: ui
             context: ui
+            variant: full
+          - name: ui-lite
+            repository: ui
+            context: ui
+            variant: lite
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
@@ -530,11 +542,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: image
         name: Image name (GHCR namespaces are lower-case)
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/vibedpn-${{ matrix.image.name }}" >> "$GITHUB_OUTPUT"
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/vibedpn-${{ matrix.image.repository }}" >> "$GITHUB_OUTPUT"
       - id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ steps.image.outputs.name }}
+          # The panel ships as -full and -lite of one repository; compose.yaml appends ui.variant.
+          flavor: |
+            suffix=${{ matrix.image.variant && format('-{0}', matrix.image.variant) || '' }},onlatest=true
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -545,6 +560,8 @@ jobs:
         with:
           context: ${{ matrix.image.context }}
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            ${{ matrix.image.variant && format('UI_VARIANT={0}', matrix.image.variant) || '' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

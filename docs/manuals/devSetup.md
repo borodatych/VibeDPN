@@ -24,7 +24,7 @@
    Установку целиком можно прогнать как в CI: `install.sh` в контейнере `debian:trixie-slim` с заглушкой
    `tests/install/docker-stub.sh` (команда — в `.github/workflows/ci.yml`, задача `install`).
 5. Панель (`ui/`, Bun ≥ 1.4.2): `cd ui && bun install --frozen-lockfile && bunx prisma generate && bun run generate`,
-   затем `bun run check` (типы TypeScript 7 и eslint) и `bun run test:unit && bun run test:dom`. Запуск на своей машине —
+   затем `bun run check` (типы TypeScript 7 и eslint) и `bun run test:unit && bun run test:dom`. Вариант панели — константа сборки: `UI_VARIANT=lite bun run build:code` (по умолчанию `full`). Запуск на своей машине —
    `ui/docs/setup.md`: локальный Postgres, `env.example` → `.env`, файл `htpasswd.local` с bcrypt-строкой `admin`.
 6. Образы: `docker compose --profile '*' build` — собирает `core`, `wg`, `ui` локально. Сборка `ui` требует около 2 ГиБ
    памяти (`dist`): на colima с 2 ГиБ она падает по памяти, образ панели проверяет CI (задача `ui-image`).

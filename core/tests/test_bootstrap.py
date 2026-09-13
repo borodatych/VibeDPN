@@ -24,9 +24,10 @@ from vibedpn.bootstrap import (
     render_config,
     render_env,
     required_secrets,
+    ui_variant_for,
     write_box,
 )
-from vibedpn.config import Config, Role, load_config, parse_yaml
+from vibedpn.config import Config, Role, UiVariant, load_config, parse_yaml
 from vibedpn.detect import Interface
 
 LAN = HostFacts(Interface("eth0", IPv4Address("192.168.1.50"), 24), wireguard_module=True)
@@ -344,3 +345,18 @@ def test_the_panel_secrets_are_required_only_with_the_ui() -> None:
     assert required_secrets(home) == ["htpasswd", "nodeui-pass", "ui-db-password", "ui-auth-secret"]
     vps = build_config(Answers(Role.VPS, endpoint="vps.example.com"), PUBLIC)
     assert "ui-db-password" not in required_secrets(vps)
+
+
+def test_the_panel_variant_follows_the_memory_unless_given() -> None:
+    small = HostFacts(LAN.interface, wireguard_module=True, memory_bytes=2 * 1024**3)
+    big = HostFacts(LAN.interface, wireguard_module=True, memory_bytes=8 * 1024**3)
+    client = Answers(Role.CLIENT, password="secret123")
+    assert ui_variant_for(client, small) is UiVariant.LITE
+    assert ui_variant_for(client, big) is UiVariant.FULL
+    assert ui_variant_for(client, LAN) is UiVariant.FULL  # memory unknown
+    forced = Answers(Role.CLIENT, password="secret123", ui_variant=UiVariant.FULL)
+    assert ui_variant_for(forced, small) is UiVariant.FULL
+    assert (
+        build_config(Answers(Role.HOME, password="secret123"), small).ui.variant is UiVariant.LITE
+    )
+    assert build_config(client, small).ui.variant is UiVariant.LITE

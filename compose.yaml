@@ -44,9 +44,12 @@ services:
   # the LAN only through its /api/core/* behind a session; sign-in checks the bcrypt line of
   # secrets/htpasswd on every attempt. Built by CI only (docs/uiVariants.md).
   ui:
-    image: ghcr.io/borodatych/vibedpn-ui:${VIBEDPN_TAG:-latest}
+    # full (N100) or lite (Raspberry Pi): ui.variant in config.yaml, two images of one code base.
+    image: ghcr.io/borodatych/vibedpn-ui:${VIBEDPN_TAG:-latest}-${VIBEDPN_UI_VARIANT:-full}
     build:
       context: ./ui
+      args:
+        UI_VARIANT: ${VIBEDPN_UI_VARIANT:-full}
     profiles:
       - ui
     network_mode: host
@@ -102,6 +105,13 @@ services:
     profiles:
       - ui
     restart: unless-stopped
+    # Postgres defaults unless ui.variant is lite, which writes smaller values into .env.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${VIBEDPN_UI_DB_SHARED_BUFFERS:-128MB}
+      - -c
+      - max_connections=${VIBEDPN_UI_DB_MAX_CONNECTIONS:-100}
     environment:
       POSTGRES_USER: vibedpn
       POSTGRES_DB: vibedpn

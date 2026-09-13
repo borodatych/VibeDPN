@@ -23,6 +23,9 @@ SSHD_CONFIG = Path("/etc/ssh/sshd_config")
 SSHD_CONFIG_ROOT = Path("/etc/ssh")  # relative Include paths resolve here (sshd_config(5))
 DEFAULT_SSH_PORT = 22
 SSHD = "sshd"
+MEMINFO = Path("/proc/meminfo")
+MEMINFO_UNIT = "kB"  # really KiB: show_val_kb shifts pages by PAGE_SHIFT - 10 (fs/proc/meminfo.c)
+KIB = 1024
 # sshd tokenizes a config line at whitespace or at a single "=" (OpenSSH misc.c, strdelim);
 # values may be double-quoted.
 SSHD_DELIMITER = re.compile(r"[ \t]*=[ \t]*|[ \t]+")
@@ -213,6 +216,19 @@ def sshd_effective_ports() -> list[int] | None:
     return parse_sshd_ports(probe.stdout)
 
 
+def parse_mem_total(text: str) -> int | None:
+    """Bytes of ``MemTotal`` from ``/proc/meminfo``; ``None`` when the line is missing or odd."""
+    for line in text.splitlines():
+        name, _, value = line.partition(":")
+        if name != "MemTotal":
+            continue
+        fields = value.split()
+        if len(fields) == 2 and fields[1] == MEMINFO_UNIT and fields[0].isdigit():  # noqa: PLR2004
+            return int(fields[0]) * KIB
+        return None
+    return None
+
+
 class HostProbe:
     """Reads host facts through ``ip`` and ``/sys``; replaced by a fake in tests."""
 
@@ -228,6 +244,13 @@ class HostProbe:
     def ssh_ports(self) -> list[int]:
         """The daemon's own answer when it gives one, else its config files."""
         return sshd_effective_ports() or sshd_ports()
+
+    def memory_bytes(self) -> int | None:
+        """Total memory of the host; ``None`` when ``/proc/meminfo`` cannot be read."""
+        try:
+            return parse_mem_total(MEMINFO.read_text(encoding="ascii"))
+        except OSError:
+            return None
 
     @staticmethod
     def _ip(*args: str) -> str:

@@ -17,7 +17,7 @@ SQLite ради Pi не рассматривается.
 Исправлено в PR #26586 (влит 2026-01-30, `MI_NO_OPT_ARCH=ON`, WebKit с явным `-march`, проверка под QEMU).
 Мейнтейнер закрыл issue #26556 словами *Fixed in Bun v1.3.9*.
 Пак требует `bun ^1.3.14`, `oven/bun:1` на 2026-09-13 — 1.4.2.
-На живом Pi 4 не проверено.
+На живом Pi 4 не проверено и проверено не будет: железа нет, приёмка — на N100 (решение владельца 2026-09-13); для Cortex-A72 это открытый риск.
 **Источники:** https://github.com/oven-sh/bun/issues/26556 , https://github.com/oven-sh/bun/pull/26586 ,
 https://github.com/oven-sh/bun/pull/26545 (закрыт без слияния — базовая сборка ARM64 не понадобилась).
 
@@ -42,3 +42,15 @@ https://www.better-auth.com/docs/concepts/rate-limit , https://www.better-auth.c
 https://www.better-auth.com/docs/reference/options (`trustedOrigins`, `advanced.ipAddress`),
 https://bun.com/docs/runtime/hashing , https://bun.com/docs/runtime/http/server ,
 https://hub.docker.com/_/postgres (`POSTGRES_PASSWORD_FILE`, `/var/lib/postgresql/data`).
+
+## [грабли] Константа варианта вырезает код, только если стоит прямо в ветке
+
+**Контекст:** Stage 6, вариант `lite` (`ui/src/engine.ts`, `app.server.ts`), 2026-09-13.
+**Суть:** Point0 подставляет `server.env.consts` и `client.env.consts` в выражение `process.env.UI_VARIANT`, сворачивает ветку и вырезает ставшие ненужными импорты (документация Point0, раздел env).
+Первая версия проверяла `isFullVariant`, экспортированный из `lib/variant.ts`: сборка `lite` осталась с chunk воркера на 360 КиБ — для бандлера это переменная другого модуля, и динамический импорт `@/modules/worker` сохранился.
+После замены на `process.env.UI_VARIANT === 'full'` в месте вызова в source map `lite` нет ни `src/modules/worker/utils.ts`, ни `postgresBackplane`; в `full` оба на месте.
+Проверять вырезание надо по source map (`src/...` в `*.map`) или по уникальному идентификатору: `pg-boss` в бандле не встречается по имени пакета.
+**Сколько это экономит (замер на VM aarch64 после 600 запросов):** панель 266 → 259 МиБ, `ui-db` 69 → 51 МиБ, соединений с базой 5 → 1; вместе 335 → 310 МиБ. Основную память держит Bun с приложением (~170 МиБ в простое), вырезать там больше нечего без отказа от пака.
+**Backplane:** в одном процессе сокеты Point0 работают в памяти, backplane нужен нескольким процессам; в `lite` фабрика `backplane` не передаётся вовсе.
+**Память хоста:** `MemTotal` в `/proc/meminfo` в «kB», но ядро печатает страницы, сдвинутые на `PAGE_SHIFT - 10`, то есть KiB (`show_val_kb` в `fs/proc/meminfo.c`); документация `proc.rst` единицу не уточняет.
+**Источники:** https://github.com/torvalds/linux/blob/master/fs/proc/meminfo.c , https://docs.kernel.org/filesystems/proc.html .

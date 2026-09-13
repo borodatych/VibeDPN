@@ -8,7 +8,14 @@ from types import SimpleNamespace
 import pytest
 
 from vibedpn import detect
-from vibedpn.detect import DetectError, HostProbe, Interface, parse_default_route, parse_interface
+from vibedpn.detect import (
+    DetectError,
+    HostProbe,
+    Interface,
+    parse_default_route,
+    parse_interface,
+    parse_mem_total,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 ROUTE = (FIXTURES / "ip_route_default.json").read_text(encoding="utf-8")
@@ -78,3 +85,10 @@ def test_probe_reports_failing_ip(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subprocess, "run", failing)
     with pytest.raises(DetectError, match="boom"):
         HostProbe().default_interface()
+
+
+def test_mem_total_is_read_in_kib() -> None:
+    meminfo = "MemTotal:        3884292 kB\nMemFree:          123456 kB\n"
+    assert parse_mem_total(meminfo) == 3884292 * 1024
+    assert parse_mem_total("MemFree: 1 kB\n") is None
+    assert parse_mem_total("MemTotal: many kB\n") is None

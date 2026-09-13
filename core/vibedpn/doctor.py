@@ -18,6 +18,7 @@ from pathlib import Path
 
 from vibedpn.bootstrap import (
     ENV_FILE,
+    LITE_BELOW_MEMORY_BYTES,
     SECRETS_DIR,
     required_secrets,
     secrets_present,
@@ -31,8 +32,8 @@ from vibedpn.compose import (
     parse_ps,
     preflight,
 )
-from vibedpn.config import Config, Profile, Role, RoutingMode, Upstream, parse_port_range
-from vibedpn.detect import SSHD, WIREGUARD_MODULE, module_present
+from vibedpn.config import Config, Profile, Role, RoutingMode, UiVariant, Upstream, parse_port_range
+from vibedpn.detect import SSHD, WIREGUARD_MODULE, HostProbe, module_present
 from vibedpn.engine.myst import NODEUI_PORT, TEQUILAPI_PORT
 from vibedpn.engine.router import (
     EGRESS_COMMENT,
@@ -170,6 +171,7 @@ class DoctorFacts:
     rp_filter: int | None = None  # max of all and the gateway bridge, as the kernel uses it
     lan_ipv6: bool | None = None  # a global IPv6 address on lan_interface; None: not checked
     exits: list[ExitFact] | None = None  # None: `doctor` ran without --network
+    memory_bytes: int | None = None  # None: /proc/meminfo could not be read
 
 
 def parse_ss(output: str) -> list[Listener]:
@@ -534,9 +536,27 @@ def _lan_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
         results.append(ipv6)
     if config.ui.enabled:
         results.append(_ui_name_result(config))
+        variant = _ui_variant_result(config, facts.memory_bytes)
+        if variant is not None:
+            results.append(variant)
     if facts.exits is not None:
         results.extend(_exit_results(config, facts.exits))
     return results
+
+
+def _ui_variant_result(config: Config, memory: int | None) -> CheckResult | None:
+    """A full panel on a small host swaps or is killed; lite on a big one only costs screens."""
+    if memory is None:
+        return None
+    size = f"{memory / 1024**3:.1f} GiB"
+    if config.ui.variant is UiVariant.FULL and memory < LITE_BELOW_MEMORY_BYTES:
+        return CheckResult(
+            "ui variant",
+            Verdict.WARN,
+            f"ui.variant full on a host with {size}",
+            "set ui.variant: lite in config.yaml, then vibedpn up",
+        )
+    return CheckResult("ui variant", Verdict.OK, f"{config.ui.variant.value} on a host with {size}")
 
 
 def _ui_name_result(config: Config) -> CheckResult:
@@ -860,6 +880,7 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         rp_filter=rp_filter,
         lan_ipv6=lan_ipv6,
         exits=_exits(box_dir, config, services) if network and config is not None else None,
+        memory_bytes=HostProbe().memory_bytes(),
     )
 
 

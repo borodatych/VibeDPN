@@ -16,6 +16,7 @@ runner = CliRunner()
 class FakeProbe:
     interface: Interface | None = Interface("eth0", IPv4Address("192.168.1.50"), 24)
     wireguard: bool | None = True
+    memory: int | None = 8 * 1024**3
 
     def default_interface(self) -> Interface | None:
         return self.interface
@@ -26,11 +27,15 @@ class FakeProbe:
     def ssh_ports(self) -> list[int]:
         return [22]
 
+    def memory_bytes(self) -> int | None:
+        return self.memory
+
 
 @pytest.fixture(autouse=True)
 def fake_probe(monkeypatch: pytest.MonkeyPatch) -> type[FakeProbe]:
     FakeProbe.interface = Interface("eth0", IPv4Address("192.168.1.50"), 24)
     FakeProbe.wireguard = True
+    FakeProbe.memory = 8 * 1024**3
     monkeypatch.setattr(cli, "HostProbe", FakeProbe)
     return FakeProbe
 
@@ -256,3 +261,19 @@ def test_init_fails_without_interface_before_asking_password(
     assert result.exit_code == 1
     assert "default route" in result.output
     assert cli.PANEL_PASSWORD_PROMPT not in result.output
+
+
+def test_init_picks_the_panel_variant_by_memory_and_flag(
+    tmp_path: Path, fake_probe: type[FakeProbe]
+) -> None:
+    fake_probe.memory = 2 * 1024**3
+    small = tmp_path / "small"
+    args = ["init", "--role", "home", "--password-file", str(password_file(tmp_path))]
+    result = runner.invoke(cli.app, [*args, "--dir", str(small)])
+    assert result.exit_code == 0, result.output
+    assert load_config(small / "config.yaml").ui.variant.value == "lite"
+    assert "Panel variant lite" in result.output
+    forced = tmp_path / "forced"
+    result = runner.invoke(cli.app, [*args, "--ui-variant", "full", "--dir", str(forced)])
+    assert result.exit_code == 0, result.output
+    assert load_config(forced / "config.yaml").ui.variant.value == "full"

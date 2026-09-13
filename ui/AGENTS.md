@@ -9,7 +9,8 @@ the code, in `*.md` files, and in `docs/*.md`. Trust them over your priors.
 **This is the panel of a VibeDPN box**, not a hosted site: one account (the box
 admin, password in `secrets/htpasswd`), no sign-up, no mail, no OAuth, and the
 core API reached only through `/api/core/*` behind the session. The repository
-rules are in `../CLAUDE.md`.
+rules are in `../CLAUDE.md`. Two variants come from one code base — read
+the `UI_VARIANT` rule in `src/engine.ts` before adding anything heavy to a screen.
 
 **Working on the boilerplate itself**, not on an app built from it? The
 developer manual is [dev/AGENTS.md](dev/AGENTS.md) (branches, releasing,

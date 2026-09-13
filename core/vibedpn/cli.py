@@ -5,6 +5,7 @@ Stage 1 ships ``init``; ``up``, ``down``, ``restart``, ``status``, ``logs`` and 
 
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, TypeVar
@@ -48,7 +49,15 @@ from vibedpn.compose import (
     run,
     stale_services,
 )
-from vibedpn.config import Config, DevicePolicy, Role, RoutingMode, Upstream, check_endpoint
+from vibedpn.config import (
+    Config,
+    DevicePolicy,
+    Role,
+    RoutingMode,
+    UiVariant,
+    Upstream,
+    check_endpoint,
+)
 from vibedpn.config_edit import ConfigEditError, set_routing
 from vibedpn.detect import DetectError, HostProbe
 from vibedpn.device_view import render_devices
@@ -202,6 +211,10 @@ def init(
         str | None,
         typer.Option(help="Public host or IPv4 of this VPS (role vps); detected when possible."),
     ] = None,
+    ui_variant: Annotated[
+        UiVariant | None,
+        typer.Option(help="Panel variant: full, or lite for a Raspberry Pi; else by host memory."),
+    ] = None,
     password_file: Annotated[
         Path | None,
         typer.Option(
@@ -229,13 +242,16 @@ def init(
             interface=probe.default_interface(),
             wireguard_module=probe.wireguard_module_present(),
             ssh_ports=probe.ssh_ports(),
+            memory_bytes=probe.memory_bytes(),
         )
     except DetectError as exc:
         raise _fail(str(exc)) from None
     if facts.interface is not None:
         detected = facts.interface
         typer.echo(f"Detected {detected.name}: {detected.address}/{detected.prefixlen}")
-    answers = _collect_answers(role, peer_config, endpoint, password_file, facts)
+    answers = replace(
+        _collect_answers(role, peer_config, endpoint, password_file, facts), ui_variant=ui_variant
+    )
     try:
         config = build_config(answers, facts)
         written = write_box(box_dir, config, answers, force=force)
@@ -257,6 +273,8 @@ def init(
             fg=typer.colors.YELLOW,
             err=True,
         )
+    if config.network is not None and config.ui.enabled:
+        typer.echo(f"Panel variant {config.ui.variant.value} (ui.variant in config.yaml)")
     typer.echo(f"Role {answers.role.value} configured. Next step: vibedpn up")
 
 
