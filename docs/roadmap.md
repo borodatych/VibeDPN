@@ -139,7 +139,7 @@
 
 ## Stage 12 — Образ для Pi (опционально)
 
-- [ ] `pi-gen` пайплайн: готовый `.img` с предустановленным VibeDPN, first-boot запускает `init`
+- [ ] `pi-gen` пайплайн: готовый `.img` с предустановленным VibeDPN, first-boot запускает `init` — реализовано, ни один образ не собран (2026-09-14, `next`): решения 13 и 15 (amd64 и arm64, без armhf; ни одного секрета, доступ через cloud-init, `init` при первом входе); `images/os/common` (`provision.sh` через `install.sh` в режиме `VIBEDPN_IMAGE_BUILD=1`, скрипт первого входа, NoCloud с меткой `CIDATA`, образец `user-data`), `images/os/debos/vibedpn.yaml` (UEFI amd64/arm64, GRUB EFI), `images/os/pi-gen` (стадия на `pi-gen` `arm64@86919dae`, сверена с его исходниками), workflow `os-images` (вручную и по тегу), мануал `osImages.md`. Проверка: на colima VM debos в Docker без KVM падает после `debootstrap` (`systemd-nspawn` в контейнере) — сборка и загрузка образов ждут прогона workflow на раннерах и N100/Raspberry Pi
 
 ## Предложения (не выполнять без команды оператора)
 

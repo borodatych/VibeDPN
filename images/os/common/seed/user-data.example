@@ -1,0 +1,15 @@
+#cloud-config
+# VibeDPN OS image (UEFI): copy this file to `user-data` on the partition labelled CIDATA (it is
+# the boot partition of the image, visible on any computer) and put your own values in.
+# Without it the box has no user you can log in with. Format: https://docs.cloud-init.io
+hostname: vibedpn
+users:
+  - name: vibedpn
+    groups: [sudo, docker]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    # your public key, one line: the content of ~/.ssh/id_ed25519.pub
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAA...replace-with-your-key... you@computer
+ssh_pwauth: false

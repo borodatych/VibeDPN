@@ -123,6 +123,23 @@ colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && VIBEDPN_TA
 Откат установки: `sudo apt-get remove -y linux-modules-extra-$(uname -r)`.
 В CI его гоняет задача `e2e-wifi`.
 
+## Образы ОС
+
+Рецепты и скрипты — в `images/os`: общее (`common/`: `provision.sh`, скрипт первого входа, настройка cloud-init, образец `user-data`), `debos/vibedpn.yaml` для UEFI и `pi-gen/` для Raspberry Pi.
+Как ими пользоваться владельцу — [osImages.md](osImages.md).
+
+UEFI-образ arm64 собирается на colima VM нативно, без KVM — `debos` прямо в контейнере от root.
+На томе Mac (virtiofs) корень образа не создаётся (`Permission denied` у `tar`), поэтому рецепты копируются на диск VM:
+
+```bash
+colima ssh -- sh -c 'B=/var/tmp/vibedpn-os; sudo rm -rf $B && mkdir -p $B/images && cp -R /Volumes/Storage/Projects/VibeCode/VibeDPN/images/os $B/images/os && cp /Volumes/Storage/Projects/VibeCode/VibeDPN/install.sh $B/ && docker run --rm --privileged -v $B:/recipes -w /recipes/images/os/debos godebos/debos --disable-fakemachine -t architecture:arm64 -t branch:next vibedpn.yaml'
+```
+
+Готовый образ — `/var/tmp/vibedpn-os/images/os/debos/vibedpn-arm64.img` на диске VM.
+
+В CI образы собирает workflow `os-images` (`.github/workflows/os-images.yml`): вручную с выбором ветки или по тегу `v*`.
+debos идёт на `ubuntu-24.04` с KVM, образ Raspberry Pi — `pi-gen` на `ubuntu-24.04-arm`; результат — артефакты прогона.
+
 ## Что не проверить локально
 
 Сетевую часть (nft, ip rule, WireGuard) — только на Linux-хосте или в E2E-стенде выше. На macOS ядро

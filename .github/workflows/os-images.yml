@@ -1,0 +1,66 @@
+# OS images with VibeDPN preinstalled (docs/manuals/osImages.md, docs/decisions.md 13 and 15).
+# Heavy and slow, so not on every push: by hand, or for a release tag. The images stay artifacts of
+# the run; attaching them to a GitHub Release is a separate, deliberate step of the owner.
+name: os-images
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch of VibeDPN the image follows
+        default: main
+        required: true
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  uefi:
+    name: image · UEFI ${{ matrix.architecture }} (debos)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+      # fakemachine needs /dev/kvm; hosted Linux runners have it once the runner user may open it
+      # (https://github.blog/changelog/2024-04-02-github-actions-hardware-accelerated-android-virtualization-now-available/)
+      - name: KVM for the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Emulation of arm64 for the arm64 image
+        if: matrix.architecture == 'arm64'
+        run: docker run --rm --privileged tonistiigi/binfmt:qemu-v9.2.2 --install arm64
+      - name: Build
+        env:
+          BRANCH: ${{ inputs.branch || github.ref_name }}
+        run: |
+          docker run --rm --device /dev/kvm --group-add "$(getent group kvm | cut -d: -f3)" \
+            -v "$PWD:/recipes" -w /recipes/images/os/debos godebos/debos \
+            -t "architecture:${{ matrix.architecture }}" -t "branch:$BRANCH" vibedpn.yaml
+          xz -T0 -v "images/os/debos/vibedpn-${{ matrix.architecture }}.img"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vibedpn-uefi-${{ matrix.architecture }}
+          path: images/os/debos/vibedpn-${{ matrix.architecture }}.img.xz
+          if-no-files-found: error
+
+  raspberry-pi:
+    name: image · Raspberry Pi arm64 (pi-gen)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build
+        env:
+          VIBEDPN_BRANCH: ${{ inputs.branch || github.ref_name }}
+        run: sh images/os/pi-gen/build.sh
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vibedpn-raspberry-pi-arm64
+          path: images/os/pi-gen/work/deploy/*.img.xz
+          if-no-files-found: error

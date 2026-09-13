@@ -26,3 +26,8 @@ ui/dist/
 .vibe/http-client.private.env.json
 .DS_Store
 .idea/
+
+# OS image builds (images/os): the pi-gen checkout and the images themselves
+images/os/pi-gen/work/
+*.img
+*.img.xz

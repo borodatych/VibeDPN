@@ -1,0 +1,87 @@
+{{- $architecture := or .architecture "amd64" -}}
+{{- $branch := or .branch "main" -}}
+{{- $repo := or .repo "https://github.com/borodatych/VibeDPN.git" -}}
+{{- $image := or .image (printf "vibedpn-%s.img" $architecture) -}}
+# VibeDPN OS image for UEFI machines (N100 and other amd64, arm64 boards with UEFI), Debian trixie.
+#   debos -t architecture:arm64 -t branch:next images/os/debos/vibedpn.yaml
+# No secret inside: access comes from user-data on the CIDATA partition (docs/decisions.md, 15).
+architecture: {{ $architecture }}
+
+actions:
+  - action: debootstrap
+    suite: trixie
+    components: [main]
+    mirror: https://deb.debian.org/debian
+    variant: minbase
+
+  - action: apt
+    packages:
+      - systemd-sysv
+      - udev
+      - dbus
+      - {{ if eq $architecture "amd64" }}linux-image-amd64{{ else }}linux-image-arm64{{ end }}
+      - {{ if eq $architecture "amd64" }}grub-efi-amd64{{ else }}grub-efi-arm64{{ end }}
+      - initramfs-tools
+      - cloud-init
+      - openssh-server
+      - sudo
+      - ca-certificates
+      - curl
+      - git
+      - iproute2
+      - nftables
+      - python3
+      - python3-venv
+      - systemd-resolved
+      - systemd-timesyncd
+
+  - action: overlay
+    source: ../common
+    destination: /tmp/vibedpn-image
+
+  - action: run
+    chroot: true
+    command: cp /tmp/vibedpn-image/99-vibedpn.cfg /etc/cloud/cloud.cfg.d/99-vibedpn.cfg
+
+  - action: run
+    chroot: false
+    command: cp "${RECIPEDIR}/../../../install.sh" "${ROOTDIR}/tmp/vibedpn-image/install.sh"
+
+  - action: run
+    chroot: true
+    command: env VIBEDPN_REPO={{ $repo }} VIBEDPN_BRANCH={{ $branch }} sh /tmp/vibedpn-image/provision.sh
+
+  - action: image-partition
+    imagename: {{ $image }}
+    imagesize: 6GB
+    partitiontype: gpt
+    mountpoints:
+      - mountpoint: /
+        partition: root
+      - mountpoint: /boot/efi
+        partition: CIDATA
+    partitions:
+      - name: CIDATA
+        fs: vfat
+        start: 1MiB
+        end: 513MiB
+        flags: [boot, esp]
+      - name: root
+        fs: ext4
+        start: 513MiB
+        end: 100%
+
+  - action: filesystem-deploy
+    setup-fstab: true
+    setup-kernel-cmdline: true
+
+  - action: run
+    chroot: true
+    command: >-
+      grub-install --target={{ if eq $architecture "amd64" }}x86_64-efi{{ else }}arm64-efi{{ end }}
+      --efi-directory=/boot/efi --removable --no-nvram &&
+      update-grub
+
+  - action: run
+    chroot: false
+    command: cp "${RECIPEDIR}/../common/seed/meta-data" "${RECIPEDIR}/../common/seed/user-data.example" "${ROOTDIR}/boot/efi/"

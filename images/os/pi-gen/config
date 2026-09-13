@@ -1,0 +1,12 @@
+# pi-gen config of the VibeDPN image for Raspberry Pi (arm64, Raspberry Pi OS Lite on trixie).
+# Read by pi-gen's build-docker.sh; VIBEDPN_* come from images/os/pi-gen/build.sh.
+IMG_NAME=vibedpn
+RELEASE=trixie
+TARGET_HOSTNAME=vibedpn
+# No password and no key in a public image (docs/decisions.md, decision 15): the account is locked
+# until the owner sets access in Raspberry Pi Imager (cloud-init user-data on the boot partition).
+FIRST_USER_NAME=vibedpn
+ENABLE_SSH=1
+DEPLOY_COMPRESSION=xz
+# Lite: stages 0-2, then the VibeDPN stage exports the image.
+STAGE_LIST="stage0 stage1 stage2 stage-vibedpn"

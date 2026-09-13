@@ -10,12 +10,15 @@
 #      /usr/local/bin/vibedpn,
 #   4. adds the invoking user to the `docker` group.
 # Overrides: VIBEDPN_REPO (git URL or path), VIBEDPN_BRANCH (default main), VIBEDPN_DIR.
+# VIBEDPN_IMAGE_BUILD=1: inside the chroot of an OS image (images/os): no Docker daemon runs there,
+# so its version is not checked and no user is added to the docker group.
 set -euo pipefail
 
 VIBEDPN_REPO="${VIBEDPN_REPO:-https://github.com/borodatych/VibeDPN.git}"
 VIBEDPN_BRANCH="${VIBEDPN_BRANCH:-main}"
 DEFAULT_DIR="/opt/vibedpn"  # `vibedpn init` has the same default; keep them equal
 VIBEDPN_DIR="${VIBEDPN_DIR:-$DEFAULT_DIR}"
+VIBEDPN_IMAGE_BUILD="${VIBEDPN_IMAGE_BUILD:-0}"
 VIBEDPN_BIN="/usr/local/bin/vibedpn"
 MIN_PYTHON="3.11"
 MIN_DOCKER_ENGINE="28.0.0"  # before 28.0.0 ports published on 127.0.0.1 were reachable from L2 neighbours
@@ -59,6 +62,10 @@ install_base_packages() {
 # Official apt repository of Docker (https://docs.docker.com/engine/install/debian/); Raspberry Pi
 # OS 64-bit follows the same instructions per https://docs.docker.com/engine/install/raspberry-pi-os/.
 install_docker() {
+  if [ "$VIBEDPN_IMAGE_BUILD" = 1 ] && docker compose version >/dev/null 2>&1; then
+    log "Docker $(docker --version) and Compose $(docker compose version --short) in the image; the daemon starts on boot"
+    return
+  fi
   if docker compose version >/dev/null 2>&1; then
     local engine
     engine="$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)"
@@ -144,8 +151,10 @@ main() {
   install_docker
   clone_or_update
   install_cli
-  add_docker_group
-  if [ "$VIBEDPN_DIR" = "$DEFAULT_DIR" ]; then
+  [ "$VIBEDPN_IMAGE_BUILD" = 1 ] || add_docker_group
+  if [ "$VIBEDPN_IMAGE_BUILD" = 1 ]; then
+    log "Done for the image. On the box: sudo vibedpn init"
+  elif [ "$VIBEDPN_DIR" = "$DEFAULT_DIR" ]; then
     log "Done. Next step: sudo vibedpn init"
   else
     log "Done. Next step: sudo vibedpn init --dir \"$VIBEDPN_DIR\""
