@@ -71,6 +71,22 @@ colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && VIBEDPN_TA
 `VIBEDPN_E2E_PYTHON`) и при любом исходе убирает за собой контейнеры, сети, netns `e2e-lanhost`,
 мост `lan0` и свои правила в `DOCKER-USER`. В CI его гоняет задача `e2e`.
 
+`tests/e2e/home.sh` — стенд коробки роли `home`: все сервисы роли (ядро, панель с Postgres, AdGuard,
+нода и consumer Mysterium) и отсутствие петли — в режиме `full` через `dpn` нода выходит в интернет с тем
+же адресом, что и хост. Своя LAN на мосту `lan0`, нужен настоящий интернет (образы Mysterium и эхо-сервис
+адреса, `VIBEDPN_E2E_EXIT_URL`). Образ панели локально на VM с 2 ГиБ не соберётся — возьмите
+опубликованный и перетегируйте:
+
+```bash
+docker pull ghcr.io/borodatych/vibedpn-ui:next-full && docker tag ghcr.io/borodatych/vibedpn-ui:next-full ghcr.io/borodatych/vibedpn-ui:e2e-full
+```
+
+```bash
+colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && VIBEDPN_TAG=e2e sh tests/e2e/home.sh'
+```
+
+В CI его гоняет задача `e2e-home`.
+
 ## Что не проверить локально
 
 Сетевую часть (nft, ip rule, WireGuard) — только на Linux-хосте или в E2E-стенде выше. На macOS ядро

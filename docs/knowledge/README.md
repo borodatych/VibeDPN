@@ -8,7 +8,7 @@
 - [node.md](myst/node.md) — образ и теги, каталог данных, актуальные флаги (`--udp.ports`,
   `--traversal` вместо устаревших из kickoff), TequilAPI без аутентификации и `nodeui-pass`,
   пять GET TequilAPI для статистики и ответы свежей ноды, что известно о consumer в
-  контейнере, открытый вопрос bridge vs host для provider
+  контейнере, открытый вопрос bridge vs host для provider; тип NAT ноды — `GET /nat/type`, оценка ноды, а не проверка проброса
 
 ## adguard
 

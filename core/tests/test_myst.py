@@ -15,6 +15,7 @@ from vibedpn.engine.myst import (
     Tokens,
     build_stats,
     human_bytes,
+    nat_type,
     provider_stats,
     render_stats,
     short_uptime,
@@ -308,3 +309,14 @@ def test_short_uptime(uptime: str, expected: str) -> None:
 def test_stats_round_trip_through_json() -> None:
     stats = busy_stats()
     assert ProviderStats.model_validate_json(stats.model_dump_json()) == stats
+
+
+def test_nat_type_reads_the_node_probe() -> None:
+    def answering(body: object) -> TequilaClient:
+        return TequilaClient(
+            transport=httpx.MockTransport(lambda _r: httpx.Response(200, json=body))
+        )
+
+    assert nat_type(answering({"type": "prcone"})) == "prcone"
+    with pytest.raises(MystError, match="unexpected"):
+        nat_type(answering({"kind": 1}))

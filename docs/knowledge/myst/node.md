@@ -160,3 +160,15 @@ e2e/localnet compose и `prepare-run-env.sh`. Минимальные требо�
 https://github.com/mysteriumnetwork/node/issues/3924 ,
 https://help.mystnodes.com/en/articles/8006183-mystnodes-installation-guide-on-linux-full ,
 https://api.github.com/repos/mysteriumnetwork/node .
+
+## [провайдер] Тип NAT ноды: `GET /nat/type` и что он значит
+
+**Контекст:** Stage 7, проверка `nat` в `vibedpn doctor --network`, 2026-09-13.
+**Суть:** в node 1.39.5 `GET /nat/type` отдаёт `{"type": ..., "error": ...}` (`tequilapi/contract/nat.go`); тип — один из `none`, `fullcone`, `rcone`, `prcone`, `symmetric` (`nat/types.go`).
+Эндпоинт вызывает `natProber.Probe`: нода сама обращается к серверам Mysterium, поэтому это сетевое действие, и `doctor` спрашивает его только с `--network`.
+Результат — оценка ноды, а не проверка проброса: открыт ли UDP-диапазон из интернета, видно только снаружи.
+Swagger эндпоинта предупреждает, что при установленном VPN-соединении результат может быть неверным.
+**Как читает `doctor`:** `none`/`fullcone` — OK; `rcone`/`prcone` — OK, но проброс `provider.udp_ports` даст больше сессий; `symmetric` — WARN и команда проброса; нет ответа — WARN.
+**Источники:** https://github.com/mysteriumnetwork/node/blob/1.39.5/tequilapi/endpoints/nat.go ,
+https://github.com/mysteriumnetwork/node/blob/1.39.5/tequilapi/contract/nat.go ,
+https://github.com/mysteriumnetwork/node/blob/1.39.5/nat/types.go .

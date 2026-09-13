@@ -34,7 +34,16 @@ from vibedpn.compose import (
 )
 from vibedpn.config import Config, Profile, Role, RoutingMode, UiVariant, Upstream, parse_port_range
 from vibedpn.detect import SSHD, WIREGUARD_MODULE, HostProbe, module_present
-from vibedpn.engine.myst import NODEUI_PORT, TEQUILAPI_PORT
+from vibedpn.engine.myst import (
+    NAT_OPEN,
+    NAT_PUNCHABLE,
+    NAT_SYMMETRIC,
+    NODEUI_PORT,
+    TEQUILAPI_PORT,
+    MystError,
+    TequilaClient,
+    nat_type,
+)
 from vibedpn.engine.router import (
     EGRESS_COMMENT,
     EGRESS_TABLE,
@@ -171,6 +180,9 @@ class DoctorFacts:
     lan_ipv6: bool | None = None  # a global IPv6 address on lan_interface; None: not checked
     exits: list[ExitFact] | None = None  # None: `doctor` ran without --network
     memory_bytes: int | None = None  # None: /proc/meminfo could not be read
+    # The node's NAT type (only with --network: the node asks Mysterium's servers); "" not asked.
+    nat: str = ""
+    nat_error: str = ""
 
 
 def parse_ss(output: str) -> list[Listener]:
@@ -272,6 +284,7 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
             results.append(_egress_result(config, facts))
     if config is not None and config.network is not None:
         results.extend(_lan_results(config, facts))
+    results.extend(_nat_results(facts))
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -902,6 +915,7 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         lan_ipv6=lan_ipv6,
         exits=_exits(box_dir, config, services) if network and config is not None else None,
         memory_bytes=HostProbe().memory_bytes(),
+        **_nat_facts(config, network=network),
     )
 
 
@@ -1100,3 +1114,55 @@ def to_json(results: list[CheckResult]) -> str:
 
 def has_failures(results: list[CheckResult]) -> bool:
     return any(item.verdict is Verdict.FAIL for item in results)
+
+
+def _nat_facts(config: Config | None, *, network: bool) -> dict[str, str]:
+    """The node's NAT type; asked only with --network, only on a box that runs a node."""
+    if not network or config is None or not config.provider.enabled:
+        return {}
+    client = TequilaClient()
+    try:
+        return {"nat": nat_type(client)}
+    except MystError as exc:
+        return {"nat_error": str(exc)}
+    finally:
+        client.close()
+
+
+def _nat_results(facts: DoctorFacts) -> list[CheckResult]:
+    if facts.config is None:
+        return []
+    result = _nat_result(facts.config, facts)
+    return [] if result is None else [result]
+
+
+def _nat_result(config: Config, facts: DoctorFacts) -> CheckResult | None:
+    """How consumers reach the node. It is the node's own estimate: whether the UDP range is really
+    open from the internet can only be seen from outside."""
+    if not config.provider.enabled or not (facts.nat or facts.nat_error):
+        return None
+    ports = config.provider.udp_ports
+    forward = f"forward UDP {ports} on the router to this box"
+    if facts.nat_error:
+        return CheckResult(
+            "nat",
+            Verdict.WARN,
+            f"the node could not tell: {facts.nat_error}",
+            "vibedpn logs myst-provider",
+        )
+    if facts.nat in NAT_OPEN:
+        return CheckResult("nat", Verdict.OK, f"{facts.nat}: consumers reach the node directly")
+    if facts.nat in NAT_PUNCHABLE:
+        return CheckResult(
+            "nat",
+            Verdict.OK,
+            f"{facts.nat}: reachable through hole punching; {forward} for more sessions",
+        )
+    if facts.nat == NAT_SYMMETRIC:
+        return CheckResult(
+            "nat",
+            Verdict.WARN,
+            "symmetric: hole punching fails, consumers rarely reach the node",
+            forward,
+        )
+    return CheckResult("nat", Verdict.WARN, f"unknown NAT type {facts.nat!r} from the node")

@@ -277,3 +277,18 @@ def provider_stats(client: TequilaClient) -> ProviderStats:
         ask("/node/monitoring-status"),
         problems,
     )
+
+
+# NAT types of the node (nat/types.go of node 1.39.5): how peers can reach it.
+NAT_OPEN = frozenset({"none", "fullcone"})
+NAT_PUNCHABLE = frozenset({"rcone", "prcone"})
+NAT_SYMMETRIC = "symmetric"
+
+
+def nat_type(client: TequilaClient) -> str:
+    """``GET /nat/type``: the node's own probe of its NAT. It asks Mysterium's servers, so it is
+    a network action; the answer is the node's estimate, not a test of the published ports."""
+    body = client.get("/nat/type")
+    if not isinstance(body, dict) or not isinstance(body.get("type"), str):
+        raise MystError("TequilAPI /nat/type: unexpected answer")
+    return str(body["type"])

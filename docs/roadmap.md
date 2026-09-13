@@ -91,11 +91,10 @@
 
 ## Stage 7 — Роль home (all-in-one)
 
-- [ ] Профильный пресет `home`: provider + consumer + router + dns + ui на одной коробке
-- [ ] Проверка отсутствия петли: трафик provider уходит в WAN напрямую, не через аплинки
-- [ ] Provider за NAT: инструкция по пробросу портов + вариант с natpunching, `doctor` проверяет
-      достижимость портов
-- [ ] README: сценарий «одна коробка»
+- [x] **Профильный пресет `home`: provider + consumer + router + dns + ui на одной коробке** — ✅ (2026-09-13, `next`) `init --role home` включает профили `provider,consumer,router,dns,ui` и пишет все пять секретов роли. Новый стенд `tests/e2e/home.sh` (своя LAN на мосту `lan0`, `--ui-variant full`, режим `full` через `dpn`) и CI-задача `e2e-home`: все сервисы роли поднимаются — ядро, панель и `ui-db` здоровы, AdGuard, `myst-provider` и `myst-consumer` работают. Прогон на VM colima (aarch64, 2 ГиБ) зелёный; память роли сразу после старта — около 326 МиБ (панель 118, ядро 63, AdGuard 45, `ui-db` 43, provider 38, consumer 20). Первый прогон поймал два дефекта стенда, не продукта: образа `lite` не было (на 2 ГиБ `init` выбрал `lite` — выбор по памяти отработал верно), порт 53 на адресе VM занят dnsmasq самой colima
+- [x] **Проверка отсутствия петли: трафик provider уходит в WAN напрямую, не через аплинки** — ✅ (2026-09-13, `next`) по устройству роутер метит только трафик с `lan_interface` из `lan_subnet`, а нода — на своём мосту Docker; фактом на стенде `home`: при режиме `full` через `dpn` (таблица роутера метит LAN `0x20`) `myst-provider` выходит в интернет с тем же адресом, что и хост. В E2E-стенд клиента проверку не ставил: его «интернет» — тоже мост Docker, и изоляция Docker между мостами дала бы ложный провал
+- [x] **Provider за NAT: инструкция по пробросу портов + вариант с natpunching, `doctor` проверяет** — ✅ (2026-09-13, `next`) README, раздел «Одна коробка»: проброс `provider.udp_ports` (по умолчанию 56000-56100) на адрес коробки, без проброса — `provider.traversal` (manual, upnp, holepunching). `doctor --network` — строка `nat` по `GET /nat/type` ноды (node 1.39.5: `none`/`fullcone` — OK, `rcone`/`prcone` — OK с советом пробросить, `symmetric` — WARN с командой проброса, нет ответа — WARN). Это оценка ноды, а не проверка проброса снаружи, и она только под `--network`: нода обращается к серверам Mysterium — развилка в `docs/decisions.md`
+- [x] **README: сценарий «одна коробка»** — ✅ (2026-09-13, `next`) раздел «Одна коробка: всё сразу»: `init --role home`, `up`, направление устройств, панель на `vibedpn.lan`, нода за NAT и `doctor --network`, трафик ноды мимо туннелей
 
 ## Stage 8 — Аплинк dpn (Mysterium consumer)
 

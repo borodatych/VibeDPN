@@ -641,3 +641,14 @@ def test_the_lan_access_of_the_vps_tunnel_is_reported() -> None:
     line = by_name(evaluate(facts(config=Config.model_validate(raw))))["vps lan access"]
     assert line.verdict is Verdict.OK and line.detail.startswith("closed")
     assert "vps lan access" not in by_name(evaluate(facts()))  # home box without the vps uplink
+
+
+def test_the_nat_of_the_node_is_judged_only_when_asked() -> None:
+    assert "nat" not in by_name(evaluate(facts()))  # without --network nothing is asked
+    assert by_name(evaluate(facts(nat="fullcone")))["nat"].verdict is Verdict.OK
+    punch = by_name(evaluate(facts(nat="prcone")))["nat"]
+    assert punch.verdict is Verdict.OK and "56000-56100" in punch.detail
+    symmetric = by_name(evaluate(facts(nat="symmetric")))["nat"]
+    assert symmetric.verdict is Verdict.WARN and "forward UDP 56000-56100" in symmetric.hint
+    silent = by_name(evaluate(facts(nat_error="TequilAPI /nat/type: HTTP 500")))["nat"]
+    assert silent.verdict is Verdict.WARN and "HTTP 500" in silent.detail
