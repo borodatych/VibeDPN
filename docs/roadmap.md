@@ -98,8 +98,7 @@
 
 ## Stage 8 — Аплинк dpn (Mysterium consumer)
 
-- [ ] Ответы на вопросы §10 idea.md «Обязательно уточнить» зафиксированы в `docs/knowledge/myst/`
-      с URL источников
+- [x] **Ответы на вопросы §10 idea.md «Обязательно уточнить» зафиксированы в `docs/knowledge/myst/`** — ✅ (2026-09-13, `next`) `myst/consumer.md` по исходникам node 1.39.5 с URL: identity (`passphrase` обязателен), регистрация (`POST /identities/{id}/register`, бесплатно только при eligibility), `PUT /connection` (только `consumer_id` обязателен, фильтр страны), ловушка `kill_switch: true` = выключить kill-switch, баланс не проверяется при нулевой цене, свою ноду бесплатно — только раздавая её бесплатно всем (запрет самосоединения не найден, не проверено), официальный мультиарх-образ, `--data-dir`, автообновления нет. Поведение consumer в контейнере без host-сети — проверка запуском в следующем пункте
 - [ ] `myst-consumer` gateway-контейнер (10.77.0.20): identity, регистрация, connect через
       TequilAPI, kill-switch; пароль TequilAPI из `secrets/` вместо `myst/mystberry`
 - [ ] TequilAPI `myst-consumer` недоступен из LAN и через адрес tun-интерфейса контейнера: слушать только

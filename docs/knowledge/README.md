@@ -9,6 +9,8 @@
   `--traversal` вместо устаревших из kickoff), TequilAPI без аутентификации и `nodeui-pass`,
   пять GET TequilAPI для статистики и ответы свежей ноды, что известно о consumer в
   контейнере, открытый вопрос bridge vs host для provider; тип NAT ноды — `GET /nat/type`, оценка ноды, а не проверка проброса
+- [consumer.md](myst/consumer.md) — flow consumer в node 1.39.5: identity, регистрация, `PUT /connection`,
+  `kill_switch: true` выключает kill-switch, баланс не нужен при нулевой цене, образ мультиарх
 
 ## adguard
 
