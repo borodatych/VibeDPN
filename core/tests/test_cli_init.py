@@ -21,6 +21,10 @@ class FakeProbe:
     def default_interface(self) -> Interface | None:
         return self.interface
 
+    def interfaces(self) -> list[Interface]:
+        wifi = Interface("wlan0", IPv4Address("192.168.50.1"), 24)
+        return [i for i in (self.interface, wifi) if i is not None]
+
     def wireguard_module_present(self) -> bool | None:
         return self.wireguard
 
@@ -277,3 +281,72 @@ def test_init_picks_the_panel_variant_by_memory_and_flag(
     result = runner.invoke(cli.app, [*args, "--ui-variant", "full", "--dir", str(forced)])
     assert result.exit_code == 0, result.output
     assert load_config(forced / "config.yaml").ui.variant.value == "full"
+
+
+def test_lan_interface_puts_the_box_in_gateway_mode(tmp_path: Path) -> None:
+    result = runner.invoke(
+        cli.app,
+        [
+            "init",
+            "--dir",
+            str(tmp_path),
+            "--role",
+            "home",
+            "--lan-interface",
+            "wlan0",
+            "--password-file",
+            str(password_file(tmp_path)),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Also wlan0: 192.168.50.1/24" in result.output
+    network = load_config(tmp_path / "config.yaml").network
+    assert network is not None and network.mode.value == "gateway"
+    assert (network.lan_interface, network.wan_interface) == ("wlan0", "eth0")
+    assert str(network.lan_address) == "192.168.50.1" and network.dhcp is not None
+    assert (
+        "COMPOSE_PROFILES=provider,consumer,router,dhcp,dns,ui" in (tmp_path / ".env").read_text()
+    )
+
+
+def test_lan_interface_without_an_address_is_refused(tmp_path: Path) -> None:
+    result = runner.invoke(
+        cli.app,
+        [
+            "init",
+            "--dir",
+            str(tmp_path),
+            "--role",
+            "home",
+            "--lan-interface",
+            "eth1",
+            "--password-file",
+            str(password_file(tmp_path)),
+        ],
+    )
+    assert result.exit_code == 1
+    assert (
+        "eth1 has no IPv4 address" in result.output and "wlan0 (192.168.50.1/24)" in result.output
+    )
+    assert not (tmp_path / "config.yaml").exists()
+
+
+def test_a_vps_has_no_lan_interface(tmp_path: Path) -> None:
+    result = runner.invoke(
+        cli.app,
+        [
+            "init",
+            "--dir",
+            str(tmp_path),
+            "--role",
+            "vps",
+            "--endpoint",
+            "vps.example.com",
+            "--lan-interface",
+            "wlan0",
+            "--password-file",
+            str(password_file(tmp_path)),
+        ],
+    )
+    assert result.exit_code == 1
+    assert "--lan-interface is only used with --role home or client" in result.output

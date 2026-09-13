@@ -14,6 +14,7 @@ from vibedpn.detect import (
     Interface,
     parse_default_route,
     parse_interface,
+    parse_interfaces,
     parse_mem_total,
 )
 
@@ -92,3 +93,9 @@ def test_mem_total_is_read_in_kib() -> None:
     assert parse_mem_total(meminfo) == 3884292 * 1024
     assert parse_mem_total("MemFree: 1 kB\n") is None
     assert parse_mem_total("MemTotal: many kB\n") is None
+
+
+def test_every_interface_with_a_global_address() -> None:
+    text = (FIXTURES / "ip_addr.json").read_text(encoding="utf-8")
+    names = [interface.name for interface in parse_interfaces(text)]
+    assert "lo" not in names and "eth0" in names

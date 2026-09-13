@@ -100,7 +100,12 @@ log "box: gateway mode, WAN $WAN, LAN $LAN, pool $POOL_START-$POOL_END"
 mkdir "$BOX"
 cp "$REPO/compose.yaml" "$BOX/"
 printf '%s\n' "$PASSWORD" >"$WORK/password"
-sudo "$CLI" init --dir "$BOX" --role home --ui-variant full --password-file "$WORK/password" >/dev/null
+init_out="$(sudo "$CLI" init --dir "$BOX" --role home --ui-variant full --lan-interface "$LAN" \
+  --password-file "$WORK/password" 2>&1)" || fail "init --lan-interface $LAN failed: $init_out"
+printf '%s\n' "$init_out" | grep -q "^Also $LAN: $BOX_LAN_IP/24" || fail "init did not list $LAN with its address"
+sudo grep -q "^  mode: gateway$" "$BOX/config.yaml" || fail "init --lan-interface $LAN did not write gateway mode"
+sudo grep -q "^  wan_interface: $WAN$" "$BOX/config.yaml" || fail "init --lan-interface $LAN did not take $WAN as the WAN"
+# the stand then keeps only core and dnsmasq: the checks below are about DHCP and NAT
 sudo "$PY" - "$BOX/config.yaml" "$LAN" "$LAN_SUBNET" "$BOX_LAN_IP" "$WAN" "$POOL_START" "$POOL_END" <<'PY'
 import sys
 from pathlib import Path

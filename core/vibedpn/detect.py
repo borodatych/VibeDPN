@@ -68,6 +68,17 @@ def parse_interface(text: str, name: str) -> Interface | None:
     return None
 
 
+def parse_interfaces(text: str) -> list[Interface]:
+    """Every interface with a global IPv4 address in ``ip -j -4 addr show`` output, in its order."""
+    found: list[Interface] = []
+    for link in json.loads(text):
+        name = link.get("ifname")
+        interface = parse_interface(json.dumps([link]), name) if name else None
+        if interface is not None:
+            found.append(interface)
+    return found
+
+
 def find_tool(name: str) -> str | None:
     """Locate an admin binary: sbin is off a non-root Debian PATH, so it is searched too."""
     search = os.pathsep.join([*os.get_exec_path(), *SBIN_DIRS])
@@ -237,6 +248,9 @@ class HostProbe:
         if name is None:
             return None
         return parse_interface(self._ip("addr", "show", "dev", name), name)
+
+    def interfaces(self) -> list[Interface]:
+        return parse_interfaces(self._ip("addr", "show"))
 
     def wireguard_module_present(self) -> bool | None:
         return module_present(WIREGUARD_MODULE)

@@ -52,6 +52,7 @@ from vibedpn.compose import (
 from vibedpn.config import (
     Config,
     DevicePolicy,
+    NetworkMode,
     Role,
     RoutingMode,
     UiVariant,
@@ -161,9 +162,15 @@ def _ask_endpoint() -> str:
 
 
 def _check_flags_for_role(
-    role: Role, peer_config: Path | None, endpoint: str | None, password_file: Path | None
+    role: Role,
+    peer_config: Path | None,
+    endpoint: str | None,
+    password_file: Path | None,
+    lan_interface: str | None = None,
 ) -> None:
     """A flag of another role is a mistake, not something to ignore silently."""
+    if lan_interface is not None and role is Role.VPS:
+        raise _fail("--lan-interface is only used with --role home or client")
     if peer_config is not None and role is not Role.CLIENT:
         raise _fail("--peer-config is only used with --role client")
     if endpoint is not None and role is not Role.VPS:
@@ -181,10 +188,11 @@ def _collect_answers(
     endpoint: str | None,
     password_file: Path | None,
     facts: HostFacts,
+    lan_interface: str | None = None,
 ) -> Answers:
     """Ask only what cannot be detected or was not passed as a flag; fail early on known facts."""
     role = role or _ask_role()
-    _check_flags_for_role(role, peer_config, endpoint, password_file)
+    _check_flags_for_role(role, peer_config, endpoint, password_file, lan_interface)
     if role is not Role.VPS and facts.interface is None:
         raise _fail("no interface with a default route was found; connect the box to the LAN first")
     password = _read_password_file(password_file) if password_file else _ask_password()
@@ -215,6 +223,13 @@ def init(
         UiVariant | None,
         typer.Option(help="Panel variant: full, or lite for a Raspberry Pi; else by host memory."),
     ] = None,
+    lan_interface: Annotated[
+        str | None,
+        typer.Option(
+            help="Gateway mode: the LAN-side interface (with a static IPv4); the default-route"
+            " interface becomes the WAN. Without it the box sits in the LAN on one port."
+        ),
+    ] = None,
     password_file: Annotated[
         Path | None,
         typer.Option(
@@ -243,14 +258,20 @@ def init(
             wireguard_module=probe.wireguard_module_present(),
             ssh_ports=probe.ssh_ports(),
             memory_bytes=probe.memory_bytes(),
+            interfaces=probe.interfaces(),
         )
     except DetectError as exc:
         raise _fail(str(exc)) from None
     if facts.interface is not None:
         detected = facts.interface
         typer.echo(f"Detected {detected.name}: {detected.address}/{detected.prefixlen}")
+    for other in facts.interfaces:
+        if facts.interface is None or other.name != facts.interface.name:
+            typer.echo(f"Also {other.name}: {other.address}/{other.prefixlen} (--lan-interface)")
     answers = replace(
-        _collect_answers(role, peer_config, endpoint, password_file, facts), ui_variant=ui_variant
+        _collect_answers(role, peer_config, endpoint, password_file, facts, lan_interface),
+        ui_variant=ui_variant,
+        lan_interface=lan_interface,
     )
     try:
         config = build_config(answers, facts)
@@ -272,6 +293,11 @@ def init(
             "warning: could not check the wireguard kernel module (modprobe not found)",
             fg=typer.colors.YELLOW,
             err=True,
+        )
+    if config.network is not None and config.network.mode is NetworkMode.GATEWAY:
+        typer.echo(
+            f"Gateway mode: WAN {config.network.wan_interface}, LAN {config.network.lan_interface}"
+            f" {config.network.lan_address}; the box hands out addresses on the LAN"
         )
     if config.network is not None and config.ui.enabled:
         typer.echo(f"Panel variant {config.ui.variant.value} (ui.variant in config.yaml)")

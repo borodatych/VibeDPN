@@ -20,9 +20,11 @@ from pydantic import ValidationError
 
 from vibedpn.config import (
     Config,
+    DhcpConfig,
     DpnUplink,
     FirewallConfig,
     NetworkConfig,
+    NetworkMode,
     Profile,
     ProviderConfig,
     Role,
@@ -102,16 +104,19 @@ class Answers:
     peer_config: Path | None = None
     endpoint: str | None = None
     ui_variant: UiVariant | None = None  # None: chosen by the memory of the host
+    # gateway mode: the LAN side, another interface than the default-route one (the WAN)
+    lan_interface: str | None = None
 
 
 @dataclass(frozen=True)
 class HostFacts:
     """What the wizard detected."""
 
-    interface: Interface | None
+    interface: Interface | None  # the default-route one: the LAN in sidecar, the WAN in gateway
     wireguard_module: bool | None  # None: could not check (no modprobe on PATH)
     ssh_ports: list[int] = field(default_factory=lambda: [DEFAULT_SSH_PORT])
     memory_bytes: int | None = None  # None: /proc/meminfo could not be read
+    interfaces: list[Interface] = field(default_factory=list)  # every one with a global IPv4
 
 
 @dataclass(frozen=True)
@@ -234,11 +239,7 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
         raise BootstrapError(
             "no interface with a default route was found; connect the box to the LAN first"
         )
-    network = NetworkConfig(
-        lan_interface=facts.interface.name,
-        lan_subnet=facts.interface.subnet,
-        lan_address=facts.interface.address,
-    )
+    network = network_for(answers, facts, facts.interface)
     if answers.role is Role.HOME:
         return _validated(
             version=1,
@@ -257,6 +258,35 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
         routing=RoutingConfig(default_upstream=Upstream.VPS),
         upstreams=UpstreamsConfig(vps=VpsUplink(enabled=True)),
     )
+
+
+def network_for(answers: Answers, facts: HostFacts, default: Interface) -> NetworkConfig:
+    """sidecar on the default-route interface, or gateway: that one is the WAN and the chosen
+    interface the LAN, with the static address the OS gave it (docs/decisions.md, decision 7)."""
+    if answers.lan_interface is None or answers.lan_interface == default.name:
+        return NetworkConfig(
+            lan_interface=default.name, lan_subnet=default.subnet, lan_address=default.address
+        )
+    lan = next((i for i in facts.interfaces if i.name == answers.lan_interface), None)
+    if lan is None:
+        others = ", ".join(
+            f"{i.name} ({i.address}/{i.prefixlen})" for i in facts.interfaces if i != default
+        )
+        raise BootstrapError(
+            f"--lan-interface {answers.lan_interface} has no IPv4 address; give it a static one"
+            " first (docs/manuals/installation.md, gateway mode)."
+            f" With an address: {others or 'none'}"
+        )
+    gateway = NetworkConfig(
+        mode=NetworkMode.GATEWAY,
+        lan_interface=lan.name,
+        lan_subnet=lan.subnet,
+        lan_address=lan.address,
+        wan_interface=default.name,
+    )
+    # the pool is written out, so the owner sees and edits it in config.yaml
+    start, end = gateway.dhcp_pool()
+    return gateway.model_copy(update={"dhcp": DhcpConfig(range_start=start, range_end=end)})
 
 
 def render_config(config: Config) -> str:
