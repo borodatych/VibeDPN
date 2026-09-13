@@ -12,12 +12,22 @@ bcrypt единственный живой вариант, а nginx его по�
 «пропускает» любой пароль — проверять на отдаче файла, не на `return`.
 **Применение:** Stage 4 — `auth_basic_user_file /etc/nginx/htpasswd` из `secrets/htpasswd`;
 core проверяет тот же файл `bcrypt.checkpw`. Один файл, два читателя, один формат.
+**Кто читает файл и с какими правами (2026-09-13, проверено исполнением на `nginx:1.31-alpine`):**
+`auth_basic_user_file` открывает рабочий процесс nginx (пользователь `nginx`, uid 101) на каждом
+запросе, а не мастер от root при загрузке конфига — документация модуля об этом молчит. Файл из
+`secrets/` с правами 600 от root, смонтированный как есть: без пароля 401, с верным и с неверным —
+500 и `open() "/run/secrets/htpasswd" failed (13: Permission denied)` в журнале. Секреты Compose не
+помогают: для секрета из файла `uid`, `gid` и `mode` молча игнорируются (это bind-mount). Решение —
+скрипт в `/docker-entrypoint.d` образа `ui` (выполняется от root до старта nginx) копирует файл в
+`/etc/nginx/htpasswd` с `root:nginx 0440`; пустой, отсутствующий или каталог вместо файла — отказ
+старта с понятной строкой, а не API без пароля. Права `secrets/` на хосте не ослабляются.
 **Лимит 72 байта:** bcrypt хеширует не больше 72 байт, и с версии 5.0.0 пакет бросает
 `ValueError` вместо тихого усечения; русская фраза из 37 букв — уже 74 байта UTF-8. Поэтому
 политика пароля живёт в `bootstrap.check_password` (минимум 8 символов, максимум 72 байта) и
 проверяется до любой записи на диск — иначе `init` падал трассировкой с наполовину записанной
 коробкой (найдено ревью 2026-09-12).
 **Источники:** https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html ,
+https://docs.docker.com/reference/compose-file/services/#secrets (uid/gid/mode для file-секретов игнорируются),
 https://docs.python.org/3.13/whatsnew/3.13.html#removed-modules (crypt удалён),
 https://pypi.org/project/bcrypt/ (changelog 5.0.0: «Passing hashpw a password longer than 72 bytes
 now raises a ValueError»).

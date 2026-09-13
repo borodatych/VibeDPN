@@ -4,3 +4,5 @@
 FROM nginx:1.31-alpine
 COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 COPY placeholder/ /usr/share/nginx/html/
+# Installs the password file for /api/ before nginx starts (see the script).
+COPY --chmod=755 entrypoint.d/05-htpasswd.sh /docker-entrypoint.d/05-htpasswd.sh

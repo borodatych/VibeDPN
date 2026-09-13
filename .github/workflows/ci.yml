@@ -314,6 +314,46 @@ jobs:
             if iptables-nft -S DOCKER-USER | grep -q vibedpn-router; then echo "DOCKER-USER rules survived"; exit 1; fi
           '
 
+  ui-auth:
+    name: ui · /api/ behind the init password
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the ui image, serve a fake core, check 401/200 and a refused start without a password
+        run: |
+          set -eu
+          docker build -q -t vibedpn-ui:ci ui >/dev/null
+          work="$(mktemp -d)"
+          mkdir -p "$work/api" "$work/secrets"
+          echo ok > "$work/api/health"
+          hash="$(docker run --rm python:3.12-slim-trixie sh -c 'pip install -q bcrypt >/dev/null 2>&1 && python -c "import bcrypt; print(bcrypt.hashpw(b\"ci-secret-123\", bcrypt.gensalt(12)).decode())"')"
+          printf 'admin:%s\n' "$hash" > "$work/secrets/htpasswd"
+          sudo chown root:root "$work/secrets/htpasswd"
+          sudo chmod 600 "$work/secrets/htpasswd"
+          docker run -d --name fake-core --network host -v "$work/api:/srv:ro" python:3.12-slim-trixie \
+            python -m http.server 4480 --bind 127.0.0.1 --directory /srv >/dev/null
+          docker run -d --name ui --network host -e UI_LISTEN=127.0.0.1:8088 -e API_PORT=4480 \
+            -v "$work/secrets/htpasswd:/run/secrets/htpasswd:ro" vibedpn-ui:ci >/dev/null
+          for _ in $(seq 20); do curl -s -o /dev/null http://127.0.0.1:8088/ && break; sleep 1; done
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          test "$(code http://127.0.0.1:8088/api/health)" = 401
+          test "$(code -u admin:ci-secret-123 http://127.0.0.1:8088/api/health)" = 200
+          test "$(code -u admin:wrong http://127.0.0.1:8088/api/health)" = 401
+          test "$(code -u root:ci-secret-123 http://127.0.0.1:8088/api/health)" = 401
+          test "$(code http://127.0.0.1:8088/)" = 200
+          docker logs ui 2>&1 | grep -q "password file installed for /api/"
+          docker rm -f ui fake-core >/dev/null
+          # No password file, an empty one, or a directory in its place: the container refuses to start.
+          : > "$work/empty"
+          mkdir "$work/dir"
+          for source in "$work/empty" "$work/dir"; do
+            if docker run --rm --network host -e UI_LISTEN=127.0.0.1:8089 -e API_PORT=4480 \
+              -v "$source:/run/secrets/htpasswd:ro" vibedpn-ui:ci > "$work/refused.log" 2>&1; then
+              echo "ui started without a usable password file ($source)"; exit 1
+            fi
+            grep -q "is missing or empty" "$work/refused.log"
+          done
+
   tunnel:
     name: tunnel · wg handshake and kill switch
     runs-on: ubuntu-24.04
@@ -330,7 +370,7 @@ jobs:
 
   images:
     name: image · ${{ matrix.image.name }}
-    needs: [python, shell, compose, install, firewall, router, tunnel]
+    needs: [python, shell, compose, install, firewall, router, ui-auth, tunnel]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
