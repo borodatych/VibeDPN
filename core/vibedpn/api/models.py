@@ -130,3 +130,20 @@ class VpsLanAccessUpdate(BaseModel):
 
 class VpsLanAccessView(BaseModel):
     allowed: bool
+
+
+class DpnCountry(BaseModel):
+    """Nodes of one country for uplink dpn; prices in wei of MYST (18 decimals)."""
+
+    country: str
+    nodes: int
+    min_per_hour_wei: str
+    min_per_gib_wei: str
+
+
+class DpnCountryUpdate(BaseModel):
+    country: str | None  # None: any country
+
+
+class DpnCountryView(BaseModel):
+    country: str | None

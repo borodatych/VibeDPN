@@ -531,6 +531,7 @@ jobs:
         run: |
           docker build -q -t ghcr.io/borodatych/vibedpn-core:e2e core
           docker build -q --build-arg UI_VARIANT=full -t ghcr.io/borodatych/vibedpn-ui:e2e-full ui
+          docker build -q -t ghcr.io/borodatych/vibedpn-myst-consumer:e2e images/myst-consumer
       - name: The CLI in a venv
         run: |
           uv venv /tmp/e2e-venv --python 3.12
@@ -559,6 +560,9 @@ jobs:
           - name: wg
             repository: wg
             context: images/wg
+          - name: myst-consumer
+            repository: myst-consumer
+            context: images/myst-consumer
           - name: ui-full
             repository: ui
             context: ui

@@ -17,6 +17,7 @@ from vibedpn.api.models import (
     DevicePolicyUpdate,
     DevicePolicyView,
     DeviceView,
+    DpnCountryView,
     PeerCreate,
     PeerFile,
     PeerView,
@@ -241,4 +242,18 @@ def fetch_status(port: int, transport: httpx.BaseTransport | None = None) -> Box
     except (ValueError, ValidationError) as exc:
         raise RoutingRequestError(
             f"core answered something that is not a status ({VERSION_HINT})"
+        ) from exc
+
+
+def set_dpn_country(
+    port: int, country: str | None, transport: httpx.BaseTransport | None = None
+) -> DpnCountryView:
+    response = _send(port, "PUT", "/dpn/country", body={"country": country}, transport=transport)
+    if response.status_code != httpx.codes.OK:
+        raise RoutingRequestError(_detail(response))
+    try:
+        return DpnCountryView.model_validate(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise RoutingRequestError(
+            f"core answered something that is not a dpn country ({VERSION_HINT})"
         ) from exc

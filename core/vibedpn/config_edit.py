@@ -118,6 +118,19 @@ def set_vps_lan_access(path: Path, allowed: bool) -> tuple[Config, bool]:
     return _edit(path, mutate)
 
 
+def set_dpn_country(path: Path, country: str | None) -> tuple[Config, bool]:
+    """Pin uplink dpn to a country (ISO 3166-1 alpha-2), or let it take any (``None``)."""
+
+    def mutate(data: CommentedMap) -> None:
+        upstreams = data.get("upstreams")
+        dpn = upstreams.get("dpn") if isinstance(upstreams, dict) else None
+        if not isinstance(dpn, dict):
+            raise ConfigEditError(f"{path} has no upstreams.dpn section")
+        dpn["country"] = country
+
+    return _edit(path, mutate)
+
+
 class DeviceNotFoundError(ConfigEditError):
     """``config.yaml`` has no device with this MAC or address."""
 

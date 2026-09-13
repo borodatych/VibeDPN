@@ -16,9 +16,11 @@ from vibedpn.api.uplink import UplinkState, UplinkWatchers, watch_uplink
 from vibedpn.bootstrap import render_config
 from vibedpn.config import Config, RoutingMode, Upstream, load_config
 from vibedpn.engine.adguard import CORE_USER, AdguardError, adguard_text, set_aaaa_disabled
+from vibedpn.engine.consumer import CountryOffer
+from vibedpn.engine.myst import MystError
 from vibedpn.engine.router import RouterError, RoutingFacts
 
-from .conftest import client_config, vps_config
+from .conftest import client_config, home_config, vps_config
 
 HASH = "$2b$12$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
 FACTS = RoutingFacts(True, {"vps": True}, {"vps": True})
@@ -280,3 +282,28 @@ def test_the_vps_tunnel_opens_to_the_lan_live(tmp_path: Path) -> None:
     assert "lan_access: true" in path.read_text(encoding="utf-8")
     client, _ = box(tmp_path, vps_config())
     assert client.put("/uplinks/vps/lan-access", json={"allowed": True}).status_code == 404
+
+
+def test_dpn_country_changes_live_and_countries_come_from_the_consumer(tmp_path: Path) -> None:
+    raw = home_config()
+    path = tmp_path / "config.yaml"
+    path.write_text(render_config(Config.model_validate(raw)), encoding="utf-8")
+    config = load_config(path)
+    state = BoxState(config, path, apply=lambda _config: [Upstream.DPN])
+    offers = [CountryOffer("DE", 2, 100, 90)]
+    app = TestClient(create_app(config, state=state, dpn_offers=lambda: offers))
+    assert app.get("/dpn/countries").json() == [
+        {"country": "DE", "nodes": 2, "min_per_hour_wei": "100", "min_per_gib_wei": "90"}
+    ]
+    assert app.put("/dpn/country", json={"country": "nl"}).json() == {"country": "NL"}
+    assert load_config(path).upstreams.dpn.country == "NL"
+    assert app.put("/dpn/country", json={"country": "Netherlands"}).status_code == 422
+    assert app.put("/dpn/country", json={"country": None}).json() == {"country": None}
+
+    def silent() -> list[CountryOffer]:
+        raise MystError("TequilAPI GET /proposals: HTTP 500")
+
+    silent_app = TestClient(create_app(config, state=state, dpn_offers=silent))
+    assert silent_app.get("/dpn/countries").status_code == 503
+    client_box, _ = box(tmp_path)  # a client box: dpn is off
+    assert client_box.get("/dpn/countries").status_code == 404

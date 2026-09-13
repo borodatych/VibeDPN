@@ -15,6 +15,9 @@ from dataclasses import dataclass
 from vibedpn.engine.myst import MystError, TequilaClient
 
 CONSUMER_TEQUILAPI = "http://10.77.0.20:4050"  # the gateway address of dpn in compose.yaml
+# `GET /identities/{id}` asks the blockchain for registration and balance: seconds, not the
+# fraction of a second the provider statistics take (a 2 s timeout failed on the home stand).
+CONSUMER_TIMEOUT_SECONDS = 20.0
 SERVICE_TYPE = "wireguard"
 REGISTERED = "Registered"
 REGISTRATION_IN_PROGRESS = "InProgress"
@@ -75,6 +78,7 @@ def reconcile(
         registration = _field(body, "registration_status") or "Unknown"
         status, body = client.send("GET", "/connection")
         connection = _field(body, "status") or "Unknown"
+        session_country = _session_country(body)
         if not wanted:
             if connection != NOT_CONNECTED:
                 client.send("DELETE", "/connection")
@@ -88,17 +92,80 @@ def reconcile(
                 country,
                 "the consumer identity is not registered: register it and top it up with MYST",
             )
-        if connection == NOT_CONNECTED:
-            request: dict[str, object] = {"consumer_id": identity, "service_type": SERVICE_TYPE}
-            if country:
-                request["filter"] = {"country_code": country}
-            status, body = client.send("PUT", "/connection", request)
-            if status not in (HTTP_OK, HTTP_CREATED):
-                message = _field(body, "message") or f"HTTP {status}"
-                return ConsumerState(
-                    identity, registration, connection, country, f"connect: {message}"
-                )
-            connection = _field(body, "status") or connection
-        return ConsumerState(identity, registration, connection, country)
+        if connection != NOT_CONNECTED and country and session_country not in ("", country):
+            # upstreams.dpn.country changed under a live session: drop it, the next round connects
+            client.send("DELETE", "/connection")
+            return ConsumerState(identity, registration, NOT_CONNECTED, country)
+        return _connect(client, identity, registration, connection, country)
     except MystError as exc:
         return ConsumerState(identity, registration, connection, country, str(exc))
+
+
+def _connect(
+    client: TequilaClient, identity: str, registration: str, connection: str, country: str | None
+) -> ConsumerState:
+    """Connect a registered identity that has no session yet; the kill switch stays on."""
+    if connection != NOT_CONNECTED:
+        return ConsumerState(identity, registration, connection, country)
+    request: dict[str, object] = {"consumer_id": identity, "service_type": SERVICE_TYPE}
+    if country:
+        request["filter"] = {"country_code": country}
+    status, body = client.send("PUT", "/connection", request)
+    if status not in (HTTP_OK, HTTP_CREATED):
+        error = f"connect: {_field(body, 'message') or f'HTTP {status}'}"
+        return ConsumerState(identity, registration, connection, country, error)
+    return ConsumerState(identity, registration, _field(body, "status") or connection, country)
+
+
+def _session_country(body: object) -> str:
+    """The country of the node a session runs through (``proposal.location.country``)."""
+    proposal = body.get("proposal") if isinstance(body, dict) else None
+    location = proposal.get("location") if isinstance(proposal, dict) else None
+    return _field(location, "country").upper()
+
+
+@dataclass(frozen=True)
+class CountryOffer:
+    """Nodes of one country that sell the dpn service type, and their lowest prices."""
+
+    country: str
+    nodes: int
+    min_per_hour_wei: int
+    min_per_gib_wei: int
+
+
+def _wei(price: object, name: str) -> int:
+    tokens = price.get(name) if isinstance(price, dict) else None
+    raw = tokens.get("wei") if isinstance(tokens, dict) else None
+    try:
+        return int(str(raw))
+    except ValueError:
+        return 0
+
+
+def countries(client: TequilaClient) -> list[CountryOffer]:
+    """``GET /proposals`` of the consumer node grouped by country, sorted by country code."""
+    status, body = client.send("GET", f"/proposals?service_type={SERVICE_TYPE}")
+    if status != HTTP_OK:
+        raise MystError(f"TequilAPI GET /proposals: HTTP {status}")
+    listed = body.get("proposals") if isinstance(body, dict) else None
+    grouped: dict[str, list[tuple[int, int]]] = {}
+    for proposal in listed if isinstance(listed, list) else []:
+        if not isinstance(proposal, dict):
+            continue
+        code = _field(proposal.get("location"), "country").upper()
+        if not code:
+            continue
+        price = proposal.get("price")
+        grouped.setdefault(code, []).append(
+            (_wei(price, "per_hour_tokens"), _wei(price, "per_gib_tokens"))
+        )
+    return [
+        CountryOffer(
+            country=code,
+            nodes=len(prices),
+            min_per_hour_wei=min(hour for hour, _ in prices),
+            min_per_gib_wei=min(gib for _, gib in prices),
+        )
+        for code, prices in sorted(grouped.items())
+    ]

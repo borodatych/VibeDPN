@@ -80,6 +80,7 @@ sudo vibedpn init --role client --peer-config ~/home.conf --password-file ~/pane
 | `config.yaml` | конфиг с пояснениями, [формат](configSpec.md); режим маршрутизации сразу `off` | 644 |
 | `.env` | производные для Compose и `VIBEDPN_TAG` (при повторном `init` тег сохраняется) | 644 |
 | `secrets/htpasswd` | `admin:` + bcrypt-хеш пароля коробки — вход в панель, AdGuard | 600 |
+| `secrets/myst-consumer-passphrase` | парольная фраза consumer-identity аплинка `dpn`: без неё identity не разблокировать; создаётся один раз | 600 |
 | `secrets/adguard-core-password` | пароль служебного пользователя ядра в AdGuard (`vibedpn-core`): смена режима применяется к DNS без перезапуска; создаётся один раз | 600 |
 | `secrets/ui-db-password`, `secrets/ui-auth-secret` | пароль базы панели и ключ её сессий; создаются один раз, повторный `init` их не меняет | 600 |
 | `secrets/wg-client.conf` | копия peer-файла (роль `client`) | 600 |

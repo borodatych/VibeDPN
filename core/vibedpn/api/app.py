@@ -15,6 +15,9 @@ from vibedpn.api.models import (
     DevicePolicyUpdate,
     DevicePolicyView,
     DeviceView,
+    DpnCountry,
+    DpnCountryUpdate,
+    DpnCountryView,
     DpnStatus,
     PeerCreate,
     PeerFile,
@@ -33,11 +36,18 @@ from vibedpn.config_edit import (
     DeviceIdent,
     DeviceNotFoundError,
     set_device,
+    set_dpn_country,
     set_routing,
     set_vps_lan_access,
     unset_device,
 )
 from vibedpn.engine.adguard import AdguardError, set_aaaa_disabled
+from vibedpn.engine.consumer import (
+    CONSUMER_TEQUILAPI,
+    CONSUMER_TIMEOUT_SECONDS,
+    CountryOffer,
+    countries,
+)
 from vibedpn.engine.devices import DeviceError, DeviceStore, SeenDevice
 from vibedpn.engine.myst import MystError, ProviderStats, TequilaClient, provider_stats
 from vibedpn.engine.router import RouterError, RoutingFacts, read_routing, used_uplinks
@@ -62,6 +72,7 @@ RoutingReader = Callable[[Config], RoutingFacts]
 # Tells the running AdGuard the DNS mode; None: no AdGuard on this box.
 DnsModeSetter = Callable[[Config], bool | None]
 NO_LAN = "this box routes no LAN"
+DpnOffers = Callable[[], list[CountryOffer]]
 LinkSource = Callable[[], dict[str, PeerLink] | None]
 NO_TUNNEL = "this box runs no WireGuard server"
 # The peer errors a caller can act on, and the HTTP status each one maps to.
@@ -272,6 +283,57 @@ def _dpn_status(consumer: ConsumerStatus | None) -> DpnStatus | None:
     )
 
 
+def _default_dpn_offers() -> list[CountryOffer]:
+    client = TequilaClient(base_url=CONSUMER_TEQUILAPI, timeout=CONSUMER_TIMEOUT_SECONDS)
+    try:
+        return countries(client)
+    finally:
+        client.close()
+
+
+def _add_dpn_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    state: BoxState | None,
+    dpn_offers: DpnOffers,
+) -> None:
+    """``/dpn``: the countries the consumer can exit in, and the one config.yaml pins."""
+
+    @application.get("/dpn/countries", response_model=list[DpnCountry])
+    def dpn_countries() -> list[DpnCountry]:
+        box = current()
+        if box is None or box.network is None or not box.upstreams.dpn.enabled:
+            raise HTTPException(status_code=404, detail="uplink dpn is off on this box")
+        try:
+            offers = dpn_offers()
+        except MystError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return [
+            DpnCountry(
+                country=offer.country,
+                nodes=offer.nodes,
+                min_per_hour_wei=str(offer.min_per_hour_wei),
+                min_per_gib_wei=str(offer.min_per_gib_wei),
+            )
+            for offer in offers
+        ]
+
+    @application.put("/dpn/country", response_model=DpnCountryView)
+    def put_dpn_country(request: DpnCountryUpdate) -> DpnCountryView:
+        box = current()
+        if state is None or box is None or box.network is None:
+            raise HTTPException(status_code=404, detail=NO_LAN)
+        try:
+            updated = state.edit(lambda path: set_dpn_country(path, request.country))
+        except ConfigEditError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RouterError as exc:
+            raise HTTPException(
+                status_code=503, detail=f"router refused the change, config.yaml restored: {exc}"
+            ) from exc
+        return DpnCountryView(country=updated.upstreams.dpn.country)
+
+
 def _add_routing_routes(
     application: FastAPI,
     current: Callable[[], Config | None],
@@ -364,6 +426,7 @@ def create_app(
     routing_reader: RoutingReader = read_routing,
     dns_mode: DnsModeSetter | None = None,
     consumer: ConsumerStatus | None = None,
+    dpn_offers: DpnOffers | None = None,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -397,6 +460,7 @@ def create_app(
         dns_mode or default_dns_mode,
         consumer,
     )
+    _add_dpn_routes(application, current, state, dpn_offers or _default_dpn_offers)
 
     @application.get("/health", response_model=Health)
     def health() -> Health:

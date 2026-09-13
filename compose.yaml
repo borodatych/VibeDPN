@@ -162,17 +162,26 @@ services:
       - service
       - --agreed-terms-and-conditions
 
-  # Mysterium consumer = uplink `dpn`: a gateway container at 10.77.0.20 (roles home, client).
-  # Runs the daemon with the kill switch; core connects it through TequilAPI (Stage 8).
-  # TequilAPI listens on 0.0.0.0 so core (host network) can reach 10.77.0.20:4050; once the
-  # router opens transit into this network (Stage 4) the same port would be reachable from the
-  # LAN, so Stage 4 drops LAN traffic addressed to 10.77.0.0/24 in nftables and Stage 8 replaces
-  # the default TequilAPI credentials (myst/mystberry) with a secret from `init`.
+  # Mysterium consumer = uplink `dpn`: a gateway container at 10.77.0.20 (roles home, client), built
+  # on the official image (images/myst-consumer). Its entrypoint adds gateway rules — LAN traffic
+  # leaves only through the tunnel, NAT, MSS clamping — and lets only core (10.77.0.1, the host
+  # side of vibedpn0) reach TequilAPI, which answers without authentication (verified on 1.39.5);
+  # the host router drops LAN traffic to 10.77.0.0/24 as well. core drives the consumer (Stage 8).
   myst-consumer:
-    image: mysteriumnetwork/myst:${MYST_TAG:-1.39.5-alpine}
+    image: ghcr.io/borodatych/vibedpn-myst-consumer:${VIBEDPN_TAG:-latest}
+    build:
+      context: ./images/myst-consumer
+      args:
+        MYST_TAG: ${MYST_TAG:-1.39.5-alpine}
     profiles:
       - consumer
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/vibedpn-dpn-entrypoint", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     cap_add:
       - NET_ADMIN
     devices:

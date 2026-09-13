@@ -408,6 +408,31 @@ def upstream(
     _switch_routing(box_dir, upstream=value)
 
 
+dpn_app = typer.Typer(
+    help="Uplink dpn: the exit through the Mysterium network.", no_args_is_help=True
+)
+app.add_typer(dpn_app, name="dpn")
+
+ANY_COUNTRY = "any"
+
+
+@dpn_app.command("country")
+def dpn_country(
+    code: Annotated[str, typer.Argument(help="ISO 3166-1 alpha-2 code, or `any`.")],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Pin uplink dpn to a country; core reconnects the consumer on its next round."""
+    config = _prepare(box_dir, refresh=False)
+    country = None if code.lower() == ANY_COUNTRY else code
+    try:
+        view = core_api.set_dpn_country(config.api.port, country)
+    except core_api.CoreUnreachableError:
+        raise _fail("core is not running: `vibedpn up` first") from None
+    except (core_api.CoreNoAnswerError, core_api.RoutingRequestError) as exc:
+        raise _fail(str(exc)) from None
+    typer.echo(f"dpn country: {view.country or ANY_COUNTRY} (the consumer follows within a minute)")
+
+
 @app.command()
 def status(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     """Role and routing from config.yaml, then the state of every container."""

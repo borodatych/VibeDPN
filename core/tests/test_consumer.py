@@ -7,11 +7,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
+import pytest
 
+from vibedpn.api import consumer as consumer_module
 from vibedpn.api.consumer import ConsumerStatus, consumer_round, watch_consumer
 from vibedpn.config import Config
-from vibedpn.engine.consumer import ConsumerState, reconcile
-from vibedpn.engine.myst import TequilaClient
+from vibedpn.engine.consumer import CONSUMER_TIMEOUT_SECONDS, ConsumerState, countries, reconcile
+from vibedpn.engine.myst import TEQUILAPI_TIMEOUT_SECONDS, TequilaClient
 
 from .conftest import home_config
 
@@ -128,3 +130,69 @@ def test_watch_keeps_the_last_state_only_while_dpn_is_enabled() -> None:
     with contextlib.suppress(asyncio.CancelledError):
         asyncio.run(watch_consumer(lambda: config, status, step, sleep=sleep))
     assert status.state is not None and status.state.identity == IDENTITY
+
+
+def test_the_consumer_client_waits_for_the_blockchain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "myst-consumer-passphrase").write_text("secret", encoding="utf-8")
+    seen: list[float] = []
+    unavailable = httpx.MockTransport(lambda _r: httpx.Response(503))
+
+    class Recording(TequilaClient):
+        def __init__(
+            self, base_url: str | None = None, transport: object = None, timeout: float = 0
+        ) -> None:
+            seen.append(timeout)
+            super().__init__(base_url=base_url, transport=unavailable, timeout=timeout)
+
+    monkeypatch.setattr(consumer_module, "TequilaClient", Recording)
+    consumer_round(tmp_path)(Config.model_validate(home_config()))
+    assert seen == [CONSUMER_TIMEOUT_SECONDS]
+    assert CONSUMER_TIMEOUT_SECONDS > TEQUILAPI_TIMEOUT_SECONDS
+
+
+def test_a_changed_country_drops_the_live_session() -> None:
+    node = FakeNode(identities=[IDENTITY], registration="Registered", connection="Connected")
+    original = node.routes
+
+    def routes() -> dict[tuple[str, str], Callable[[], httpx.Response]]:
+        table = original()
+        table[("GET", "/connection")] = lambda: httpx.Response(
+            200, json={"status": node.connection, "proposal": {"location": {"country": "nl"}}}
+        )
+        return table
+
+    node.routes = routes  # type: ignore[method-assign]
+    state = reconcile(client(node), "secret", "DE", wanted=True)
+    assert state.connection == "NotConnected"
+    assert ("DELETE", "/connection", None) in node.calls
+
+
+def test_countries_group_the_proposals_with_the_lowest_prices() -> None:
+    def offer(country: str | None, hour: str, gib: str) -> dict[str, object]:
+        price = {"per_hour_tokens": {"wei": hour}, "per_gib_tokens": {"wei": gib}}
+        return {"location": {"country": country} if country else {}, "price": price}
+
+    proposals = {
+        "proposals": [
+            offer("de", "300", "90"),
+            offer("DE", "100", "120"),
+            offer("NL", "50", "70"),
+            offer(None, "0", "0"),
+        ]
+    }
+    seen: list[str] = []
+
+    def node(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json=proposals)
+
+    offers = countries(
+        TequilaClient(base_url="http://consumer", transport=httpx.MockTransport(node))
+    )
+    assert [(o.country, o.nodes, o.min_per_hour_wei, o.min_per_gib_wei) for o in offers] == [
+        ("DE", 2, 100, 90),
+        ("NL", 1, 50, 70),
+    ]
+    assert seen == ["http://consumer/proposals?service_type=wireguard"]

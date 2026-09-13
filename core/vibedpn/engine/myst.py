@@ -88,11 +88,14 @@ class TequilaClient:
     """Thin HTTP client; every failure becomes ``MystError`` with the endpoint in the text."""
 
     def __init__(
-        self, base_url: str | None = None, transport: httpx.BaseTransport | None = None
+        self,
+        base_url: str | None = None,
+        transport: httpx.BaseTransport | None = None,
+        timeout: float = TEQUILAPI_TIMEOUT_SECONDS,
     ) -> None:
         self._client = httpx.Client(
             base_url=base_url or f"http://{TEQUILAPI_HOST}:{TEQUILAPI_PORT}",
-            timeout=TEQUILAPI_TIMEOUT_SECONDS,
+            timeout=timeout,
             transport=transport,
             trust_env=False,  # loopback: never through an HTTP_PROXY of the environment
         )

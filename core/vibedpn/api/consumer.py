@@ -10,7 +10,12 @@ from pathlib import Path
 
 from vibedpn.bootstrap import MYST_CONSUMER_PASSPHRASE_FILE
 from vibedpn.config import Config, Upstream
-from vibedpn.engine.consumer import CONSUMER_TEQUILAPI, ConsumerState, reconcile
+from vibedpn.engine.consumer import (
+    CONSUMER_TEQUILAPI,
+    CONSUMER_TIMEOUT_SECONDS,
+    ConsumerState,
+    reconcile,
+)
 from vibedpn.engine.myst import TequilaClient
 from vibedpn.engine.router import used_uplinks
 
@@ -45,7 +50,7 @@ def consumer_round(secrets_dir: Path) -> Round:
                 f"cannot read {MYST_CONSUMER_PASSPHRASE_FILE}: {exc.strerror or exc};"
                 " run `vibedpn init --force`",
             )
-        client = TequilaClient(base_url=CONSUMER_TEQUILAPI)
+        client = TequilaClient(base_url=CONSUMER_TEQUILAPI, timeout=CONSUMER_TIMEOUT_SECONDS)
         try:
             return reconcile(
                 client,
