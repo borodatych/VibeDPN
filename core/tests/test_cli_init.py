@@ -326,7 +326,8 @@ def test_lan_interface_without_an_address_is_refused(tmp_path: Path) -> None:
     )
     assert result.exit_code == 1
     assert (
-        "eth1 has no IPv4 address" in result.output and "wlan0 (192.168.50.1/24)" in result.output
+        "LAN interface eth1 has no IPv4 address" in result.output
+        and "wlan0 (192.168.50.1/24)" in result.output
     )
     assert not (tmp_path / "config.yaml").exists()
 

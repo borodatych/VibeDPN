@@ -239,7 +239,7 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
         raise BootstrapError(
             "no interface with a default route was found; connect the box to the LAN first"
         )
-    network = network_for(answers, facts, facts.interface)
+    network = network_for(answers.lan_interface, facts.interfaces, facts.interface)
     if answers.role is Role.HOME:
         return _validated(
             version=1,
@@ -260,20 +260,22 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
     )
 
 
-def network_for(answers: Answers, facts: HostFacts, default: Interface) -> NetworkConfig:
+def network_for(
+    lan_interface: str | None, interfaces: list[Interface], default: Interface
+) -> NetworkConfig:
     """sidecar on the default-route interface, or gateway: that one is the WAN and the chosen
     interface the LAN, with the static address the OS gave it (docs/decisions.md, decision 7)."""
-    if answers.lan_interface is None or answers.lan_interface == default.name:
+    if lan_interface is None or lan_interface == default.name:
         return NetworkConfig(
             lan_interface=default.name, lan_subnet=default.subnet, lan_address=default.address
         )
-    lan = next((i for i in facts.interfaces if i.name == answers.lan_interface), None)
+    lan = next((i for i in interfaces if i.name == lan_interface), None)
     if lan is None:
         others = ", ".join(
-            f"{i.name} ({i.address}/{i.prefixlen})" for i in facts.interfaces if i != default
+            f"{i.name} ({i.address}/{i.prefixlen})" for i in interfaces if i != default
         )
         raise BootstrapError(
-            f"--lan-interface {answers.lan_interface} has no IPv4 address; give it a static one"
+            f"LAN interface {lan_interface} has no IPv4 address; give it a static one"
             " first (docs/manuals/installation.md, gateway mode)."
             f" With an address: {others or 'none'}"
         )

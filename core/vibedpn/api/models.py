@@ -149,3 +149,27 @@ class DpnCountryUpdate(BaseModel):
 
 class DpnCountryView(BaseModel):
     country: str | None
+
+
+class HostInterface(BaseModel):
+    """An interface of the host with a global IPv4 address."""
+
+    name: str
+    address: str
+    prefixlen: int
+    default_route: bool  # the WAN of gateway mode, the only port of sidecar mode
+
+
+class NetworkView(BaseModel):
+    """The network config.yaml holds, and whether the box still runs an older one."""
+
+    mode: str
+    lan_interface: str
+    lan_address: str
+    wan_interface: str | None
+    restart_required: bool
+    interfaces: list[HostInterface]
+
+
+class NetworkUpdate(BaseModel):
+    lan_interface: str | None  # None: sidecar on the default-route interface

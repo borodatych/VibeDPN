@@ -19,6 +19,9 @@ from vibedpn.api.models import (
     DpnCountryUpdate,
     DpnCountryView,
     DpnStatus,
+    HostInterface,
+    NetworkUpdate,
+    NetworkView,
     PeerCreate,
     PeerFile,
     PeerView,
@@ -30,6 +33,7 @@ from vibedpn.api.models import (
 )
 from vibedpn.api.state import BoxState
 from vibedpn.api.uplink import UplinkWatchers
+from vibedpn.bootstrap import BootstrapError, network_for
 from vibedpn.config import Config, DeviceConfig, RoutingMode, Upstream
 from vibedpn.config_edit import (
     ConfigEditError,
@@ -37,10 +41,12 @@ from vibedpn.config_edit import (
     DeviceNotFoundError,
     set_device,
     set_dpn_country,
+    set_network,
     set_routing,
     set_vps_lan_access,
     unset_device,
 )
+from vibedpn.detect import DetectError, HostProbe, Interface
 from vibedpn.engine.adguard import AdguardError, set_aaaa_disabled
 from vibedpn.engine.consumer import (
     CONSUMER_TEQUILAPI,
@@ -336,6 +342,70 @@ def _add_dpn_routes(
         return DpnCountryView(country=updated.upstreams.dpn.country)
 
 
+InterfacesSource = Callable[[], tuple[Interface | None, list[Interface]]]
+
+
+def _host_interfaces() -> tuple[Interface | None, list[Interface]]:
+    probe = HostProbe()
+    return probe.default_interface(), probe.interfaces()
+
+
+def _add_network_routes(
+    application: FastAPI, state: BoxState | None, interfaces_source: InterfacesSource
+) -> None:
+    """``/network``: sidecar or gateway, saved for the next start of the box (decision 9)."""
+
+    def detected() -> tuple[Interface | None, list[Interface]]:
+        try:
+            return interfaces_source()
+        except DetectError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    def view(box_state: BoxState) -> NetworkView:
+        network = box_state.saved.network
+        if network is None:
+            raise HTTPException(status_code=404, detail=NO_LAN)
+        default, interfaces = detected()
+        return NetworkView(
+            mode=network.mode.value,
+            lan_interface=network.lan_interface,
+            lan_address=str(network.lan_address),
+            wan_interface=network.wan_interface,
+            restart_required=box_state.restart_required,
+            interfaces=[
+                HostInterface(
+                    name=item.name,
+                    address=str(item.address),
+                    prefixlen=item.prefixlen,
+                    default_route=default is not None and item.name == default.name,
+                )
+                for item in interfaces
+            ],
+        )
+
+    def lan_state() -> BoxState:
+        if state is None or state.config.network is None:
+            raise HTTPException(status_code=404, detail=NO_LAN)
+        return state
+
+    @application.get("/network", response_model=NetworkView)
+    def network() -> NetworkView:
+        return view(lan_state())
+
+    @application.put("/network", response_model=NetworkView)
+    def put_network(request: NetworkUpdate) -> NetworkView:
+        box_state = lan_state()
+        default, interfaces = detected()
+        if default is None:
+            raise HTTPException(status_code=503, detail="the host has no default route")
+        try:
+            wanted = network_for(request.lan_interface, interfaces, default)
+            box_state.save(lambda path: set_network(path, wanted))
+        except (BootstrapError, ConfigEditError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return view(box_state)
+
+
 def _add_routing_routes(
     application: FastAPI,
     current: Callable[[], Config | None],
@@ -429,6 +499,7 @@ def create_app(
     dns_mode: DnsModeSetter | None = None,
     consumer: ConsumerStatus | None = None,
     dpn_offers: DpnOffers | None = None,
+    interfaces_source: InterfacesSource = _host_interfaces,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -463,6 +534,7 @@ def create_app(
         consumer,
     )
     _add_dpn_routes(application, current, state, dpn_offers or _default_dpn_offers)
+    _add_network_routes(application, state, interfaces_source)
 
     @application.get("/health", response_model=Health)
     def health() -> Health:

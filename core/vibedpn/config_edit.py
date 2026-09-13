@@ -20,7 +20,15 @@ from ruamel.yaml.comments import CommentedMap, CommentedSeq
 from ruamel.yaml.error import YAMLError
 
 from vibedpn.atomic import write_like
-from vibedpn.config import Config, DevicePolicy, RoutingMode, Upstream, normalize_mac, parse_yaml
+from vibedpn.config import (
+    Config,
+    DevicePolicy,
+    NetworkConfig,
+    RoutingMode,
+    Upstream,
+    normalize_mac,
+    parse_yaml,
+)
 
 # The layout of templates/config.yaml.j2: lists indented under their key.
 MAPPING_INDENT = 2
@@ -127,6 +135,22 @@ def set_dpn_country(path: Path, country: str | None) -> tuple[Config, bool]:
         if not isinstance(dpn, dict):
             raise ConfigEditError(f"{path} has no upstreams.dpn section")
         dpn["country"] = country
+
+    return _edit(path, mutate)
+
+
+def set_network(path: Path, network: NetworkConfig) -> tuple[Config, bool]:
+    """Replace the keys of the ``network`` section; its comments and the rest of the file stay."""
+
+    def mutate(data: CommentedMap) -> None:
+        section = data.get("network")
+        if not isinstance(section, CommentedMap):
+            raise ConfigEditError(f"{path} has no network section: a box of this role has no LAN")
+        values = network.model_dump(mode="json", exclude_none=True)
+        for key in [key for key in section if key not in values]:
+            del section[key]
+        for key, value in values.items():
+            section[key] = CommentedMap(value) if isinstance(value, dict) else value
 
     return _edit(path, mutate)
 

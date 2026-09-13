@@ -24,6 +24,7 @@ const navLinks: NavItem[] = [
   { label: 'Status', to: routes.home() },
   { label: 'Devices', to: routes.devices() },
   { label: 'Node', to: routes.node() },
+  { label: 'Network', to: routes.network() },
 ]
 
 // Right of the header — depends on who's signed in.
