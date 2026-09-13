@@ -73,7 +73,15 @@ colima нет `ping` и `nc`.
 `forward` — устройство без выхода, но с доступом к самой коробке (DNS, UI идут в input). Аплинки «в
 использовании» — аплинк режима плюс аплинки политик: у каждого своё правило, таблица с маршрутом
 kill-switch и наблюдатель шлюза; `doctor` проверяет их все.
-**Источники:** https://man7.org/linux/man-pages/man8/ip-rule.8.html ,
+**Трафик процесса хоста через аплинк по UID (Stage 11, исполнением на colima VM, 2026-09-13):**
+цепочка `type route hook output priority mangle` с правилом `meta skuid 7753 meta mark set 0x77`, `ip rule fwmark 0x77 table 7799 priority 7799`
+и маршрут `default via 10.99.0.2 dev labup0 table 7799` на контейнер-шлюз (Alpine, `ip_forward=1`, `masquerade` на выходе).
+DoH-запрос `curl https://1.1.1.1/dns-query` от UID 7753 (`setpriv --reuid 7753`) — HTTP 200, в счётчике `forward` шлюза 23 пакета.
+Тот же запрос от root — HTTP 200, счётчик 0: метка только у своего UID.
+Хук `route` пересчитывает маршрут после смены метки у уже созданного сокета; адрес источника остаётся адресом хоста, шлюз его маскирует, ответ возвращается при `rp_filter` 2.
+**Грабля:** в сети colima VM имя `cloudflare-dns.com` разрешается в `0.0.0.0` (блокировка DoH-доменов резолвером сети), `curl` падает за 1 мс — DoH проверять по адресу.
+
+**Источники:** https://wiki.nftables.org/wiki-nftables/index.php/Netfilter_hooks (хук `route` в `output`) , https://man7.org/linux/man-pages/man8/ip-rule.8.html ,
 https://docs.kernel.org/networking/ip-sysctl.html (send_redirects, rp_filter),
 https://raw.githubusercontent.com/systemd/systemd/main/sysctl.d/50-default.conf ,
 https://docs.docker.com/engine/network/drivers/bridge/ (com.docker.network.bridge.name),

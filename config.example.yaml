@@ -21,6 +21,24 @@ network:
   lan_interface: eth0
   lan_subnet: 192.168.1.0/24
   lan_address: 192.168.1.50
+  # gateway — коробка «в разрыв» (docs/manuals/installation.md): WAN к провайдеру, LAN к устройствам,
+  # сама раздаёт адреса; адрес lan_address на LAN-интерфейсе назначает система.
+  # Проще всего — `sudo vibedpn init --force --lan-interface <имя>`; пароль Wi-Fi — secrets/wifi-passphrase.
+  # mode: gateway
+  # lan_interface: wlan0
+  # lan_subnet: 192.168.50.0/24
+  # lan_address: 192.168.50.1
+  # wan_interface: enp1s0
+  # dhcp:
+  #   range_start: 192.168.50.100
+  #   range_end: 192.168.50.249
+  #   lease: 12h
+  # wifi:
+  #   ssid: "Home"
+  #   country: DE
+  #   band: "2.4"
+  #   channel: 6
+  #   security: wpa2-wpa3
 
 # Политика для трафика LAN.
 # mode: off — всё напрямую; full — всё через default_upstream;

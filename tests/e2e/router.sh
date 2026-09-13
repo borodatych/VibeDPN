@@ -259,6 +259,23 @@ q = struct.pack("!HHHHHH", 9, 0x0100, 1, 0, 0, 0) + b"\x06google\x03com\x00" + s
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(5); s.sendto(q, (sys.argv[2], 53))
 print(struct.unpack("!H", s.recvfrom(2048)[0][6:8])[0])' "$1" "$BOX_LAN_IP"
 }
+# A name no resolver has cached yet that nip.io answers: every label a valid octet (10-a-b-c.nip.io
+# resolves to 10.a.b.c; a label above 255 is NXDOMAIN and would look like a failed upstream).
+fresh_name() {
+  echo "10-$(od -An -N1 -tu1 /dev/urandom | tr -d ' ')-$(od -An -N1 -tu1 /dev/urandom | tr -d ' ')-$1.nip.io"
+}
+# A answers for a name no resolver has cached yet (nip.io answers any a-b-c-d.nip.io with a.b.c.d):
+# 0 when AdGuard cannot reach its upstream.
+fresh_answers() {
+  in_device "$PY" -c 'import socket, struct, sys
+labels = b"".join(bytes([len(part)]) + part.encode() for part in sys.argv[1].split("."))
+q = struct.pack("!HHHHHH", 10, 0x0100, 1, 0, 0, 0) + labels + b"\x00" + struct.pack("!HH", 1, 1)
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(8); s.sendto(q, (sys.argv[2], 53))
+try:
+    print(struct.unpack("!H", s.recvfrom(2048)[0][6:8])[0])
+except OSError:
+    print(0)' "$1" "$BOX_LAN_IP"
+}
 await_dns() {
   i=0
   until dns_answers 1 >/dev/null 2>&1; do
@@ -288,8 +305,8 @@ printf '%s\n' "$network_report" | grep -q "\[ ok \] exit direct *$INTERNET_GATEW
   fail "doctor --network: wrong direct exit"
 printf '%s\n' "$network_report" | grep -q "\[ ok \] exit vps *$VPS_IP" ||
   fail "doctor --network: uplink vps does not exit through the VPS"
-printf '%s\n' "$network_report" | grep -q "\[warn\] dns leak" ||
-  fail "doctor --network: no DoH warning in mode full"
+printf '%s\n' "$network_report" | grep -q "\[ ok \] dns leak" ||
+  fail "doctor --network: AdGuard does not go through the uplink in mode full"
 
 log "devices: the LAN device is discovered, and kept across a core restart"
 device_mac="$(in_device cat /sys/class/net/e2e-dev/address)"
@@ -357,8 +374,13 @@ echo "gateway stopped: first held, second $(exit_address_in "$NETNS2")"
 docker start vibedpn-wg-client-1 >/dev/null
 wait_healthy vibedpn-wg-client-1
 await_exit "$VPS_IP" "the first device did not come back through the VPS with the gateway"
-"$CLI" device list --dir "$BOX" | grep -q "$device2_mac" ||
-  fail "the second device $device2_mac is not in vibedpn device list"
+# discovery reads the neighbour table every 30 s: the second device appears within a round or two
+i=0
+until "$CLI" device list --dir "$BOX" | grep -q "$device2_mac"; do
+  i=$((i + 5))
+  [ "$i" -lt 90 ] || fail "the second device $device2_mac is not in vibedpn device list"
+  sleep 5
+done
 # 5. back to the start: no own policies, mode full.
 "$CLI" device unset "$device_mac" --dir "$BOX" >/dev/null || fail "vibedpn device unset failed"
 "$CLI" mode full --dir "$BOX" | grep -q "applied live" || fail "vibedpn mode full did not apply live through core"
@@ -434,9 +456,25 @@ log "kill switch (failopen false): the gateway stops, the device is cut off, and
 docker stop vibedpn-wg-client-1 >/dev/null
 await_exit none "the device still reaches the internet with the gateway stopped"
 echo "gateway stopped: no exit"
+if [ "$OFFLINE" != 1 ]; then
+  # AdGuard asks its upstream through the uplink in mode full: without the gateway a new name fails
+  name="$(fresh_name 0)"
+  [ "$(fresh_answers "$name")" = 0 ] || fail "AdGuard resolved $name with the gateway stopped: its DNS bypasses the uplink"
+  echo "gateway stopped: AdGuard cannot resolve a new name either"
+fi
 docker start vibedpn-wg-client-1 >/dev/null
 wait_healthy vibedpn-wg-client-1
 await_exit "$VPS_IP" "the device did not come back through the VPS with the gateway"
+if [ "$OFFLINE" != 1 ]; then
+  name="$(fresh_name 1)"
+  i=0
+  until [ "$(fresh_answers "$name")" -gt 0 ]; do
+    i=$((i + 5))
+    [ "$i" -lt 60 ] || fail "AdGuard does not resolve $name through the uplink after the gateway came back"
+    sleep 5
+  done
+  echo "gateway back: AdGuard resolves new names through the uplink"
+fi
 
 log "failopen true: the gateway stops and the device goes direct ($INTERNET_GATEWAY)"
 sudo sed -i 's/^  failopen: false$/  failopen: true/' "$BOX/config.yaml"
@@ -451,11 +489,12 @@ docker start vibedpn-wg-client-1 >/dev/null
 wait_healthy vibedpn-wg-client-1
 await_exit "$VPS_IP" "the device did not return to the VPS with the gateway"
 
-log "vibedpn mode off: direct, only core (and adguard) restart"
+log "vibedpn mode off: direct, applied live through core, nothing restarts"
 started="$(wg_started)"
+core_before="$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)"
 sudo "$CLI" mode off --dir "$BOX" | tee "$WORK/mode.txt"
-grep -q "core, adguard restarted" "$WORK/mode.txt" || fail "vibedpn mode off did not restart core and adguard"
-wait_healthy vibedpn-core-1
+grep -q "applied live, nothing restarted" "$WORK/mode.txt" || fail "vibedpn mode off did not apply live through core"
+[ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)" = "$core_before" ] || fail "vibedpn mode off restarted core"
 await_exit "$INTERNET_GATEWAY" "the device does not go direct in mode off"
 [ "$(wg_started)" = "$started" ] || fail "vibedpn mode off restarted wg-client"
 "$CLI" status --dir "$BOX" | grep -q "^routing: mode=off" || fail "status does not show mode off"
@@ -466,14 +505,17 @@ if [ "$OFFLINE" != 1 ]; then
 fi
 
 log "vibedpn mode full: through the VPS again"
-sudo "$CLI" mode full --dir "$BOX" >/dev/null
-wait_healthy vibedpn-core-1
+sudo "$CLI" mode full --dir "$BOX" | grep -q "applied live, nothing restarted" ||
+  fail "vibedpn mode full did not apply live through core"
 await_exit "$VPS_IP" "the device does not return to the VPS after vibedpn mode full"
 [ "$(wg_started)" = "$started" ] || fail "vibedpn mode full restarted wg-client"
+[ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)" = "$core_before" ] || fail "vibedpn mode full restarted core"
 if [ "$OFFLINE" != 1 ]; then
   await_dns
   [ "$(dns_answers 28)" = 0 ] || fail "AdGuard answers AAAA again in mode full"
 fi
-sudo "$CLI" mode full --dir "$BOX" | grep -q "already set" || fail "a repeated mode was not recognised"
+# the same mode again goes through core as well and changes nothing
+sudo "$CLI" mode full --dir "$BOX" | grep -q "^routing: mode=full" || fail "a repeated vibedpn mode full failed"
+await_exit "$VPS_IP" "a repeated vibedpn mode full moved the device off the VPS"
 
 log "E2E-ROUTER-OK"

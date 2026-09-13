@@ -1,5 +1,6 @@
 """Network of a LAN box from the panel: saved for the next start, never applied in place."""
 
+import re
 from ipaddress import IPv4Address
 from pathlib import Path
 
@@ -79,7 +80,10 @@ def test_back_to_sidecar_clears_the_pending_restart(tmp_path: Path) -> None:
     client.put("/network", json={"lan_interface": "wlan0"})
     body = client.put("/network", json={"lan_interface": None}).json()
     assert body["mode"] == "sidecar" and body["restart_required"] is False
-    assert "dhcp" not in (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    saved = load_config(tmp_path / "config.yaml").network
+    assert saved is not None and saved.dhcp is None
+    text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    assert not re.search(r"^  dhcp:", text, re.M)  # the commented gateway example may stay
 
 
 def test_an_interface_without_an_address_is_refused(tmp_path: Path) -> None:

@@ -21,10 +21,11 @@ from vibedpn.api.tunnel import run_servers
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.config import Config, ConfigError, Upstream, load_config
 from vibedpn.engine import hostapd
-from vibedpn.engine.adguard import AdguardError, ensure_adguard
+from vibedpn.engine.adguard import AdguardError, ensure_adguard, give_to_adguard
 from vibedpn.engine.devices import DB_FILE, DeviceError, DeviceStore
 from vibedpn.engine.dnsmasq import DnsmasqError, core_dir, ensure_dnsmasq
 from vibedpn.engine.router import (
+    ADGUARD_UID,
     EGRESS_TABLE,
     ROUTER_TABLE,
     Egress,
@@ -67,6 +68,8 @@ SECRETS_DIR_ENV = "VIBEDPN_SECRETS"
 DEFAULT_SECRETS_DIR = Path("/etc/vibedpn/secrets")  # compose.yaml mounts ./secrets here
 ADGUARD_DIR_ENV = "VIBEDPN_ADGUARD_CONF"
 DEFAULT_ADGUARD_DIR = Path("/etc/vibedpn/adguard")  # compose.yaml mounts ./data/adguard/conf
+ADGUARD_WORK_DIR_ENV = "VIBEDPN_ADGUARD_WORK"
+DEFAULT_ADGUARD_WORK_DIR = Path("/etc/vibedpn/adguard-work")  # ./data/adguard/work
 DATA_DIR_ENV = "VIBEDPN_DATA"
 DEFAULT_DATA_DIR = Path("/var/lib/vibedpn")  # compose.yaml mounts ./data/core
 
@@ -107,6 +110,7 @@ def main() -> None:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None
     _report("AdGuard Home", adguard)
+    _hand_adguard_dirs(config, adguard_dir)
     _render_lan_services(config, secrets_dir)
     # Before the API: compose starts wg-server only once core is healthy, so the file it reads
     # is always the one rendered from the current config.
@@ -185,3 +189,15 @@ def _write_dnsmasq(config: Config) -> bool | None:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None
     return written
+
+
+def _hand_adguard_dirs(config: Config, conf_dir: Path) -> None:
+    """AdGuard runs as ADGUARD_UID: its config and working directory must be that user's."""
+    if config.network is None or not config.dns.enabled:
+        return
+    work_dir = Path(os.environ.get(ADGUARD_WORK_DIR_ENV, DEFAULT_ADGUARD_WORK_DIR))
+    try:
+        give_to_adguard([conf_dir, work_dir], ADGUARD_UID)
+    except AdguardError as exc:
+        sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
+        raise SystemExit(os.EX_CONFIG) from None

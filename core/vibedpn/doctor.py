@@ -86,6 +86,7 @@ IP_FORWARD_SYSCTL = Path("/proc/sys/net/ipv4/ip_forward")
 SS_ARGV = ["ss", "-H", "-lntup"]
 API_HOST = "127.0.0.1"
 DNS_PORT = 53
+DNS_UPLINK_CHAIN = "dns_uplink"  # templates/lan-router.nft.j2
 DHCP_SERVER_PORT = 67
 CORE_PROCESS_NAMES = frozenset({"vibedpn-core"})  # comm of the console script in `ss -p`
 ANY_ADDRESSES = frozenset({"0.0.0.0", "*", "::", "[::]"})
@@ -186,6 +187,7 @@ class DoctorFacts:
     docker_user: bool | None = None  # True: rules current or no DOCKER-USER; None: see error
     docker_user_error: str = ""
     router_table: bool | None = None  # roles with a LAN; None: see router_error
+    dns_uplink: bool | None = None  # chain dns_uplink loaded (AdGuard through the uplink)
     router_error: str = ""
     router_rules: bool | None = None  # ip rule matches routing.mode
     router_docker_user: bool | None = None
@@ -578,7 +580,7 @@ def _lan_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
         if variant is not None:
             results.append(variant)
     if facts.exits is not None:
-        results.extend(_exit_results(config, facts.exits))
+        results.extend(_exit_results(config, facts.exits, facts.dns_uplink))
     return results
 
 
@@ -640,7 +642,9 @@ def parse_exit_address(text: str) -> str | None:
         return None
 
 
-def _exit_results(config: Config, exits: list[ExitFact]) -> list[CheckResult]:
+def _exit_results(
+    config: Config, exits: list[ExitFact], dns_uplink: bool | None
+) -> list[CheckResult]:
     """An uplink that answers with the direct address carries nothing through its tunnel."""
     direct = next((item for item in exits if item.name == DIRECT_EXIT), None)
     results = []
@@ -683,14 +687,7 @@ def _exit_results(config: Config, exits: list[ExitFact]) -> list[CheckResult]:
             results.append(CheckResult(name, Verdict.OK, item.address))
     if config.routing is not None and config.dns.enabled:
         if config.routing.mode is RoutingMode.FULL:
-            results.append(
-                CheckResult(
-                    "dns leak",
-                    Verdict.WARN,
-                    "AdGuard sends its DoH queries directly: the DoH provider sees the box address"
-                    " (routing AdGuard through the uplink is planned)",
-                )
-            )
+            results.append(_dns_leak_result(config, dns_uplink))
         else:
             results.append(
                 CheckResult("dns leak", Verdict.OK, "routing.mode off: DNS goes direct by design")
@@ -929,6 +926,7 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         docker_user=docker_user,
         docker_user_error=docker_user_error,
         router_table=router_table,
+        dns_uplink=_chain_present(ROUTER_TABLE, DNS_UPLINK_CHAIN) if router_table else None,
         router_error=router_error,
         router_rules=router_rules,
         router_docker_user=router_docker_user,
@@ -1061,6 +1059,40 @@ def _read_rp_filter() -> int | None:
             if name == "all":
                 return None
     return max(values)
+
+
+def _dns_leak_result(config: Config, loaded: bool | None) -> CheckResult:
+    """routing.mode full: AdGuard's upstream queries must take the uplink (decision 14)."""
+    upstream = config.routing.default_upstream.value if config.routing else "-"
+    if loaded:
+        found = f"AdGuard asks its upstreams through uplink {upstream}"
+        return CheckResult("dns leak", Verdict.OK, found)
+    if loaded is None:
+        unknown = "cannot tell whether AdGuard goes through the uplink"
+        return CheckResult("dns leak", Verdict.WARN, unknown, SUDO_HINT)
+    return CheckResult(
+        "dns leak",
+        Verdict.WARN,
+        "AdGuard sends its DoH queries directly: the router has no dns_uplink chain",
+        "vibedpn restart",
+    )
+
+
+def _chain_present(table: str, chain: str) -> bool | None:
+    """Whether ``chain`` exists in the nft ``table``; ``None`` when nft cannot tell."""
+    nft = find_nft()
+    if nft is None:
+        return None
+    family, name = table.split()
+    try:
+        probe = subprocess.run(
+            [nft, "list", "chain", family, name, chain], check=False, capture_output=True, text=True
+        )
+    except OSError:
+        return None
+    if probe.returncode == 0:
+        return True
+    return False if "No such file or directory" in probe.stderr else None
 
 
 def _table_present(table: str) -> tuple[bool | None, str]:

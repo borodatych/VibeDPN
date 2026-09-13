@@ -10,6 +10,8 @@ and settings made in the AdGuard web interface survive every restart of the box.
 from __future__ import annotations
 
 import io
+import os
+from collections.abc import Callable
 from pathlib import Path
 
 import bcrypt
@@ -241,3 +243,26 @@ def set_aaaa_disabled(
     if response.status_code != httpx.codes.OK:
         raise AdguardError(f"AdGuard refused the DNS mode: HTTP {response.status_code}")
     return True
+
+
+Chown = Callable[[Path, int, int], None]
+
+
+def give_to_adguard(directories: list[Path], uid: int, chown: Chown = os.chown) -> int:
+    """Hand the directories of AdGuard, and everything inside, to its user; returns how many
+    entries changed owner. Boxes set up before AdGuard had its own user hold root-owned files."""
+    changed = 0
+    for directory in directories:
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            entries = [directory, *directory.rglob("*")]
+            for entry in entries:
+                stat = entry.lstat()
+                if stat.st_uid != uid or stat.st_gid != uid:
+                    chown(entry, uid, uid)
+                    changed += 1
+        except OSError as exc:
+            raise AdguardError(
+                f"cannot hand {exc.filename or directory} to AdGuard: {exc.strerror or exc}"
+            ) from exc
+    return changed

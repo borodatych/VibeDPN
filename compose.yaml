@@ -29,6 +29,8 @@ services:
       - ./data/core:/var/lib/vibedpn
       # core keeps its keys of AdGuardHome.yaml current before adguard starts (engine/adguard.py).
       - ./data/adguard/conf:/etc/vibedpn/adguard
+      # only to hand the working directory of AdGuard to its user (engine/adguard.py).
+      - ./data/adguard/work:/etc/vibedpn/adguard-work
       # core renders dnsmasq.conf of gateway mode before dnsmasq starts (engine/dnsmasq.py).
       - ./data/dnsmasq:/etc/vibedpn/dnsmasq
       # core renders hostapd.conf of the access point with its passphrase (engine/hostapd.py).
@@ -314,8 +316,14 @@ services:
       - dns
     restart: unless-stopped
     network_mode: host
+    # Its own user (ADGUARD_UID in engine/router.py): the router steers this user's upstream queries
+    # into the uplink of routing.mode full; port 53 needs only NET_BIND_SERVICE.
+    user: "7753:7753"
+    cap_add:
+      - NET_BIND_SERVICE
     depends_on:
-      # core writes bind address, upstreams, the password and aaaa_disabled into its config first.
+      # core writes bind address, upstreams, the password and aaaa_disabled into its config first,
+      # and hands data/adguard to that user.
       core:
         condition: service_healthy
     volumes:

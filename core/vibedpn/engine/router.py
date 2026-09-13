@@ -293,6 +293,9 @@ POLICY_UPLINKS: dict[DevicePolicy, Upstream] = {
 }
 # policy block: no ip rule knows this mark, and the forward chain drops it.
 BLOCK_MARK = 0x30
+# AdGuard Home runs as this user (compose.yaml `user:`), so its own DoH traffic can be told from
+# the host's and steered into the uplink of routing.mode full (docs/decisions.md, decision 14).
+ADGUARD_UID = 7753
 
 
 def active_uplink(config: Config) -> Upstream | None:
@@ -384,6 +387,9 @@ def router_ruleset(config: Config) -> str | None:
             vps_lan_closed=config.upstreams.vps.enabled and not config.upstreams.vps.lan_access,
             vps_mark=hex(UPLINKS[Upstream.VPS].mark),
             private_ranges=EGRESS_BLOCKED_RANGES,
+            # routing.mode full with AdGuard: its upstream queries leave through the same uplink
+            dns_mark=hex(UPLINKS[active].mark) if active and config.dns.enabled else "",
+            adguard_uid=ADGUARD_UID,
             # gateway mode: the box is the router of its LAN, so the direct path is NATed here
             wan_interface=config.network.wan_interface or "",
         )

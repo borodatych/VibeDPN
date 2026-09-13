@@ -509,9 +509,13 @@ def test_exit_verdicts_compare_the_uplink_with_the_direct_address() -> None:
     assert offline.verdict is Verdict.WARN
 
 
-def test_dns_leak_is_a_warning_only_in_full() -> None:
-    leak = by_name(evaluate(facts(config=full_client(), exits=[])))["dns leak"]
-    assert leak.verdict is Verdict.WARN and "DoH" in leak.detail
+def test_dns_leak_in_full_follows_the_dns_uplink_chain() -> None:
+    through = by_name(evaluate(facts(config=full_client(), exits=[], dns_uplink=True)))["dns leak"]
+    assert through.verdict is Verdict.OK and "uplink vps" in through.detail
+    missing = by_name(evaluate(facts(config=full_client(), exits=[], dns_uplink=False)))["dns leak"]
+    assert missing.verdict is Verdict.WARN and missing.hint == "vibedpn restart"
+    unknown = by_name(evaluate(facts(config=full_client(), exits=[])))["dns leak"]
+    assert unknown.verdict is Verdict.WARN and "cannot tell" in unknown.detail
     assert by_name(evaluate(facts(exits=[])))["dns leak"].verdict is Verdict.OK  # home, mode off
 
 

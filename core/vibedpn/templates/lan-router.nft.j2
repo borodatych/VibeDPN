@@ -48,7 +48,20 @@ table inet vibedpn_router {
   chain output {
     type filter hook output priority filter; policy accept;
     oifname "{{ lan_interface }}" icmp type redirect drop comment "one port in and out: never tell a device to bypass the box"
+{% if dns_mark %}
+    meta skuid {{ adguard_uid }} meta nfproto ipv6 oifname != "lo" drop comment "AdGuard upstreams are IPv4 through the uplink: no IPv6 around it"
+{% endif %}
   }
+{% if dns_mark %}
+  chain dns_uplink {
+    type route hook output priority mangle; policy accept;
+    meta skuid != {{ adguard_uid }} return
+    meta nfproto != ipv4 return
+    ip daddr {{ lan_subnet }} return comment "answers to the LAN stay on the LAN"
+    fib daddr type local return comment "the box itself"
+    meta mark set {{ dns_mark }} comment "routing.mode full: AdGuard asks its upstreams through uplink {{ mode_upstream }}"
+  }
+{% endif %}
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
     iifname "{{ lan_interface }}" oifname "{{ lan_interface }}" ip saddr {{ lan_subnet }} masquerade comment "bypass on one port: replies come back through the box"
