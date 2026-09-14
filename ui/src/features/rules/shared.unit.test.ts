@@ -1,6 +1,7 @@
 import {
   cdnCandidates,
   channelLabel,
+  listCopyText,
   ruleOf,
   withCdn,
   type DomainRule,
@@ -74,5 +75,19 @@ describe('rules', () => {
     expect(channelLabel('smart_dpn_de')).toBe('Mysterium DE')
     expect(channelLabel('smart_dpn_any')).toBe('Mysterium')
     expect(channelLabel('direct')).toBe('direct')
+  })
+
+  test('the copy of a list reads as core has it', () => {
+    const list = {
+      url: 'https://l.example/a.txt',
+      via: 'vps' as const,
+      country: null,
+      domains: 0,
+      fetched_at: null,
+      error: '',
+    }
+    expect(listCopyText(list)).toBe('fetching…')
+    expect(listCopyText({ ...list, error: 'HTTP 503' })).toBe('no copy yet')
+    expect(listCopyText({ ...list, domains: 12, fetched_at: 1_700_000_000 })).toBe('12 domains')
   })
 })

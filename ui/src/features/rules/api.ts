@@ -4,6 +4,7 @@ import { coreFetch, coreRequest } from '@/modules/core/client'
 import { AppError } from '@/lib/error'
 import {
   RULE_VIAS,
+  type DomainListView,
   type DomainRule,
   type JournalDevice,
   type JournalEntry,
@@ -108,6 +109,49 @@ export const learnedForgetMutation = root.lets
   .input(z.object({ name: z.string().min(1) }))
   .loader(async ({ input }) => {
     await coreRequest(`/learned/${encodeURIComponent(input.name)}`, { method: 'DELETE' })
+    return { ok: true }
+  })
+  .mutation()
+
+// core checks the lists every 10 s: a new list shows its copy within that.
+const LISTS_REFRESH_MS = 10_000
+
+export const domainListsQuery = root.lets
+  .query()
+  .use(authorizedOnlyPlugin)
+  .loader(async () => {
+    const answer = await coreFetch<DomainListView[]>('/lists')
+    if (answer.ok) {
+      return { lists: answer.body, reason: null }
+    }
+    if (answer.status === NOT_HERE) {
+      return { lists: [], reason: answer.detail }
+    }
+    throw new AppError(answer.detail, { status: answer.status })
+  })
+  .query({ refetchInterval: LISTS_REFRESH_MS, staleTime: 0 })
+
+export const domainListSetMutation = root.lets
+  .mutation()
+  .use(authorizedOnlyPlugin)
+  .input(
+    z.object({
+      url: z.string().trim().url(),
+      via: z.enum(RULE_VIAS),
+      country: z.string().length(2).nullable(),
+    }),
+  )
+  .loader(async ({ input }) => {
+    return { list: await coreRequest<DomainListView>('/lists', { method: 'PUT', body: input }) }
+  })
+  .mutation()
+
+export const domainListRemoveMutation = root.lets
+  .mutation()
+  .use(authorizedOnlyPlugin)
+  .input(z.object({ url: z.string().min(1) }))
+  .loader(async ({ input }) => {
+    await coreRequest(`/lists?url=${encodeURIComponent(input.url)}`, { method: 'DELETE' })
     return { ok: true }
   })
   .mutation()

@@ -103,3 +103,28 @@ export const channelLabel = (channel: string): string => {
   }
   return channel === 'smart_direct' ? 'direct (rule)' : channel
 }
+
+/** One ready list of `GET /lists` (core/vibedpn/api/models.py: DomainListView). */
+export type DomainListView = {
+  url: string
+  via: RuleVia
+  country: string | null
+  /** 0 until core has a first copy */
+  domains: number
+  /** unix seconds of the copy in use */
+  fetched_at: number | null
+  /** why the copy in use is not newer, or why there is none */
+  error: string
+}
+
+/**
+ * What the owner reads about the copy of a list core uses.
+ *
+ * @tags rules
+ */
+export const listCopyText = (item: DomainListView): string => {
+  if (item.fetched_at === null) {
+    return item.error ? 'no copy yet' : 'fetching…'
+  }
+  return `${item.domains} domains`
+}

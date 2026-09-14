@@ -6,6 +6,9 @@ import { XSelect } from '@/components/ui/select'
 import { XSwitch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
+  domainListRemoveMutation,
+  domainListSetMutation,
+  domainListsQuery,
   journalDevicesQuery,
   journalQuery,
   learnedForgetMutation,
@@ -17,7 +20,9 @@ import {
 import {
   cdnCandidates,
   channelLabel,
+  listCopyText,
   withCdn,
+  type DomainListView,
   type DomainRule,
   type JournalEntry,
   type RuleVia,
@@ -166,6 +171,120 @@ const AddRule = () => {
   )
 }
 
+const VIA_LABELS: Record<RuleVia, string> = { vps: 'VPS', dpn: 'Mysterium', direct: 'direct' }
+
+const DomainListRow = ({ item }: { item: DomainListView }) => {
+  const remove = domainListRemoveMutation.useMutation()
+  const drop = async () => {
+    await remove.mutateAsync({ url: item.url })
+    await domainListsQuery.refetchQuery()
+  }
+  return (
+    <TableRow>
+      <TableCell className="font-mono text-xs break-all">{item.url}</TableCell>
+      <TableCell className="text-sm">
+        {VIA_LABELS[item.via]}
+        {item.country ? ` ${item.country}` : ''}
+      </TableCell>
+      <TableCell className="text-sm">{listCopyText(item)}</TableCell>
+      <TableCell className="text-xs whitespace-nowrap">
+        {item.fetched_at === null ? '—' : unixDate(item.fetched_at)}
+      </TableCell>
+      <TableCell>
+        <Button
+          variant="ghost"
+          size="sm"
+          loading={remove.isPending}
+          confirm={`Remove the list ${item.url}?`}
+          onClick={() => void drop()}
+        >
+          Remove
+        </Button>
+        {item.error && <p className="mt-1 text-xs text-warning">{item.error}</p>}
+        {remove.isError && <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>}
+      </TableCell>
+    </TableRow>
+  )
+}
+
+const AddDomainList = () => {
+  const setList = domainListSetMutation.useMutation()
+  const [url, setUrl] = useState('')
+  const [via, setVia] = useState<RuleVia>('vps')
+  const [country, setCountry] = useState('')
+  const add = async () => {
+    await setList.mutateAsync({
+      url,
+      via,
+      country: via === 'dpn' && country.trim().length === 2 ? country.trim() : null,
+    })
+    setUrl('')
+    setCountry('')
+    await domainListsQuery.refetchQuery()
+  }
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-2">
+      <Input
+        value={url}
+        placeholder="https://example.org/list.txt"
+        className="max-w-md"
+        aria-label="List URL"
+        onChange={(event) => setUrl(event.target.value)}
+      />
+      <XSelect options={VIA_OPTIONS} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
+      {via === 'dpn' && (
+        <Input
+          value={country}
+          placeholder="any"
+          maxLength={2}
+          className="w-16 uppercase"
+          aria-label="Exit country of the list"
+          onChange={(event) => setCountry(event.target.value.toUpperCase())}
+        />
+      )}
+      <Button disabled={!url.trim()} loading={setList.isPending} onClick={() => void add()}>
+        Add list
+      </Button>
+      {setList.isError && <p className="w-full text-sm text-destructive">{setList.error.message}</p>}
+    </div>
+  )
+}
+
+const DomainLists = () => {
+  const data = domainListsQuery.useQuery().data
+  if (data?.reason) {
+    return <p className="text-muted-foreground">{data.reason}</p>
+  }
+  const lists = data?.lists ?? []
+  return (
+    <>
+      {lists.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>URL</TableHead>
+              <TableHead>Channel</TableHead>
+              <TableHead>Copy</TableHead>
+              <TableHead>Fetched</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {lists.map((item) => (
+              <DomainListRow key={item.url} item={item} />
+            ))}
+          </TableBody>
+        </Table>
+      )}
+      <AddDomainList />
+      <p className="mt-2 text-xs text-muted-foreground">
+        One domain per line, hosts-file lines or ||domain^; core refreshes a list daily and keeps its last copy. A site
+        rule wins over a list.
+      </p>
+    </>
+  )
+}
+
 const FollowButton = ({ name, rule }: { name: string; rule: DomainRule }) => {
   const setRule = ruleSetMutation.useMutation()
   const follow = async () => {
@@ -255,12 +374,7 @@ const LearnedRow = ({
       <TableCell className="text-xs">{hits}</TableCell>
       <TableCell className="text-xs whitespace-nowrap">{unixDate(last_seen)}</TableCell>
       <TableCell>
-        <Button
-          variant="ghost"
-          size="sm"
-          loading={forget.isPending}
-          onClick={() => void drop()}
-        >
+        <Button variant="ghost" size="sm" loading={forget.isPending} onClick={() => void drop()}>
           Forget
         </Button>
         {forget.isError && <p className="mt-1 text-xs text-destructive">{forget.error.message}</p>}
@@ -314,6 +428,13 @@ export const rulesPage = generalLayout.lets
               </p>
             </>
           )}
+        </Section>
+        <Section
+          h2="Domain lists"
+          size="lg"
+          description="Ready lists of sites by URL: every domain takes the list's channel"
+        >
+          <DomainLists />
         </Section>
         <Section h2="Sniffer" size="lg" description="What a device asks, live, and which channel each name took">
           {devices?.reason ? (
