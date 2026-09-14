@@ -518,4 +518,41 @@ fi
 sudo "$CLI" mode full --dir "$BOX" | grep -q "^routing: mode=full" || fail "a repeated vibedpn mode full failed"
 await_exit "$VPS_IP" "a repeated vibedpn mode full moved the device off the VPS"
 
+if [ "$OFFLINE" != 1 ]; then
+  log "routing.mode smart: a domain rule through the VPS, everything else direct"
+  # nip.io answers 198-18-0-10.nip.io with the web server of the stand: a real name for a stand address
+  SMART_NAME="198-18-0-10.nip.io"
+  sudo "$PY" - "$BOX/config.yaml" "$SMART_NAME" <<'PY'
+import sys
+from pathlib import Path
+
+path, name = Path(sys.argv[1]), sys.argv[2]
+text = path.read_text(encoding="utf-8")
+old = "  domains: []\n"
+assert text.count(old) == 1, "config.yaml has no empty domains list"
+path.write_text(text.replace(old, f"  domains:\n    - domain: {name}\n      via: vps\n"), encoding="utf-8")
+PY
+  sudo "$CLI" restart --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn restart with a domain rule failed"
+  wait_healthy vibedpn-core-1
+  wait_healthy vibedpn-wg-client-1
+  sudo "$CLI" mode smart --dir "$BOX" | grep -q "applied live" || fail "vibedpn mode smart did not apply live through core"
+  sudo grep -q "127.0.0.1:5354" "$BOX/data/adguard/conf/AdGuardHome.yaml" ||
+    fail "AdGuard does not ask the resolver of core in mode smart"
+  # before the device asks the name, its address is in no set: the device goes direct
+  await_exit "$INTERNET_GATEWAY" "in mode smart the device does not go direct before the rule matched"
+  echo "smart, name not asked yet: direct $(exit_address)"
+  resolved="$(in_device "$PY" -c 'import socket, struct, sys
+name = sys.argv[1]
+labels = b"".join(bytes([len(part)]) + part.encode() for part in name.split("."))
+q = struct.pack("!HHHHHH", 11, 0x0100, 1, 0, 0, 0) + labels + b"\x00" + struct.pack("!HH", 1, 1)
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(10); s.sendto(q, (sys.argv[2], 53))
+r = s.recvfrom(2048)[0]
+print(".".join(map(str, r[-4:])) if struct.unpack("!H", r[6:8])[0] else "")' "$SMART_NAME" "$BOX_LAN_IP" 2>/dev/null || true)"
+  [ "$resolved" = "$WEB_IP" ] || fail "the device got '${resolved:-no answer}' for $SMART_NAME from the box"
+  sudo nft list set inet vibedpn_router smart_vps | grep -q "$WEB_IP" ||
+    fail "the resolver of core did not put $WEB_IP into the set smart_vps"
+  await_exit "$VPS_IP" "a device that asked a rule name does not leave through the VPS in mode smart"
+  echo "smart, $SMART_NAME asked: $WEB_IP in smart_vps, the device leaves as $(exit_address)"
+fi
+
 log "E2E-ROUTER-OK"
