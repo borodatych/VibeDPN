@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
 import dns.exception
@@ -70,9 +70,20 @@ class RuleIndex:
             self.add(name, set_name)
 
     @classmethod
-    def from_config(cls, config: Config) -> RuleIndex:
-        rules = config.routing.domains if config.routing is not None else []
-        return cls((name, channel_set(rule)) for rule in rules for name in rule.names())
+    def from_config(cls, config: Config, lists: Mapping[str, list[str]] | None = None) -> RuleIndex:
+        """The rules of config.yaml over the domains of its lists: a rule for the same name wins."""
+        index = cls()
+        if config.routing is None:
+            return index
+        fetched = lists or {}
+        for item in config.routing.lists:
+            set_name = channel_set(item)
+            for name in fetched.get(item.url, ()):
+                index.add(name, set_name)
+        for rule in config.routing.domains:
+            for name in rule.names():
+                index.add(name, channel_set(rule))
+        return index
 
     def add(self, name: str, set_name: str) -> None:
         self._sets[name.lower().rstrip(".")] = set_name
@@ -176,6 +187,7 @@ class Resolver:
     recent: OrderedDict[str, tuple[list[str], int, float]] = field(default_factory=OrderedDict)
     cnames: dict[str, str] = field(default_factory=dict)  # CNAME target → the name that led to it
     learned: dict[str, str] = field(default_factory=dict)  # CDN → the site it follows
+    lists: dict[str, list[str]] = field(default_factory=dict)  # URL of routing.lists → its domains
 
     def resolve(self, query: dns.message.Message) -> dns.message.Message:
         if query.question and query.question[0].rdtype == dns.rdatatype.AAAA:
@@ -219,10 +231,15 @@ class Resolver:
         if self.learned.pop(name, None) is not None:
             self.index.remove(name)
 
+    def set_lists(self, config: Config, lists: Mapping[str, list[str]]) -> None:
+        """New domains of routing.lists: rebuild the index with them and fill the sets again."""
+        self.lists = dict(lists)
+        self.reload(config)
+
     def reload(self, config: Config) -> None:
         """config.yaml changed (rules, mode) and the router rebuilt its table: take the new rules,
         keep what was learned for sites still under a rule, fill the sets again."""
-        self.index = RuleIndex.from_config(config)
+        self.index = RuleIndex.from_config(config, self.lists)
         for target, site in self.cnames.items():
             set_name = self.index.match(site)
             if set_name is not None:

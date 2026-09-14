@@ -10,11 +10,14 @@ from pydantic import BaseModel, ValidationError
 
 from vibedpn import __version__
 from vibedpn.api.consumer import ConsumerStatus
+from vibedpn.api.lists import ListsStatus
 from vibedpn.api.models import (
     BoxStatus,
     DevicePolicyUpdate,
     DevicePolicyView,
     DeviceView,
+    DomainListUpdate,
+    DomainListView,
     DomainRuleUpdate,
     DomainRuleView,
     DpnCountry,
@@ -40,14 +43,25 @@ from vibedpn.api.smart import SmartLoop
 from vibedpn.api.state import BoxState
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.bootstrap import BootstrapError, network_for
-from vibedpn.config import Config, DeviceConfig, DomainRule, NetworkMode, RoutingMode, Upstream
+from vibedpn.config import (
+    Config,
+    DeviceConfig,
+    DomainList,
+    DomainRule,
+    NetworkMode,
+    RoutingMode,
+    Upstream,
+)
 from vibedpn.config_edit import (
     ConfigEditError,
     DeviceIdent,
     DeviceNotFoundError,
+    ListNotFoundError,
     RuleNotFoundError,
+    remove_domain_list,
     remove_domain_rule,
     set_device,
+    set_domain_list,
     set_domain_rule,
     set_dpn_country,
     set_network,
@@ -391,10 +405,12 @@ def _add_lan_routes(
     state: BoxState | None,
     interfaces_source: InterfacesSource,
     smart: SmartLoop | None,
+    lists: ListsStatus | None = None,
 ) -> None:
-    """Network, domain rules and the DNS journal of a box with a LAN."""
+    """Network, domain rules and lists, and the DNS journal of a box with a LAN."""
     _add_network_routes(application, state, interfaces_source)
     _add_rule_routes(application, state)
+    _add_list_routes(application, state, lists)
     _add_smart_routes(application, smart)
 
 
@@ -458,39 +474,80 @@ def _add_smart_routes(application: FastAPI, smart: SmartLoop | None) -> None:
         return Response(status_code=204)
 
 
+def _lan_state(state: BoxState | None) -> BoxState:
+    if state is None or state.config.routing is None:
+        raise HTTPException(status_code=404, detail=NO_LAN)
+    return state
+
+
+def _run_edit(box_state: BoxState, change: Callable[[Path], tuple[Config, bool]]) -> Config:
+    """A rule or list edit of config.yaml applied live; core's refusals become HTTP answers."""
+    try:
+        return box_state.edit(change)
+    except (RuleNotFoundError, ListNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConfigEditError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RouterError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"router refused the change, config.yaml restored: {exc}"
+        ) from exc
+
+
+def _list_view(item: DomainList, lists: ListsStatus | None) -> DomainListView:
+    state = None if lists is None else lists.states.get(item.url)
+    return DomainListView(
+        url=item.url,
+        via=item.via.value,
+        country=item.country,
+        domains=0 if state is None else state.domains,
+        fetched_at=None if state is None else state.fetched_at,
+        error="" if state is None else state.error,
+    )
+
+
+def _add_list_routes(
+    application: FastAPI, state: BoxState | None, lists: ListsStatus | None
+) -> None:
+    """``/lists``: ready domain lists of routing.lists, edited in config.yaml, fetched by core."""
+
+    @application.get("/lists", response_model=list[DomainListView])
+    def domain_lists() -> list[DomainListView]:
+        routing = _lan_state(state).config.routing
+        return [_list_view(item, lists) for item in routing.lists] if routing is not None else []
+
+    @application.put("/lists", response_model=DomainListView)
+    def put_list(request: DomainListUpdate) -> DomainListView:
+        box_state = _lan_state(state)
+        try:
+            item = DomainList.model_validate(request.model_dump())
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()[0]["msg"]) from exc
+        _run_edit(box_state, lambda path: set_domain_list(path, item))
+        return _list_view(item, lists)
+
+    @application.delete("/lists", status_code=204)
+    def delete_list(url: str) -> Response:
+        _run_edit(_lan_state(state), lambda path: remove_domain_list(path, url))
+        return Response(status_code=204)
+
+
 def _add_rule_routes(application: FastAPI, state: BoxState | None) -> None:
     """``/rules``: domain rules of routing.mode smart, edited in config.yaml, applied live."""
 
-    def lan_state() -> BoxState:
-        if state is None or state.config.routing is None:
-            raise HTTPException(status_code=404, detail=NO_LAN)
-        return state
-
-    def run_edit(box_state: BoxState, change: Callable[[Path], tuple[Config, bool]]) -> Config:
-        try:
-            return box_state.edit(change)
-        except RuleNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ConfigEditError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except RouterError as exc:
-            raise HTTPException(
-                status_code=503, detail=f"router refused the change, config.yaml restored: {exc}"
-            ) from exc
-
     @application.get("/rules", response_model=list[DomainRuleView])
     def rules() -> list[DomainRuleView]:
-        routing = lan_state().config.routing
+        routing = _lan_state(state).config.routing
         return [_rule_view(rule) for rule in routing.domains] if routing is not None else []
 
     @application.put("/rules/{domain}", response_model=DomainRuleView)
     def put_rule(domain: str, request: DomainRuleUpdate) -> DomainRuleView:
-        box_state = lan_state()
+        box_state = _lan_state(state)
         try:
             rule = DomainRule.model_validate({"domain": domain, **request.model_dump()})
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=exc.errors()[0]["msg"]) from exc
-        updated = run_edit(box_state, lambda path: set_domain_rule(path, rule))
+        updated = _run_edit(box_state, lambda path: set_domain_rule(path, rule))
         routing = updated.routing
         saved = (
             next((item for item in routing.domains if item.domain == rule.domain), None)
@@ -503,8 +560,8 @@ def _add_rule_routes(application: FastAPI, state: BoxState | None) -> None:
 
     @application.delete("/rules/{domain}", status_code=204)
     def delete_rule(domain: str) -> Response:
-        box_state = lan_state()
-        run_edit(box_state, lambda path: remove_domain_rule(path, domain))
+        box_state = _lan_state(state)
+        _run_edit(box_state, lambda path: remove_domain_rule(path, domain))
         return Response(status_code=204)
 
 
@@ -683,6 +740,7 @@ def create_app(
     dpn_offers: DpnOffers | None = None,
     interfaces_source: InterfacesSource = _host_interfaces,
     smart: SmartLoop | None = None,
+    lists: ListsStatus | None = None,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -717,7 +775,7 @@ def create_app(
         consumer,
     )
     _add_dpn_routes(application, current, state, dpn_offers or _default_dpn_offers)
-    _add_lan_routes(application, state, interfaces_source, smart)
+    _add_lan_routes(application, state, interfaces_source, smart, lists)
 
     @application.get("/health", response_model=Health)
     def health() -> Health:

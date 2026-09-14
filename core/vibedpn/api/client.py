@@ -17,6 +17,8 @@ from vibedpn.api.models import (
     DevicePolicyUpdate,
     DevicePolicyView,
     DeviceView,
+    DomainListUpdate,
+    DomainListView,
     DomainRuleUpdate,
     DomainRuleView,
     DpnCountryView,
@@ -60,7 +62,7 @@ class DeviceRequestError(RuntimeError):
 
 
 class RuleRequestError(RuntimeError):
-    """Core refused a domain rule, or answered something else."""
+    """Core refused a domain rule or list, or answered something else."""
 
 
 class RoutingRequestError(RuntimeError):
@@ -349,6 +351,51 @@ def forget_learned(port: int, name: str, transport: httpx.BaseTransport | None =
         port,
         "DELETE",
         f"/learned/{quote(name, safe='')}",
+        httpx.codes.NO_CONTENT,
+        transport=transport,
+        error=RuleRequestError,
+    )
+
+
+def list_domain_lists(
+    port: int, transport: httpx.BaseTransport | None = None
+) -> list[DomainListView]:
+    response = _peer_request(
+        port, "GET", "/lists", httpx.codes.OK, transport=transport, error=RuleRequestError
+    )
+    try:
+        return [DomainListView.model_validate(item) for item in response.json()]
+    except (ValueError, ValidationError, TypeError) as exc:
+        raise RuleRequestError(
+            f"core answered something that is not domain lists ({VERSION_HINT})"
+        ) from exc
+
+
+def set_domain_list(
+    port: int, update: DomainListUpdate, transport: httpx.BaseTransport | None = None
+) -> DomainListView:
+    response = _peer_request(
+        port,
+        "PUT",
+        "/lists",
+        httpx.codes.OK,
+        body=update.model_dump(mode="json"),
+        transport=transport,
+        error=RuleRequestError,
+    )
+    try:
+        return DomainListView.model_validate(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise RuleRequestError(
+            f"core answered something that is not a domain list ({VERSION_HINT})"
+        ) from exc
+
+
+def remove_domain_list(port: int, url: str, transport: httpx.BaseTransport | None = None) -> None:
+    _peer_request(
+        port,
+        "DELETE",
+        f"/lists?url={quote(url, safe='')}",
         httpx.codes.NO_CONTENT,
         transport=transport,
         error=RuleRequestError,

@@ -194,6 +194,23 @@ class DomainRuleView(BaseModel):
     also: list[str]
 
 
+class DomainListUpdate(BaseModel):
+    """A ready domain list by URL and the channel of all its domains."""
+
+    url: str
+    via: Literal["vps", "dpn", "direct"]
+    country: str | None = None
+
+
+class DomainListView(BaseModel):
+    url: str
+    via: str
+    country: str | None
+    domains: int  # 0 until core has a first copy
+    fetched_at: float | None  # unix seconds of the copy in use
+    error: str  # why the copy in use is not newer, or why there is none
+
+
 class JournalEntryView(BaseModel):
     """One DNS query of a device, as the sniffer shows it."""
 

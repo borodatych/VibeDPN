@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from vibedpn.api.app import create_app
 from vibedpn.api.consumer import ConsumerStatus, consumer_round, watch_consumer
+from vibedpn.api.lists import ListsStatus, watch_lists
 from vibedpn.api.smart import DnsJournal, SmartLoop, watch_querylog
 from vibedpn.api.state import BoxState
 from vibedpn.api.tunnel import run_servers
@@ -31,6 +32,7 @@ from vibedpn.engine.adguard import (
 )
 from vibedpn.engine.devices import DB_FILE, DeviceError, DeviceStore
 from vibedpn.engine.dnsmasq import DnsmasqError, core_dir, ensure_dnsmasq
+from vibedpn.engine.domainlists import LISTS_DIR, ListCache, http_fetch, list_client
 from vibedpn.engine.learned import LEARNED_FILE, LearnedError, LearnedStore
 from vibedpn.engine.resolver import (
     UPSTREAM_TIMEOUT_SECONDS,
@@ -151,7 +153,9 @@ def main() -> None:
             sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
             raise SystemExit(os.EX_CONFIG) from None
     watchers = _watchers(config, uplinks)
-    box_state, resolver, smart = _box_state(config, config_path, watchers, secrets_dir, data_dir)
+    box_state, resolver, smart, lists = _box_state(
+        config, config_path, watchers, secrets_dir, data_dir
+    )
     consumer = ConsumerStatus()
     application = create_app(
         config,
@@ -161,6 +165,7 @@ def main() -> None:
         watchers=watchers,
         consumer=consumer,
         smart=smart,
+        lists=lists,
     )
     run_servers(
         config,
@@ -171,6 +176,7 @@ def main() -> None:
             *_consumer_task(config, box_state, consumer, secrets_dir),
             *([partial(serve_resolver, resolver)] if resolver is not None else []),
             *([partial(watch_querylog, smart)] if smart is not None else []),
+            *_list_task(box_state, resolver, lists, data_dir),
         ],
     )
 
@@ -183,6 +189,17 @@ def _consumer_task(
         return []
     step = consumer_round(secrets_dir)
     return [partial(watch_consumer, lambda: box_state.config, consumer, step)]
+
+
+def _list_task(
+    box_state: BoxState, resolver: Resolver | None, lists: ListsStatus, data_dir: Path
+) -> list[Callable[[], Coroutine[Any, Any, None]]]:
+    """The round of routing.lists, on a box whose resolver serves smart."""
+    if resolver is None:
+        return []
+    cache = ListCache(data_dir / LISTS_DIR)
+    fetch = http_fetch(list_client())
+    return [partial(watch_lists, lambda: box_state.config, resolver, cache, fetch, lists)]
 
 
 def _report(what: str, written: bool | None) -> None:
@@ -251,12 +268,13 @@ def _box_state(
     watchers: UplinkWatchers,
     secrets_dir: Path,
     data_dir: Path,
-) -> tuple[BoxState, Resolver | None, SmartLoop | None]:
+) -> tuple[BoxState, Resolver | None, SmartLoop | None, ListsStatus]:
     """The live configuration, with the resolver of smart refilled after every router apply, and
-    the DNS journal with its learner."""
+    the DNS journal with its learner, and the status of routing.lists."""
     resolver = _resolver(config)
     state = BoxState(config, config_path, apply=_apply_with_resolver(resolver), watchers=watchers)
-    return state, resolver, _smart_loop(config, state, resolver, secrets_dir, data_dir)
+    smart = _smart_loop(config, state, resolver, secrets_dir, data_dir)
+    return state, resolver, smart, ListsStatus()
 
 
 def _smart_loop(

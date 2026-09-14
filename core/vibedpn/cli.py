@@ -25,7 +25,13 @@ from vibedpn.api.client import (
     StatsUnavailableError,
     fetch_provider_stats,
 )
-from vibedpn.api.models import DomainRuleUpdate, JournalEntryView, PeerFile
+from vibedpn.api.models import (
+    DomainListUpdate,
+    DomainListView,
+    DomainRuleUpdate,
+    JournalEntryView,
+    PeerFile,
+)
 from vibedpn.atomic import write_private
 from vibedpn.bootstrap import (
     CONFIG_FILE,
@@ -822,6 +828,11 @@ dns_app = typer.Typer(
     help="The DNS journal of the LAN devices (the sniffer).", no_args_is_help=True
 )
 app.add_typer(dns_app, name="dns")
+lists_app = typer.Typer(
+    help="Ready domain lists by URL for routing.mode smart: a channel for all their domains.",
+    no_args_is_help=True,
+)
+app.add_typer(lists_app, name="lists")
 WATCH_SECONDS = 1.0
 
 
@@ -1010,6 +1021,57 @@ def rule_forget(
     config = _lan_box(box_dir)
     _core_call(lambda: core_api.forget_learned(config.api.port, name))
     typer.echo(f"{name}: forgotten, goes direct")
+
+
+def render_domain_list(item: DomainListView) -> str:
+    """One line of `vibedpn lists show`: the channel, the domains in use and their age."""
+    country = f" {item.country}" if item.country else ""
+    if item.fetched_at is None:
+        copy = "no copy yet" if item.error else "fetching"
+    else:
+        fetched = time.strftime("%Y-%m-%d %H:%M", time.localtime(item.fetched_at))
+        copy = f"{item.domains} domains, fetched {fetched}"
+    error = f" — {item.error}" if item.error else ""
+    return f"{item.url}  {item.via}{country}  ({copy}){error}"
+
+
+@lists_app.command("show")
+def lists_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """The domain lists of routing.lists with their channel and the copy core uses."""
+    config = _lan_box(box_dir)
+    items = _core_call(lambda: core_api.list_domain_lists(config.api.port))
+    if not items:
+        typer.echo("no domain lists (vibedpn lists add <url> vps|dpn|direct)")
+    for item in items:
+        typer.echo(render_domain_list(item))
+
+
+@lists_app.command("add")
+def lists_add(
+    url: Annotated[str, typer.Argument(help="An http(s) URL of a text list of domains.")],
+    via: Annotated[DomainVia, typer.Argument(help="vps | dpn | direct.")],
+    country: Annotated[
+        str | None, typer.Option("--country", help="Exit country of via dpn (ISO code).")
+    ] = None,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Give every domain of a list a channel; a list with that URL gets the new channel."""
+    config = _lan_box(box_dir)
+    update = DomainListUpdate(url=url, via=via.value, country=country)
+    item = _core_call(lambda: core_api.set_domain_list(config.api.port, update))
+    country_text = f" {item.country}" if item.country else ""
+    typer.echo(f"{item.url}: via {item.via}{country_text}, core fetches it within a minute")
+
+
+@lists_app.command("rm")
+def lists_rm(
+    url: Annotated[str, typer.Argument(help="The URL of the list that goes.")],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Remove a domain list: its domains go direct in smart again."""
+    config = _lan_box(box_dir)
+    _core_call(lambda: core_api.remove_domain_list(config.api.port, url))
+    typer.echo(f"{url}: list removed")
 
 
 @rule_app.command("list")
