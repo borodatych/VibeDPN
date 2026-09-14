@@ -21,6 +21,7 @@ const base: BoxStatus = {
     },
   ],
   dpn: null,
+  dpn_countries: [],
 }
 
 const withGateway = (alive: boolean | null): BoxStatus => ({

@@ -176,7 +176,6 @@ WIFI_CHANNELS = {
 }
 SSID_MAX_BYTES = 32
 MAX_RULE_COUNTRIES = 8  # engine/router.py MAX_COUNTRIES: one consumer per country
-COUNTRY_PATTERN = re.compile(r"^[A-Z]{2}$")
 
 
 class WifiConfig(StrictModel):
@@ -670,18 +669,6 @@ class Config(StrictModel):
                 f"routing.domains: {len(countries)} exit countries, at most {MAX_RULE_COUNTRIES}"
                 " (each one is a consumer of its own)"
             )
-        if self.routing.mode is RoutingMode.SMART:
-            exit_country = self.upstreams.dpn.country
-            # temporary (docs/decisions.md, 18): one dpn uplink until a consumer per country
-            errors += [
-                f"routing.domains: {rule.domain} wants country {rule.country}, but uplink dpn"
-                f" leaves in {exit_country or 'any country'}; a consumer per country is not there"
-                " yet (set upstreams.dpn.country or drop the country of the rule)"
-                for rule in self.routing.domains
-                if rule.via is DomainVia.DPN
-                and rule.country is not None
-                and rule.country != exit_country
-            ]
         return errors
 
     def _device_errors(self) -> list[str]:

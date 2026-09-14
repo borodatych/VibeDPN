@@ -14,7 +14,15 @@ from dataclasses import dataclass, replace
 
 from vibedpn.engine.myst import MystError, TequilaClient
 
-CONSUMER_TEQUILAPI = "http://10.77.0.20:4050"  # the gateway address of dpn in compose.yaml
+TEQUILAPI_PORT = 4050  # --tequilapi.address of myst-consumer in compose.yaml
+
+
+def tequilapi_url(gateway: str) -> str:
+    """TequilAPI of a consumer container at its gateway address."""
+    return f"http://{gateway}:{TEQUILAPI_PORT}"
+
+
+CONSUMER_TEQUILAPI = tequilapi_url("10.77.0.20")  # the gateway address of dpn in compose.yaml
 # `GET /identities/{id}` asks the blockchain for registration and balance: seconds, not the
 # fraction of a second the provider statistics take (a 2 s timeout failed on the home stand).
 CONSUMER_TIMEOUT_SECONDS = 20.0

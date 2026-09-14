@@ -60,13 +60,21 @@ from vibedpn.engine.adguard import AdguardError, set_dns_mode
 from vibedpn.engine.consumer import (
     CONSUMER_TEQUILAPI,
     CONSUMER_TIMEOUT_SECONDS,
+    ConsumerState,
     CountryOffer,
     countries,
 )
 from vibedpn.engine.devices import DeviceError, DeviceStore, SeenDevice
 from vibedpn.engine.learned import LearnedError
 from vibedpn.engine.myst import MystError, ProviderStats, TequilaClient, provider_stats
-from vibedpn.engine.router import RouterError, RoutingFacts, read_routing, used_uplinks
+from vibedpn.engine.router import (
+    COUNTRY_KEY_PREFIX,
+    RouterError,
+    RoutingFacts,
+    read_routing,
+    uplink_table,
+    used_uplinks,
+)
 from vibedpn.engine.wg import (
     Peer,
     PeerExistsError,
@@ -266,30 +274,38 @@ def _uplink_statuses(
     in_use = used_uplinks(box)
     states = {} if watchers is None else watchers.states()
     result = []
-    for upstream in (Upstream.VPS, Upstream.DPN):
-        state = states.get(upstream)
+    for key in uplink_table(box):
+        upstream = Upstream.DPN if key.startswith(COUNTRY_KEY_PREFIX) else Upstream(key)
+        state = states.get(key)
         result.append(
             UplinkStatus(
-                name=upstream.value,
+                name=key,
                 enabled=box.upstreams.is_enabled(upstream),
-                in_use=upstream in in_use,
+                in_use=key in in_use,
                 gateway_alive=None if state is None else state.alive,
                 checked_at=None
                 if state is None
                 else datetime.fromtimestamp(state.checked_at, tz=UTC),
                 error="" if state is None else state.error,
-                gateway_route=facts.gateway_routes.get(upstream.value),
-                kill_switch_route=facts.last_resort_routes.get(upstream.value),
-                lan_access=box.upstreams.vps.lan_access if upstream is Upstream.VPS else None,
+                gateway_route=facts.gateway_routes.get(key),
+                kill_switch_route=facts.last_resort_routes.get(key),
+                lan_access=box.upstreams.vps.lan_access if key == Upstream.VPS.value else None,
             )
         )
     return result
 
 
-def _dpn_status(consumer: ConsumerStatus | None) -> DpnStatus | None:
-    state = None if consumer is None else consumer.state
-    if state is None:
-        return None
+def _dpn_statuses(consumer: ConsumerStatus | None) -> tuple[DpnStatus | None, list[DpnStatus]]:
+    """The consumer of uplink dpn, and the ones of the rule countries in their order."""
+    states = {} if consumer is None else consumer.states
+    main = states.get(Upstream.DPN.value)
+    countries = [
+        _dpn_status(state) for key, state in states.items() if key.startswith(COUNTRY_KEY_PREFIX)
+    ]
+    return (None if main is None else _dpn_status(main)), countries
+
+
+def _dpn_status(state: ConsumerState) -> DpnStatus:
     return DpnStatus(
         identity=state.identity,
         registration=state.registration,
@@ -586,6 +602,7 @@ def _add_routing_routes(
         routing = box.routing
         uplinks = _uplink_statuses(box, watchers, routing_reader(box))
         mode_uplink = next(item for item in uplinks if item.name == routing.default_upstream.value)
+        dpn, dpn_countries = _dpn_statuses(consumer)
         return BoxStatus(
             mode=routing.mode.value,
             default_upstream=routing.default_upstream.value,
@@ -595,7 +612,8 @@ def _add_routing_routes(
             and mode_uplink.gateway_alive is False
             and not routing.failopen,
             uplinks=uplinks,
-            dpn=_dpn_status(consumer),
+            dpn=dpn,
+            dpn_countries=dpn_countries,
         )
 
     @application.put("/routing", response_model=RoutingView)

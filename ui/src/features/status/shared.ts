@@ -1,6 +1,7 @@
 /** The answer of core's `GET /status` (core/vibedpn/api/models.py: BoxStatus). */
 export type UplinkStatus = {
-  name: 'vps' | 'dpn'
+  /** vps, dpn, or dpn-<country> for the consumer of a rule country */
+  name: string
   enabled: boolean
   in_use: boolean
   gateway_alive: boolean | null
@@ -11,7 +12,7 @@ export type UplinkStatus = {
   lan_access: boolean | null
 }
 
-/** The Mysterium consumer of uplink dpn as core last saw it. */
+/** A Mysterium consumer as core last saw it: the one of uplink dpn or of a rule country. */
 export type DpnStatus = {
   identity: string | null
   registration: string
@@ -38,6 +39,8 @@ export type BoxStatus = {
   lan_without_exit: boolean
   uplinks: UplinkStatus[]
   dpn: DpnStatus | null
+  /** consumers of the exit countries of domain rules, one per country */
+  dpn_countries: DpnStatus[]
 }
 
 /** The answer of core's `PUT /routing`. */

@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from vibedpn.api import consumer as consumer_module
-from vibedpn.api.consumer import ConsumerStatus, consumer_round, watch_consumer
+from vibedpn.api.consumer import ConsumerStatus, consumer_round, consumer_targets, watch_consumer
 from vibedpn.config import Config
 from vibedpn.engine.consumer import CONSUMER_TIMEOUT_SECONDS, ConsumerState, countries, reconcile
 from vibedpn.engine.myst import TEQUILAPI_TIMEOUT_SECONDS, TequilaClient
@@ -115,7 +115,7 @@ def test_a_silent_node_ends_the_round_in_an_error() -> None:
 
 
 def test_the_round_needs_the_passphrase_secret(tmp_path: Path) -> None:
-    state = consumer_round(tmp_path)(Config.model_validate(home_config()))
+    state = consumer_round(tmp_path)(Config.model_validate(home_config()))["dpn"]
     assert "myst-consumer-passphrase" in state.error
 
 
@@ -130,12 +130,14 @@ def test_watch_keeps_the_last_state_only_while_dpn_is_enabled() -> None:
         if rounds == 1:
             raise asyncio.CancelledError
 
-    def step(_config: Config) -> ConsumerState:
-        return ConsumerState(IDENTITY, "Unregistered", "NotConnected", None, "not registered")
+    def step(_config: Config) -> dict[str, ConsumerState]:
+        return {
+            "dpn": ConsumerState(IDENTITY, "Unregistered", "NotConnected", None, "not registered")
+        }
 
     with contextlib.suppress(asyncio.CancelledError):
         asyncio.run(watch_consumer(lambda: config, status, step, sleep=sleep))
-    assert status.state is not None and status.state.identity == IDENTITY
+    assert status.states["dpn"].identity == IDENTITY
 
 
 def test_the_consumer_client_waits_for_the_blockchain(
@@ -208,3 +210,49 @@ def test_the_round_reports_the_balance_and_the_top_up_address() -> None:
     node = FakeNode(identities=[IDENTITY], registration="Unregistered", connection="NotConnected")
     state = reconcile(client(node), "secret", None, wanted=True)
     assert state.balance_wei == "1500000000000000000" and state.channel_address == "0xchannel"
+
+
+def smart_with_countries() -> Config:
+    raw = home_config()
+    raw["routing"]["mode"] = "smart"
+    raw["upstreams"]["dpn"]["country"] = "NL"
+    raw["routing"]["domains"] = [
+        {"domain": "kinopoisk.ru", "via": "dpn", "country": "RU"},
+        {"domain": "zdf.de", "via": "dpn", "country": "DE"},
+    ]
+    return Config.model_validate(raw)
+
+
+def test_every_rule_country_has_a_consumer_of_its_own() -> None:
+    targets = consumer_targets(smart_with_countries())
+    assert [(t.key, t.tequilapi, t.passphrase_file, t.country, t.wanted) for t in targets] == [
+        ("dpn", "http://10.77.0.20:4050", "myst-consumer-passphrase", "NL", False),
+        ("dpn-de", "http://10.77.0.40:4050", "myst-consumer-de-passphrase", "DE", True),
+        ("dpn-ru", "http://10.77.0.41:4050", "myst-consumer-ru-passphrase", "RU", True),
+    ]
+
+
+def test_the_round_asks_every_consumer_at_its_own_address(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    for name in ("myst-consumer-passphrase", "myst-consumer-de-passphrase"):
+        (tmp_path / name).write_text("secret", encoding="utf-8")
+    asked: list[str] = []
+
+    class Recording(TequilaClient):
+        def __init__(
+            self, base_url: str | None = None, transport: object = None, timeout: float = 0
+        ) -> None:
+            asked.append(str(base_url))
+            super().__init__(
+                base_url=base_url,
+                transport=httpx.MockTransport(lambda _r: httpx.Response(503)),
+                timeout=timeout,
+            )
+
+    monkeypatch.setattr(consumer_module, "TequilaClient", Recording)
+    states = consumer_round(tmp_path)(smart_with_countries())
+    assert asked == ["http://10.77.0.20:4050", "http://10.77.0.40:4050"]
+    assert list(states) == ["dpn", "dpn-de", "dpn-ru"]
+    assert "myst-consumer-ru-passphrase" in states["dpn-ru"].error
+    assert "vibedpn restart" in states["dpn-ru"].error

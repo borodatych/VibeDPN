@@ -92,7 +92,11 @@ const RoutingControls = ({ status }: { status: BoxStatus }) => {
     await mutation.mutateAsync(input)
     await boxStatusQuery.refetchQuery()
   }
-  const enabled = status.uplinks.filter((uplink) => uplink.enabled)
+  // The consumers of rule countries (dpn-<country>) serve their rules only: no mode goes through them.
+  const enabled = status.uplinks.filter(
+    (uplink): uplink is UplinkStatus & { name: 'vps' | 'dpn' } =>
+      uplink.enabled && (uplink.name === 'vps' || uplink.name === 'dpn'),
+  )
   return (
     <Section h2="Routing" size="lg" description={`failopen: ${status.failopen ? 'on' : 'off'}`}>
       <div className="flex flex-wrap items-center gap-3">
@@ -141,6 +145,33 @@ const RoutingControls = ({ status }: { status: BoxStatus }) => {
 
 const ANY_COUNTRY = 'any'
 
+const ConsumerFacts = ({ dpn }: { dpn: DpnStatus }) => (
+  <>
+    <dt className="text-muted-foreground">Registration</dt>
+    <dd>{dpn.registration}</dd>
+    <dt className="text-muted-foreground">Connection</dt>
+    <dd>{dpn.connection}</dd>
+    <dt className="text-muted-foreground">Balance</dt>
+    <dd>{formatMyst(dpn.balance_wei)} MYST</dd>
+    <dt className="text-muted-foreground">Top up (MYST on Polygon)</dt>
+    <dd className="font-mono text-xs break-all">{dpn.channel_address || '—'}</dd>
+  </>
+)
+
+/** The consumer of one exit country of the domain rules: its identity is topped up on its own. */
+const CountryConsumerCard = ({ dpn }: { dpn: DpnStatus }) => (
+  <Section
+    h2={`Mysterium exit ${dpn.country ?? ''} (domain rules)`}
+    size="lg"
+    description={dpn.identity ? `identity ${dpn.identity}` : 'no identity yet'}
+  >
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 font-accent text-sm">
+      <ConsumerFacts dpn={dpn} />
+    </dl>
+    {dpn.error && <p className="mt-3 text-sm text-warning">{dpn.error}</p>}
+  </Section>
+)
+
 const DpnCard = ({ dpn }: { dpn: DpnStatus }) => {
   const countries = dpnCountriesQuery.useQuery()
   const mutation = dpnCountryMutation.useMutation()
@@ -159,14 +190,7 @@ const DpnCard = ({ dpn }: { dpn: DpnStatus }) => {
   return (
     <Section h2="Mysterium exit (dpn)" size="lg" description={dpn.identity ? `identity ${dpn.identity}` : 'no identity yet'}>
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 font-accent text-sm">
-        <dt className="text-muted-foreground">Registration</dt>
-        <dd>{dpn.registration}</dd>
-        <dt className="text-muted-foreground">Connection</dt>
-        <dd>{dpn.connection}</dd>
-        <dt className="text-muted-foreground">Balance</dt>
-        <dd>{formatMyst(dpn.balance_wei)} MYST</dd>
-        <dt className="text-muted-foreground">Top up (MYST on Polygon)</dt>
-        <dd className="font-mono text-xs break-all">{dpn.channel_address || '—'}</dd>
+        <ConsumerFacts dpn={dpn} />
         <dt className="text-muted-foreground">Country</dt>
         <dd>
           <XSelect
@@ -206,6 +230,9 @@ export const homePage = generalLayout.lets
         </Section>
         <RoutingControls status={status} />
         {status.dpn && <DpnCard dpn={status.dpn} />}
+        {status.dpn_countries.map((dpn) => (
+          <CountryConsumerCard key={dpn.country} dpn={dpn} />
+        ))}
         {status.uplinks
           .filter((uplink) => uplink.enabled)
           .map((uplink) => (

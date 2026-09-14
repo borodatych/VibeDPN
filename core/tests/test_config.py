@@ -468,14 +468,12 @@ def test_dhcp_is_gateway_only(home: dict[str, Any]) -> None:
     assert Profile.DHCP not in Config.model_validate(home).compose_profiles()
 
 
-def test_smart_dpn_rules_keep_the_one_exit_country_for_now(home: dict[str, Any]) -> None:
-    """docs/decisions.md, 18: temporary until one consumer per country exists."""
+def test_smart_dpn_rules_may_leave_in_other_countries(home: dict[str, Any]) -> None:
+    """docs/decisions.md, 20: each rule country has a consumer of its own."""
     home["routing"]["mode"] = "smart"
     home["upstreams"]["dpn"]["country"] = "NL"
-    home["routing"]["domains"] = [{"domain": "kinopoisk.ru", "via": "dpn", "country": "DE"}]
-    assert "a consumer per country is not there yet" in errors_of(home)
-    home["routing"]["domains"] = [{"domain": "kinopoisk.ru", "via": "dpn", "country": "NL"}]
+    home["routing"]["domains"] = [
+        {"domain": "kinopoisk.ru", "via": "dpn", "country": "RU"},
+        {"domain": "zdf.de", "via": "dpn", "country": "DE"},
+    ]
     assert Config.model_validate(home).routing is not None
-    home["routing"]["mode"] = "off"
-    home["routing"]["domains"] = [{"domain": "kinopoisk.ru", "via": "dpn", "country": "DE"}]
-    assert Config.model_validate(home).routing is not None  # only smart applies the rules

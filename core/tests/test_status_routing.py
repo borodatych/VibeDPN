@@ -11,12 +11,13 @@ from fastapi.testclient import TestClient
 
 from vibedpn.api import client as core_api
 from vibedpn.api.app import create_app
+from vibedpn.api.consumer import ConsumerStatus
 from vibedpn.api.state import BoxState
 from vibedpn.api.uplink import UplinkState, UplinkWatchers, watch_uplink
 from vibedpn.bootstrap import render_config
 from vibedpn.config import Config, RoutingMode, Upstream, load_config
 from vibedpn.engine.adguard import CORE_USER, AdguardError, adguard_text, set_dns_mode
-from vibedpn.engine.consumer import CountryOffer
+from vibedpn.engine.consumer import ConsumerState, CountryOffer
 from vibedpn.engine.myst import MystError
 from vibedpn.engine.router import UPLINKS, RouterError, RoutingFacts, Uplink
 
@@ -307,3 +308,28 @@ def test_dpn_country_changes_live_and_countries_come_from_the_consumer(tmp_path:
     assert silent_app.get("/dpn/countries").status_code == 503
     client_box, _ = box(tmp_path)  # a client box: dpn is off
     assert client_box.get("/dpn/countries").status_code == 404
+
+
+def test_status_shows_the_consumer_and_the_gateway_of_every_rule_country() -> None:
+    raw = home_config()
+    raw["routing"]["mode"] = "smart"
+    raw["routing"]["domains"] = [{"domain": "zdf.de", "via": "dpn", "country": "DE"}]
+    config = Config.model_validate(raw)
+    consumer = ConsumerStatus()
+    consumer.states = {
+        "dpn": ConsumerState("0xmain", "Registered", "NotConnected", None),
+        "dpn-de": ConsumerState("0xde", "Unregistered", "NotConnected", "DE", "not registered"),
+    }
+    watchers = FakeWatchers({"dpn-de": UplinkState(True, 1_700_000_000.0)})  # type: ignore[dict-item]
+    app = create_app(
+        config,
+        watchers=watchers,  # type: ignore[arg-type]
+        routing_reader=lambda _config: FACTS,
+        consumer=consumer,
+    )
+    body = TestClient(app).get("/status").json()
+    assert body["dpn"]["identity"] == "0xmain"
+    countries = [(item["country"], item["identity"]) for item in body["dpn_countries"]]
+    assert countries == [("DE", "0xde")]
+    germany = next(item for item in body["uplinks"] if item["name"] == "dpn-de")
+    assert germany["enabled"] and germany["in_use"] and germany["gateway_alive"] is True

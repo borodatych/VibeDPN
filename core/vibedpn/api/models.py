@@ -109,6 +109,8 @@ class BoxStatus(BaseModel):
     lan_without_exit: bool
     uplinks: list[UplinkStatus]
     dpn: DpnStatus | None = None  # None: uplink dpn is off, or core has not asked the consumer yet
+    # The consumers of the exit countries of domain rules (decision 20), by country.
+    dpn_countries: list[DpnStatus] = []
 
 
 class RoutingUpdate(BaseModel):
