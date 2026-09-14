@@ -22,6 +22,9 @@ from vibedpn.api.models import (
     DpnCountryView,
     DpnStatus,
     HostInterface,
+    JournalDeviceView,
+    JournalEntryView,
+    LearnedView,
     NetworkUpdate,
     NetworkView,
     PeerCreate,
@@ -33,6 +36,7 @@ from vibedpn.api.models import (
     VpsLanAccessUpdate,
     VpsLanAccessView,
 )
+from vibedpn.api.smart import SmartLoop
 from vibedpn.api.state import BoxState
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.bootstrap import BootstrapError, network_for
@@ -60,6 +64,7 @@ from vibedpn.engine.consumer import (
     countries,
 )
 from vibedpn.engine.devices import DeviceError, DeviceStore, SeenDevice
+from vibedpn.engine.learned import LearnedError
 from vibedpn.engine.myst import MystError, ProviderStats, TequilaClient, provider_stats
 from vibedpn.engine.router import RouterError, RoutingFacts, read_routing, used_uplinks
 from vibedpn.engine.wg import (
@@ -365,6 +370,78 @@ def _rule_view(rule: DomainRule) -> DomainRuleView:
     )
 
 
+def _add_lan_routes(
+    application: FastAPI,
+    state: BoxState | None,
+    interfaces_source: InterfacesSource,
+    smart: SmartLoop | None,
+) -> None:
+    """Network, domain rules and the DNS journal of a box with a LAN."""
+    _add_network_routes(application, state, interfaces_source)
+    _add_rule_routes(application, state)
+    _add_smart_routes(application, smart)
+
+
+def _add_smart_routes(application: FastAPI, smart: SmartLoop | None) -> None:
+    """``/dns`` and ``/learned``: the sniffer and what routing.mode smart learned."""
+
+    def loop() -> SmartLoop:
+        if smart is None:
+            raise HTTPException(status_code=404, detail="this box runs no AdGuard: no DNS journal")
+        return smart
+
+    @application.get("/dns/devices", response_model=list[JournalDeviceView])
+    def dns_devices() -> list[JournalDeviceView]:
+        journal = loop().journal
+        return [
+            JournalDeviceView(client=client, queries=len(journal.entries(client)))
+            for client in journal.clients()
+        ]
+
+    @application.get("/dns/journal/{client}", response_model=list[JournalEntryView])
+    def dns_journal(client: str, since: float = 0.0) -> list[JournalEntryView]:
+        return [
+            JournalEntryView(
+                time=entry.time,
+                name=entry.name,
+                qtype=entry.qtype,
+                cached=entry.cached,
+                addresses=entry.addresses,
+                channel=entry.channel,
+                learned_from=entry.learned_from,
+            )
+            for entry in loop().journal.entries(client, since)
+        ]
+
+    @application.get("/learned", response_model=list[LearnedView])
+    def learned() -> list[LearnedView]:
+        try:
+            names = loop().store.names()
+        except LearnedError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return [
+            LearnedView(
+                name=item.name,
+                parent=item.parent,
+                source=item.source.value,
+                first_seen=item.first_seen,
+                last_seen=item.last_seen,
+                hits=item.hits,
+            )
+            for item in names
+        ]
+
+    @application.delete("/learned/{name}", status_code=204)
+    def forget_learned(name: str) -> Response:
+        try:
+            removed = loop().forget(name.lower().rstrip("."))
+        except LearnedError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"{name} was not learned")
+        return Response(status_code=204)
+
+
 def _add_rule_routes(application: FastAPI, state: BoxState | None) -> None:
     """``/rules``: domain rules of routing.mode smart, edited in config.yaml, applied live."""
 
@@ -587,6 +664,7 @@ def create_app(
     consumer: ConsumerStatus | None = None,
     dpn_offers: DpnOffers | None = None,
     interfaces_source: InterfacesSource = _host_interfaces,
+    smart: SmartLoop | None = None,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -621,8 +699,7 @@ def create_app(
         consumer,
     )
     _add_dpn_routes(application, current, state, dpn_offers or _default_dpn_offers)
-    _add_network_routes(application, state, interfaces_source)
-    _add_rule_routes(application, state)
+    _add_lan_routes(application, state, interfaces_source, smart)
 
     @application.get("/health", response_model=Health)
     def health() -> Health:

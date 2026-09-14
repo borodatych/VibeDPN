@@ -23,6 +23,7 @@ from vibedpn.atomic import write_private
 from vibedpn.bootstrap import ADGUARD_CORE_PASSWORD_FILE, HTPASSWD_FILE, UI_USER
 from vibedpn.config import Config, RoutingMode
 from vibedpn.config_edit import round_trip_yaml
+from vibedpn.engine.querylog import PAGE_LIMIT, QUERYLOG_PATH
 from vibedpn.engine.resolver import RESOLVER_HOST, RESOLVER_PORT
 
 CONF_FILE = "AdGuardHome.yaml"
@@ -287,3 +288,34 @@ def give_to_adguard(directories: list[Path], uid: int, chown: Chown = os.chown) 
                 f"cannot hand {exc.filename or directory} to AdGuard: {exc.strerror or exc}"
             ) from exc
     return changed
+
+
+def querylog_fetcher(
+    config: Config, secrets_dir: Path, transport: httpx.BaseTransport | None = None
+) -> Callable[[str | None], object]:
+    """One page of AdGuard's query log as JSON, as core's own AdGuard user; ``older_than`` pages
+    back from a record time."""
+    network = config.network
+    if network is None:
+        raise AdguardError("AdGuard runs only on a box with a LAN")
+    url = f"http://{network.lan_address}:{config.dns.web_port}{QUERYLOG_PATH}"
+    client = httpx.Client(timeout=ADGUARD_API_TIMEOUT_SECONDS, transport=transport, trust_env=False)
+
+    def fetch(older_than: str | None) -> object:
+        params: dict[str, str | int] = {"limit": PAGE_LIMIT}
+        if older_than is not None:
+            params["older_than"] = older_than
+        try:
+            response = client.get(
+                url, params=params, auth=(CORE_USER, read_core_password(secrets_dir))
+            )
+        except httpx.HTTPError as exc:
+            raise OSError(f"AdGuard does not answer at {url}: {exc.__class__.__name__}") from exc
+        if response.status_code != httpx.codes.OK:
+            raise OSError(f"AdGuard refused its query log: HTTP {response.status_code}")
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise OSError("AdGuard answered its query log with something that is not JSON") from exc
+
+    return fetch

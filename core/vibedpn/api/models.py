@@ -190,3 +190,29 @@ class DomainRuleView(BaseModel):
     country: str | None
     learn: bool
     also: list[str]
+
+
+class JournalEntryView(BaseModel):
+    """One DNS query of a device, as the sniffer shows it."""
+
+    time: float
+    name: str
+    qtype: str
+    cached: bool
+    addresses: list[str]
+    channel: str  # smart_* set of the rule it went through, or "direct"
+    learned_from: str | None  # this query taught the name to follow that site
+
+
+class JournalDeviceView(BaseModel):
+    client: str
+    queries: int
+
+
+class LearnedView(BaseModel):
+    name: str
+    parent: str
+    source: str  # time | cname
+    first_seen: float
+    last_seen: float
+    hits: int

@@ -20,6 +20,8 @@ from vibedpn.api.models import (
     DomainRuleUpdate,
     DomainRuleView,
     DpnCountryView,
+    JournalEntryView,
+    LearnedView,
     PeerCreate,
     PeerFile,
     PeerView,
@@ -305,6 +307,48 @@ def remove_rule(port: int, domain: str, transport: httpx.BaseTransport | None = 
         port,
         "DELETE",
         f"/rules/{quote(domain, safe='')}",
+        httpx.codes.NO_CONTENT,
+        transport=transport,
+        error=RuleRequestError,
+    )
+
+
+def journal(
+    port: int, client: str, since: float, transport: httpx.BaseTransport | None = None
+) -> list[JournalEntryView]:
+    response = _peer_request(
+        port,
+        "GET",
+        f"/dns/journal/{quote(client, safe='')}?since={since}",
+        httpx.codes.OK,
+        transport=transport,
+        error=RuleRequestError,
+    )
+    try:
+        return [JournalEntryView.model_validate(item) for item in response.json()]
+    except (ValueError, ValidationError, TypeError) as exc:
+        raise RuleRequestError(
+            f"core answered something that is not a journal ({VERSION_HINT})"
+        ) from exc
+
+
+def learned_names(port: int, transport: httpx.BaseTransport | None = None) -> list[LearnedView]:
+    response = _peer_request(
+        port, "GET", "/learned", httpx.codes.OK, transport=transport, error=RuleRequestError
+    )
+    try:
+        return [LearnedView.model_validate(item) for item in response.json()]
+    except (ValueError, ValidationError, TypeError) as exc:
+        raise RuleRequestError(
+            f"core answered something that is not learned names ({VERSION_HINT})"
+        ) from exc
+
+
+def forget_learned(port: int, name: str, transport: httpx.BaseTransport | None = None) -> None:
+    _peer_request(
+        port,
+        "DELETE",
+        f"/learned/{quote(name, safe='')}",
         httpx.codes.NO_CONTENT,
         transport=transport,
         error=RuleRequestError,

@@ -17,14 +17,21 @@ from pydantic import ValidationError
 
 from vibedpn.api.app import create_app
 from vibedpn.api.consumer import ConsumerStatus, consumer_round, watch_consumer
+from vibedpn.api.smart import DnsJournal, SmartLoop, watch_querylog
 from vibedpn.api.state import BoxState
 from vibedpn.api.tunnel import run_servers
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.config import Config, ConfigError, Upstream, load_config
 from vibedpn.engine import hostapd
-from vibedpn.engine.adguard import AdguardError, ensure_adguard, give_to_adguard
+from vibedpn.engine.adguard import (
+    AdguardError,
+    ensure_adguard,
+    give_to_adguard,
+    querylog_fetcher,
+)
 from vibedpn.engine.devices import DB_FILE, DeviceError, DeviceStore
 from vibedpn.engine.dnsmasq import DnsmasqError, core_dir, ensure_dnsmasq
+from vibedpn.engine.learned import LEARNED_FILE, LearnedError, LearnedStore
 from vibedpn.engine.resolver import (
     UPSTREAM_TIMEOUT_SECONDS,
     Resolver,
@@ -143,7 +150,7 @@ def main() -> None:
             sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
             raise SystemExit(os.EX_CONFIG) from None
     watchers = UplinkWatchers(uplinks)
-    box_state, resolver = _box_state(config, config_path, watchers)
+    box_state, resolver, smart = _box_state(config, config_path, watchers, secrets_dir, data_dir)
     consumer = ConsumerStatus()
     application = create_app(
         config,
@@ -152,6 +159,7 @@ def main() -> None:
         state=box_state,
         watchers=watchers,
         consumer=consumer,
+        smart=smart,
     )
     run_servers(
         config,
@@ -161,6 +169,7 @@ def main() -> None:
         extra=[
             *_consumer_task(config, box_state, consumer, secrets_dir),
             *([partial(serve_resolver, resolver)] if resolver is not None else []),
+            *([partial(watch_querylog, smart)] if smart is not None else []),
         ],
     )
 
@@ -236,9 +245,38 @@ def _apply_with_resolver(resolver: Resolver | None) -> Callable[[Config], list[U
 
 
 def _box_state(
-    config: Config, config_path: Path, watchers: UplinkWatchers
-) -> tuple[BoxState, Resolver | None]:
-    """The live configuration, with the resolver of smart refilled after every router apply."""
+    config: Config,
+    config_path: Path,
+    watchers: UplinkWatchers,
+    secrets_dir: Path,
+    data_dir: Path,
+) -> tuple[BoxState, Resolver | None, SmartLoop | None]:
+    """The live configuration, with the resolver of smart refilled after every router apply, and
+    the DNS journal with its learner."""
     resolver = _resolver(config)
     state = BoxState(config, config_path, apply=_apply_with_resolver(resolver), watchers=watchers)
-    return state, resolver
+    return state, resolver, _smart_loop(config, state, resolver, secrets_dir, data_dir)
+
+
+def _smart_loop(
+    config: Config,
+    box_state: BoxState,
+    resolver: Resolver | None,
+    secrets_dir: Path,
+    data_dir: Path,
+) -> SmartLoop | None:
+    """The DNS journal and the learner of routing.mode smart, on a box with AdGuard."""
+    if resolver is None:
+        return None
+    try:
+        store = LearnedStore(data_dir / LEARNED_FILE)
+    except LearnedError as exc:
+        sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
+        raise SystemExit(os.EX_CONFIG) from None
+    return SmartLoop(
+        lambda: box_state.config,
+        resolver,
+        store,
+        DnsJournal(),
+        querylog_fetcher(config, secrets_dir),
+    )

@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 from enum import StrEnum
+from functools import partial
 from pathlib import Path
 from typing import Annotated, TypeVar
 
@@ -24,7 +25,7 @@ from vibedpn.api.client import (
     StatsUnavailableError,
     fetch_provider_stats,
 )
-from vibedpn.api.models import DomainRuleUpdate, PeerFile
+from vibedpn.api.models import DomainRuleUpdate, JournalEntryView, PeerFile
 from vibedpn.atomic import write_private
 from vibedpn.bootstrap import (
     CONFIG_FILE,
@@ -812,6 +813,50 @@ rule_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(rule_app, name="rule")
+dns_app = typer.Typer(
+    help="The DNS journal of the LAN devices (the sniffer).", no_args_is_help=True
+)
+app.add_typer(dns_app, name="dns")
+WATCH_SECONDS = 1.0
+
+
+def journal_line(entry: JournalEntryView) -> str:
+    stamp = time.strftime("%H:%M:%S", time.localtime(entry.time))
+    via = entry.channel.removeprefix("smart_") if entry.channel != "direct" else "direct"
+    note = f"  learned: follows {entry.learned_from}" if entry.learned_from else ""
+    cached = " cached" if entry.cached else ""
+    return f"{stamp}  {entry.qtype:<5} {entry.name}  -> {via}{cached}{note}"
+
+
+@dns_app.command("watch")
+def dns_watch(
+    device: Annotated[str, typer.Argument(help="The device: its IPv4 address or its MAC.")],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Show what a device asks, live, and which channel each name takes; Ctrl+C stops."""
+    config = _lan_box(box_dir)
+    client = device
+    if ":" in device:
+        devices = _core_call(lambda: core_api.list_devices(config.api.port))
+        found = next(
+            (item for item in devices if item.mac and item.mac.lower() == device.lower()), None
+        )
+        if found is None or found.ip is None:
+            raise _fail(f"no LAN device with MAC {device} and an address")
+        client = str(found.ip)
+    typer.echo(f"DNS of {client} (Ctrl+C to stop)")
+    since = 0.0
+    try:
+        while True:
+            # the cursor is fixed per round: partial binds it now, not when called
+            batch = _core_call(partial(core_api.journal, config.api.port, client, since))
+            for entry in batch:
+                typer.echo(journal_line(entry))
+                since = max(since, entry.time)
+            time.sleep(WATCH_SECONDS)
+    except KeyboardInterrupt:
+        typer.echo("")
+
 
 PeerName = Annotated[
     str, typer.Argument(help="Peer name: 1-32 lowercase letters, digits and hyphens.")
@@ -938,6 +983,28 @@ def _lan_box(box_dir: Path) -> Config:
 
 
 DeviceId = Annotated[str, typer.Argument(help="The device: its MAC, or its IPv4 address.")]
+
+
+@rule_app.command("learned")
+def rule_learned(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """CDNs that follow a site: learned from the DNS of the devices, or from CNAME chains."""
+    config = _lan_box(box_dir)
+    names = _core_call(lambda: core_api.learned_names(config.api.port))
+    if not names:
+        typer.echo("nothing learned yet")
+    for item in names:
+        typer.echo(f"{item.name}  follows {item.parent}  ({item.source}, seen {item.hits}x)")
+
+
+@rule_app.command("forget")
+def rule_forget(
+    name: Annotated[str, typer.Argument(help="A learned CDN name.")],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Forget a learned CDN: it goes direct again until it is learned anew."""
+    config = _lan_box(box_dir)
+    _core_call(lambda: core_api.forget_learned(config.api.port, name))
+    typer.echo(f"{name}: forgotten, goes direct")
 
 
 @rule_app.command("list")
