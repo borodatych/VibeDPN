@@ -24,6 +24,14 @@ TTL ответа задаёт резолвер ядра, таймаут элем
 Ответ — `data` (записи) и `oldest` (время самой старой записи страницы, для следующего курсора).
 Запись: `client`, `client_info`, `time` (начало обработки), `question` (`name`, `type`, `class`), `answer` (записи с `value`, `type`, `ttl`), `cached`, `upstream`, `elapsedMs`, `reason`.
 
+## [провайдер] Запись журнала запросов как она есть
+
+**Суть (исполнением, v0.107.79, запросы с `127.0.0.21` и `127.0.0.22`, ответ сохранён в `core/tests/fixtures/adguard_querylog_v0_107_79.json`, 2026-09-14):**
+`GET /control/querylog?limit=4` отдаёт записи **от новых к старым**.
+`time` — строка RFC 3339 в UTC с наносекундами: `2026-09-14T07:53:55.818445813Z`.
+Имя и тип — в `question` (`{"class":"IN","name":"www.example.com","type":"AAAA"}`); `client` — адрес устройства; `cached: true` у ответа из кэша; `upstream: "1.1.1.1:53"`; `status: "NOERROR"`, `reason: "NotFilteredNotFound"`.
+У ответа без записей (пустой AAAA) поля `answer` в записи **нет вовсе**; иначе `answer` — список `{"type":"A","value":"104.20.23.154","ttl":68}`.
+
 ## [провайдер] dnspython: DoH через httpx
 
 **Суть (документация dnspython 2.8.0, ISC, чистый Python, Python ≥3.10):** `dns.query.https(q, where, timeout, port=443, …, session=httpx.Client, path="/dns-query", post=True, bootstrap_address=…, http_version=…)` — DoH идёт через `httpx`, можно передать готовый клиент и адрес, чтобы не разрешать имя апстрима; `dns.query.udp(q, where, timeout, port=53, …)` — обычный DNS.
