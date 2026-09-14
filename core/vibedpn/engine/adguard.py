@@ -203,7 +203,7 @@ def ensure_adguard(
         previous = state.read_text(encoding="utf-8").strip() or None if state.exists() else None
     except OSError as exc:
         raise AdguardError(f"cannot read {state}: {exc.strerror or exc}") from exc
-    core_password = _read_core_password(secrets_dir)
+    core_password = read_core_password(secrets_dir)
     text = adguard_text(existing, config, password_hash(htpasswd), previous, core_password)
     try:
         conf_dir.mkdir(parents=True, exist_ok=True)
@@ -220,7 +220,7 @@ def ensure_adguard(
     return changed
 
 
-def _read_core_password(secrets_dir: Path) -> str:
+def read_core_password(secrets_dir: Path) -> str:
     path = secrets_dir / ADGUARD_CORE_PASSWORD_FILE
     try:
         password = path.read_text(encoding="utf-8").strip()
@@ -247,7 +247,7 @@ def set_dns_mode(
     network = config.network
     if network is None or not config.dns.enabled:
         return None
-    password = _read_core_password(secrets_dir)
+    password = read_core_password(secrets_dir)
     disabled = config.routing is not None and config.routing.mode is RoutingMode.FULL
     body: dict[str, object] = {"disable_ipv6": disabled}
     if upstreams_changed:

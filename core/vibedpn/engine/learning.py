@@ -89,6 +89,17 @@ class Learner:
         self._learned[name] = parent
         return [Learned(name, parent)]
 
+    def remember(self, name: str, parent: str) -> None:
+        """A name learned before this start of core (from the store)."""
+        self._learned[name] = parent
+
+    def adopt(self, previous: Learner) -> None:
+        """The rules changed: keep the evidence and what was learned, drop parents inside the
+        window (they were matched with the old rules)."""
+        self._seen_after = previous._seen_after
+        self._learned = previous._learned
+        self._generic = previous._generic
+
     def forget(self, name: str) -> None:
         """The owner removed a learned name: it may be learned again only after new evidence."""
         self._learned.pop(name, None)
