@@ -7,7 +7,7 @@ node panel, on the tunnel address (``vibedpn.api.tunnel``).
 
 import os
 import sys
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -21,7 +21,7 @@ from vibedpn.api.smart import DnsJournal, SmartLoop, watch_querylog
 from vibedpn.api.state import BoxState
 from vibedpn.api.tunnel import run_servers
 from vibedpn.api.uplink import UplinkWatchers
-from vibedpn.config import Config, ConfigError, Upstream, load_config
+from vibedpn.config import Config, ConfigError, load_config
 from vibedpn.engine import hostapd
 from vibedpn.engine.adguard import (
     AdguardError,
@@ -48,6 +48,7 @@ from vibedpn.engine.router import (
     apply_firewall,
     apply_router,
     apply_tunnel_egress,
+    uplink_table,
 )
 from vibedpn.engine.wg import WgError, ensure_server
 
@@ -62,13 +63,13 @@ EGRESS_MESSAGES = {
 }
 
 
-def router_message(config: Config, uplinks: list[Upstream]) -> str:
+def router_message(config: Config, uplinks: Sequence[str]) -> str:
     if config.network is None:
         return f"no LAN in this configuration; table {ROUTER_TABLE} removed if it was loaded"
     mode = config.routing.mode.value if config.routing is not None else "off"
     if not uplinks:
         return f"LAN router applied (table {ROUTER_TABLE}): routing.mode {mode}, LAN goes direct"
-    names = ", ".join(uplink.value for uplink in uplinks)
+    names = ", ".join(uplinks)
     return (
         f"LAN router applied (table {ROUTER_TABLE}): routing.mode {mode}, uplinks in use: {names};"
         " their traffic waits for the gateways to answer"
@@ -149,7 +150,7 @@ def main() -> None:
         except DeviceError as exc:
             sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
             raise SystemExit(os.EX_CONFIG) from None
-    watchers = UplinkWatchers(uplinks)
+    watchers = _watchers(config, uplinks)
     box_state, resolver, smart = _box_state(config, config_path, watchers, secrets_dir, data_dir)
     consumer = ConsumerStatus()
     application = create_app(
@@ -232,10 +233,10 @@ def _resolver(config: Config) -> Resolver | None:
     return Resolver(RuleIndex.from_config(config), doh_exchange(list(config.dns.upstreams), client))
 
 
-def _apply_with_resolver(resolver: Resolver | None) -> Callable[[Config], list[Upstream]]:
+def _apply_with_resolver(resolver: Resolver | None) -> Callable[[Config], list[str]]:
     """Applying the router rebuilds its table and empties the channel sets: refill them at once."""
 
-    def apply(config: Config) -> list[Upstream]:
+    def apply(config: Config) -> list[str]:
         uplinks = apply_router(config)
         if resolver is not None:
             resolver.reload(config)
@@ -280,3 +281,9 @@ def _smart_loop(
         DnsJournal(),
         querylog_fetcher(config, secrets_dir),
     )
+
+
+def _watchers(config: Config, uplinks: Sequence[str]) -> UplinkWatchers:
+    """A watcher for every uplink the router just put in use."""
+    table = uplink_table(config)
+    return UplinkWatchers({key: table[key] for key in uplinks})

@@ -321,6 +321,35 @@ def country_uplinks(config: Config) -> dict[str, Uplink]:
     }
 
 
+COUNTRY_KEY_PREFIX = "dpn-"
+COUNTRY_SLOTS = [
+    Uplink(
+        mark=COUNTRY_MARK_BASE + index,
+        table=COUNTRY_TABLE_BASE + index,
+        gateway=f"10.77.0.{COUNTRY_GATEWAY_BASE + index}",
+    )
+    for index in range(MAX_COUNTRIES)
+]
+
+
+def country_key(country: str) -> str:
+    return f"{COUNTRY_KEY_PREFIX}{country.lower()}"
+
+
+def uplink_table(config: Config) -> dict[str, Uplink]:
+    """Every uplink this configuration may use, by key: vps, dpn, and dpn-<cc> per rule country."""
+    table: dict[str, Uplink] = {upstream.value: uplink for upstream, uplink in UPLINKS.items()}
+    table.update({country_key(cc): uplink for cc, uplink in country_uplinks(config).items()})
+    return table
+
+
+def uplink_service(key: str) -> str:
+    """The Compose service of an uplink key."""
+    if key.startswith(COUNTRY_KEY_PREFIX):
+        return f"myst-consumer-{key.removeprefix(COUNTRY_KEY_PREFIX)}"
+    return {Upstream.VPS.value: "wg-client", Upstream.DPN.value: "myst-consumer"}[key]
+
+
 # Device policies that send a device through an uplink.
 POLICY_UPLINKS: dict[DevicePolicy, Upstream] = {
     DevicePolicy.VPS: Upstream.VPS,
@@ -344,25 +373,27 @@ def active_uplink(config: Config) -> Upstream | None:
     return config.routing.default_upstream
 
 
-def used_uplinks(config: Config) -> list[Upstream]:
-    """Every uplink some LAN traffic may take: the one of routing.mode full, the ones device
-    policies name, and in smart the ones domain rules name. Each needs its ip rule, its table with
-    the kill switch and a watcher."""
-    wanted: set[Upstream] = set()
+def used_uplinks(config: Config) -> list[str]:
+    """Every uplink some LAN traffic may take, by key: the one of routing.mode full, the ones device
+    policies name, and in smart the ones domain rules name (a rule country has its own). Each needs
+    its ip rule, its table with the kill switch and a watcher."""
+    wanted: set[str] = set()
     active = active_uplink(config)
     if active is not None:
-        wanted.add(active)
+        wanted.add(active.value)
     if config.routing is not None and config.routing.mode is RoutingMode.SMART:
-        wanted.update(
-            RULE_UPLINKS[rule.via] for rule in config.routing.domains if rule.via in RULE_UPLINKS
-        )
+        for rule in config.routing.domains:
+            if rule.via is DomainVia.DPN and rule.country:
+                wanted.add(country_key(rule.country))
+            elif rule.via in RULE_UPLINKS:
+                wanted.add(RULE_UPLINKS[rule.via].value)
     if config.network is not None:
         wanted.update(
-            POLICY_UPLINKS[device.policy]
+            POLICY_UPLINKS[device.policy].value
             for device in config.devices
             if device.policy in POLICY_UPLINKS
         )
-    return [upstream for upstream in UPLINKS if upstream in wanted]
+    return [key for key in uplink_table(config) if key in wanted]
 
 
 @dataclass(frozen=True)
@@ -401,13 +432,16 @@ class UplinkPolicy:
 
 
 def smart_marks(config: Config) -> list[UplinkPolicy]:
-    """routing.mode smart: the channel sets that carry an uplink mark (until one consumer per
-    country exists, every dpn set takes the mark of the one dpn uplink — decision 18)."""
+    """routing.mode smart: the channel sets that carry an uplink mark; a set of a country takes the
+    mark of that country's own consumer."""
     if config.routing is None or config.routing.mode is not RoutingMode.SMART:
         return []
+    table = uplink_table(config)
     marks = {}
     for rule in config.routing.domains:
-        if rule.via in RULE_UPLINKS:
+        if rule.via is DomainVia.DPN and rule.country:
+            marks[channel_set(rule)] = hex(table[country_key(rule.country)].mark)
+        elif rule.via in RULE_UPLINKS:
             marks[channel_set(rule)] = hex(UPLINKS[RULE_UPLINKS[rule.via]].mark)
     return [UplinkPolicy(name, mark) for name, mark in sorted(marks.items())]
 
@@ -518,37 +552,36 @@ def _rule_selector(entry: dict[str, object]) -> list[str]:
     return selector
 
 
-def plan_rules(
-    listing: str, wanted: Collection[Upstream]
-) -> tuple[list[list[str]], list[Upstream]]:
-    """``(rules to delete, uplinks to add)`` from ``ip -j rule show``: exactly one rule per
-    active uplink at its own priority, nothing at the priorities of the others. Adding comes
-    first and deleting last, so marked traffic always has its rule (see ``apply_router``)."""
+def plan_rules(listing: str, wanted: Collection[Uplink]) -> tuple[list[list[str]], list[Uplink]]:
+    """``(rules to delete, uplinks to add)`` from ``ip -j rule show``: exactly one rule per wanted
+    uplink at its own priority, nothing at the priorities of the others — the fixed uplinks and
+    every country slot, so the rule of a country that left the rules goes too. Adding comes first
+    and deleting last, so marked traffic always has its rule (see ``apply_router``)."""
     try:
         entries = json.loads(listing or "[]")
     except json.JSONDecodeError as exc:
         raise RouterError("ip -j rule show returned no JSON") from exc
+    by_table = {uplink.table: uplink for uplink in wanted}
     delete: list[list[str]] = []
-    add: list[Upstream] = []
-    for upstream, uplink in UPLINKS.items():
-        needed = upstream in wanted
+    add: list[Uplink] = []
+    for table in sorted({uplink.table for uplink in (*UPLINKS.values(), *COUNTRY_SLOTS)}):
+        needed = by_table.get(table)
         kept = False
-        for entry in (item for item in entries if item.get("priority") == uplink.table):
-            exact = entry.get("fwmark") == hex(uplink.mark) and entry.get("table") == str(
-                uplink.table
+        for entry in (item for item in entries if item.get("priority") == table):
+            exact = needed is not None and (
+                entry.get("fwmark") == hex(needed.mark) and entry.get("table") == str(table)
             )
-            if needed and exact and not kept:
+            if exact and not kept:
                 kept = True
             else:
                 delete.append(_rule_selector(entry))
-        if needed and not kept:
-            add.append(upstream)
+        if needed is not None and not kept:
+            add.append(needed)
     return delete, add
 
 
-def add_rules(add: list[Upstream]) -> None:
-    for upstream in add:
-        uplink = UPLINKS[upstream]
+def add_rules(add: list[Uplink]) -> None:
+    for uplink in add:
         _ip(
             [
                 "rule", "add", "fwmark", hex(uplink.mark),
@@ -570,42 +603,41 @@ def gateway_route(uplink: Uplink) -> list[str]:
     return ["default", "via", uplink.gateway, "dev", UPSTREAMS_BRIDGE, "table", str(uplink.table)]
 
 
-def set_gateway_route(upstream: Upstream, alive: bool) -> None:
+def set_gateway_route(uplink: Uplink, alive: bool) -> None:
     """Point the uplink table at its gateway while the container answers, withdraw it when it
     does not: then the last-resort route holds the traffic (``failopen: false``) or, without
     one, the lookup falls through to the main table (``failopen: true``)."""
-    uplink = UPLINKS[upstream]
     if alive:
         _ip(["route", "replace", *gateway_route(uplink)])
     else:
         _ip(["route", "del", *gateway_route(uplink)], missing_ok=True)
 
 
-def apply_router(config: Config) -> list[Upstream]:
-    """Render and apply the LAN router; returns the uplinks in use. The kill switch comes first:
-    the last-resort route exists before any rule steers traffic into its table. The gateway
-    routes themselves are set by the uplink watchers once the gateways answer."""
+def apply_router(config: Config) -> list[str]:
+    """Render and apply the LAN router; returns the keys of the uplinks in use. The kill switch
+    comes first: the last-resort route exists before any rule steers traffic into its table. The
+    gateway routes themselves are set by the uplink watchers once the gateways answer."""
     ruleset = router_ruleset(config)
     if ruleset is None:
         remove_router()
         return []
+    table = uplink_table(config)
     used = used_uplinks(config)
     check_ruleset(ruleset)
-    for upstream, uplink in UPLINKS.items():
-        if upstream not in used:
-            continue
+    for key in used:
         if config.routing is not None and not config.routing.failopen:
-            _ip(["route", "replace", *last_resort_route(uplink)])
+            _ip(["route", "replace", *last_resort_route(table[key])])
         else:
-            _ip(["route", "del", *last_resort_route(uplink)], missing_ok=True)
+            _ip(["route", "del", *last_resort_route(table[key])], missing_ok=True)
     # Never a moment when a mark has no rule: the new rule, then the new marks, and only then the
     # rules of the old marks go. Deleting first would send still-marked traffic to the main table.
-    delete, add = plan_rules(_ip(["-j", "rule", "show"]), used)
+    delete, add = plan_rules(_ip(["-j", "rule", "show"]), [table[key] for key in used])
     add_rules(add)
     apply_ruleset(ruleset)
     delete_rules(delete)
-    for upstream, uplink in UPLINKS.items():
-        if upstream not in used:
+    in_use = {table[key].table for key in used}
+    for uplink in (*UPLINKS.values(), *COUNTRY_SLOTS):
+        if uplink.table not in in_use:
             _ip(["route", "flush", "table", str(uplink.table)], missing_ok=True)
     sync_docker_user(router_docker_user_rules(config), ROUTER_COMMENT)
     return used
@@ -616,7 +648,7 @@ def remove_router() -> None:
     _nft(["-f", "-"], ROUTER_TEARDOWN)
     if find_ip() is not None:
         delete_rules(plan_rules(_ip(["-j", "rule", "show"]), ())[0])
-        for uplink in UPLINKS.values():
+        for uplink in (*UPLINKS.values(), *COUNTRY_SLOTS):
             _ip(["route", "flush", "table", str(uplink.table)], missing_ok=True)
     if find_iptables():
         sync_docker_user([], ROUTER_COMMENT)
@@ -653,31 +685,31 @@ def read_routing(config: Config) -> RoutingFacts:
     if ip is None:
         return RoutingFacts(None, {}, {})
     try:
+        table = uplink_table(config)
         uplinks = used_uplinks(config)
         rules = subprocess.run(
             [ip, "-j", "rule", "show"], check=True, capture_output=True, text=True
         )
-        delete, add = plan_rules(rules.stdout, uplinks)
+        delete, add = plan_rules(rules.stdout, [table[key] for key in uplinks])
     except (OSError, subprocess.CalledProcessError, RouterError):
         return RoutingFacts(None, {}, {})
     gateways: dict[str, bool | None] = {}
     last_resorts: dict[str, bool | None] = {}
-    for uplink in uplinks:
+    for key in uplinks:
+        uplink = table[key]
         try:
             routes = subprocess.run(
-                [ip, "-j", "route", "show", "table", str(UPLINKS[uplink].table)],
+                [ip, "-j", "route", "show", "table", str(uplink.table)],
                 check=True,
                 capture_output=True,
                 text=True,
             )
             entries = json.loads(routes.stdout or "[]")
         except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
-            gateways[uplink.value] = last_resorts[uplink.value] = None
+            gateways[key] = last_resorts[key] = None
             continue
-        gateways[uplink.value] = any(
-            entry.get("gateway") == UPLINKS[uplink].gateway for entry in entries
-        )
-        last_resorts[uplink.value] = any(
+        gateways[key] = any(entry.get("gateway") == uplink.gateway for entry in entries)
+        last_resorts[key] = any(
             entry.get("type") == "unreachable" and entry.get("metric") == LAST_RESORT_METRIC
             for entry in entries
         )

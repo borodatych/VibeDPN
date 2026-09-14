@@ -131,21 +131,25 @@ def test_no_router_without_a_lan_and_smart_has_no_mode_mark() -> None:
 
 def test_rule_plan_from_a_real_listing() -> None:
     vps_rule = ["priority", "7710", "fwmark", "0x10", "table", "7710"]
-    assert plan_rules(RULES_WITH_VPS, [Upstream.VPS]) == ([], [])
-    assert plan_rules(RULES_EMPTY, [Upstream.VPS]) == ([], [Upstream.VPS])
+    vps, dpn = UPLINKS[Upstream.VPS], UPLINKS[Upstream.DPN]
+    assert plan_rules(RULES_WITH_VPS, [vps]) == ([], [])
+    assert plan_rules(RULES_EMPTY, [vps]) == ([], [vps])
     assert plan_rules(RULES_WITH_VPS, []) == ([vps_rule], [])
-    assert plan_rules(RULES_WITH_VPS, [Upstream.DPN]) == ([vps_rule], [Upstream.DPN])
-    assert plan_rules(RULES_WITH_VPS, [Upstream.VPS, Upstream.DPN]) == ([], [Upstream.DPN])
+    assert plan_rules(RULES_WITH_VPS, [dpn]) == ([vps_rule], [dpn])
+    assert plan_rules(RULES_WITH_VPS, [vps, dpn]) == ([], [dpn])
     # A foreign rule at our priority goes by its own selector; the exact one of ours stays.
     foreign = RULES_WITH_VPS.replace(
         '{"priority":32766', '{"priority":7710,"src":"all","table":"main"},{"priority":32766'
     )
-    assert plan_rules(foreign, [Upstream.VPS]) == ([["priority", "7710", "table", "main"]], [])
+    assert plan_rules(foreign, [UPLINKS[Upstream.VPS]]) == (
+        [["priority", "7710", "table", "main"]],
+        [],
+    )
     doubled = RULES_WITH_VPS.replace(
         '{"priority":32766',
         '{"priority":7710,"src":"all","fwmark":"0x10","table":"7710"},{"priority":32766',
     )
-    assert plan_rules(doubled, [Upstream.VPS]) == ([vps_rule], [])
+    assert plan_rules(doubled, [UPLINKS[Upstream.VPS]]) == ([vps_rule], [])
 
 
 def as_listing(*groups: list[list[str]]) -> str:
@@ -245,8 +249,8 @@ def test_mode_off_and_a_vps_remove_every_rule(monkeypatch: pytest.MonkeyPatch) -
 
 def test_gateway_route_follows_the_watcher(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = fake_host(monkeypatch)
-    set_gateway_route(Upstream.VPS, alive=True)
-    set_gateway_route(Upstream.VPS, alive=False)  # missing already: not an error
+    set_gateway_route(UPLINKS[Upstream.VPS], alive=True)
+    set_gateway_route(UPLINKS[Upstream.VPS], alive=False)  # missing already: not an error
     assert [" ".join(argv) for argv in calls] == [
         "ip route replace default via 10.77.0.10 dev vibedpn0 table 7710",
         "ip route del default via 10.77.0.10 dev vibedpn0 table 7710",
@@ -301,7 +305,9 @@ def test_two_uplinks_both_get_their_kill_switch_and_rule(monkeypatch: pytest.Mon
         )
         rule = steps.index(f"ip rule add fwmark {mark} table {table} priority {table}")
         assert unreachable < rule < marks
-    assert not any(step.startswith("ip route flush") for step in steps)
+    # the tables in use are never flushed; the free country slots are, so a gone country leaves none
+    assert not {"ip route flush table 7710", "ip route flush table 7720"} & set(steps)
+    assert "ip route flush table 7740" in steps
 
 
 def test_the_tunnel_of_the_vps_is_closed_to_the_lan_unless_opened() -> None:
@@ -364,3 +370,35 @@ def test_smart_marks_rule_sets_tunnels_first_and_uses_their_uplinks() -> None:
     assert "ip daddr @smart_dpn_any meta mark set 0x20 return" in text
     assert "@smart_direct meta mark" not in text
     assert used_uplinks(config) == [Upstream.VPS, Upstream.DPN]
+
+
+def test_a_country_rule_gets_its_own_uplink_and_a_gone_country_loses_its_rule() -> None:
+    raw: dict[str, Any] = {
+        "version": 1,
+        "role": "home",
+        "network": {
+            "lan_interface": "eth0",
+            "lan_subnet": "192.168.1.0/24",
+            "lan_address": "192.168.1.50",
+        },
+        "routing": {
+            "mode": "smart",
+            "default_upstream": "dpn",
+            "domains": [
+                {"domain": "zdf.de", "via": "dpn", "country": "DE"},
+                {"domain": "kinopoisk.ru", "via": "dpn"},
+            ],
+        },
+        "upstreams": {"dpn": {"enabled": True, "country": "DE"}},
+        "provider": {"enabled": True},
+    }
+    config = Config.model_validate(raw)
+    assert used_uplinks(config) == ["dpn", "dpn-de"]
+    ruleset = router_ruleset(config) or ""
+    assert "ip daddr @smart_dpn_de meta mark set 0x40 return" in ruleset
+    assert "ip daddr @smart_dpn_any meta mark set 0x20 return" in ruleset
+    leftover = '[{"priority":7740,"src":"all","fwmark":"0x40","table":"7740"}]'
+    assert plan_rules(leftover, [UPLINKS[Upstream.DPN]]) == (
+        [["priority", "7740", "fwmark", "0x40", "table", "7740"]],
+        [UPLINKS[Upstream.DPN]],
+    )

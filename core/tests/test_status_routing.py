@@ -18,7 +18,7 @@ from vibedpn.config import Config, RoutingMode, Upstream, load_config
 from vibedpn.engine.adguard import CORE_USER, AdguardError, adguard_text, set_dns_mode
 from vibedpn.engine.consumer import CountryOffer
 from vibedpn.engine.myst import MystError
-from vibedpn.engine.router import RouterError, RoutingFacts
+from vibedpn.engine.router import UPLINKS, RouterError, RoutingFacts, Uplink
 
 from .conftest import client_config, home_config, vps_config
 
@@ -171,7 +171,8 @@ def test_the_watcher_reports_every_round() -> None:
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(
             watch_uplink(
-                Upstream.VPS,
+                "vps",
+                UPLINKS[Upstream.VPS],
                 probe=probe,
                 apply=lambda _upstream, _alive: None,
                 sleep=sleep,
@@ -183,22 +184,21 @@ def test_the_watcher_reports_every_round() -> None:
 
 
 def test_watchers_keep_the_state_of_the_uplinks_in_use() -> None:
-    async def watch(upstream: Upstream, report: object) -> None:
+    async def watch(key: str, _uplink: Uplink, report: object) -> None:
         assert callable(report)
-        report(UplinkState(upstream is Upstream.VPS, 1.0))
+        report(UplinkState(key == "vps", 1.0))
         await asyncio.Event().wait()
 
     async def scenario() -> None:
-        watchers = UplinkWatchers([Upstream.VPS, Upstream.DPN], watch=watch)
+        watchers = UplinkWatchers(
+            {"vps": UPLINKS[Upstream.VPS], "dpn": UPLINKS[Upstream.DPN]}, watch=watch
+        )
         runner = asyncio.ensure_future(watchers.run())
         await asyncio.sleep(0.01)
-        assert {k: v.alive for k, v in watchers.states().items()} == {
-            Upstream.VPS: True,
-            Upstream.DPN: False,
-        }
-        watchers.sync([Upstream.VPS])
+        assert {k: v.alive for k, v in watchers.states().items()} == {"vps": True, "dpn": False}
+        watchers.sync({"vps": UPLINKS[Upstream.VPS]})
         await asyncio.sleep(0.01)
-        assert list(watchers.states()) == [Upstream.VPS]
+        assert list(watchers.states()) == ["vps"]
         runner.cancel()
         await asyncio.gather(runner, return_exceptions=True)
 

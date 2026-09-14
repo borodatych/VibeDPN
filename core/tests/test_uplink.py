@@ -8,7 +8,7 @@ import pytest
 from vibedpn.api.uplink import watch_uplink
 from vibedpn.config import Upstream
 from vibedpn.engine import probe
-from vibedpn.engine.router import RouterError
+from vibedpn.engine.router import UPLINKS, RouterError, Uplink
 
 
 def test_echo_request_carries_a_valid_checksum() -> None:
@@ -45,11 +45,11 @@ def run_watcher(answers: list[bool | OSError], failing_applies: int = 0) -> list
             raise answer
         return answer
 
-    def fake_apply(upstream: Upstream, alive: bool) -> None:
+    def fake_apply(uplink: Uplink, alive: bool) -> None:
         if failures[0]:
             failures[0] -= 1
             raise RouterError("ip route replace failed")
-        applied.append((upstream.value, alive))
+        applied.append(("vps" if uplink == UPLINKS[Upstream.VPS] else uplink.gateway, alive))
 
     async def fake_sleep(_seconds: float) -> None:
         if not remaining:
@@ -57,7 +57,9 @@ def run_watcher(answers: list[bool | OSError], failing_applies: int = 0) -> list
 
     with pytest.raises(StopWatcherError):
         asyncio.run(
-            watch_uplink(Upstream.VPS, probe=fake_probe, apply=fake_apply, sleep=fake_sleep)
+            watch_uplink(
+                "vps", UPLINKS[Upstream.VPS], probe=fake_probe, apply=fake_apply, sleep=fake_sleep
+            )
         )
     return applied
 

@@ -12,16 +12,16 @@ the previous file is put back and applied again, so the file and the host never 
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from pathlib import Path
 
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.atomic import write_like
-from vibedpn.config import Config, Upstream
-from vibedpn.engine.router import RouterError, apply_router
+from vibedpn.config import Config
+from vibedpn.engine.router import RouterError, apply_router, uplink_table
 
-Apply = Callable[[Config], list[Upstream]]
+Apply = Callable[[Config], Sequence[str]]  # the keys of the uplinks in use
 Change = Callable[[Path], tuple[Config, bool]]
 
 
@@ -82,5 +82,6 @@ class BoxState:
             if self._saved is not None:
                 self._saved = written
             if self._watchers is not None:
-                self._watchers.sync(uplinks)
+                table = uplink_table(config)
+                self._watchers.sync({key: table[key] for key in uplinks})
             return config

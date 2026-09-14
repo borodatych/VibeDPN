@@ -12,18 +12,17 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
-from vibedpn.config import Upstream
 from vibedpn.engine.probe import ping
-from vibedpn.engine.router import UPLINKS, RouterError, set_gateway_route
+from vibedpn.engine.router import RouterError, Uplink, set_gateway_route
 
 UPLINK_CHECK_SECONDS = 5.0
 PROBE_TIMEOUT_SECONDS = 1.0
 
 Probe = Callable[[str, float], bool]
-Apply = Callable[[Upstream, bool], None]
+Apply = Callable[[Uplink, bool], None]
 Sleep = Callable[[float], Awaitable[None]]
 
 
@@ -37,7 +36,7 @@ class UplinkState:
 
 
 Report = Callable[[UplinkState], None]
-Watch = Callable[[Upstream, Report], Awaitable[None]]
+Watch = Callable[[str, Uplink, Report], Awaitable[None]]
 
 
 def _ignore(_state: UplinkState) -> None:
@@ -49,7 +48,8 @@ def _log(message: str) -> None:
 
 
 async def watch_uplink(
-    upstream: Upstream,
+    upstream: str,
+    uplink: Uplink,
     *,
     probe: Probe = ping,
     apply: Apply = set_gateway_route,
@@ -60,7 +60,7 @@ async def watch_uplink(
     """Probe the gateway forever and set the route on every round: ``ip route replace`` is
     idempotent, so a route removed behind the watcher's back (a recreated bridge, a manual flush)
     comes back on the next round. Only changes of state and new errors are logged."""
-    gateway = UPLINKS[upstream].gateway
+    gateway = uplink.gateway
     logged_state: bool | None = None
     logged_error = ""
     while True:
@@ -76,7 +76,7 @@ async def watch_uplink(
                 logged_error = error
             alive = False
         try:
-            await asyncio.to_thread(apply, upstream, alive)
+            await asyncio.to_thread(apply, uplink, alive)
         except RouterError as exc:
             error = f"cannot update the route of uplink {upstream}: {exc}"
             if error != logged_error:
@@ -91,29 +91,22 @@ async def watch_uplink(
         await sleep(check_seconds)
 
 
-def _watch_with_report(upstream: Upstream, report: Report) -> Awaitable[None]:
-    return watch_uplink(upstream, report=report)
-
-
 class UplinkWatchers:
-    """One watcher per uplink in use; the set follows device policy changes without a restart.
+    """One watcher per uplink in use, by key; the set follows policy and rule changes without a
+    restart, and a key whose uplink changed (countries renumbered) gets a fresh watcher.
 
     ``run`` owns the tasks on the event loop; ``sync`` may be called from a request thread and
     hands the new set over to the loop."""
 
-    def __init__(
-        self,
-        uplinks: list[Upstream],
-        watch: Watch | None = None,
-    ) -> None:
-        self._wanted = list(uplinks)
+    def __init__(self, uplinks: Mapping[str, Uplink], watch: Watch | None = None) -> None:
+        self._wanted = dict(uplinks)
         self._watch: Watch = watch or (
-            lambda upstream, report: watch_uplink(upstream, report=report)
+            lambda key, uplink, report: watch_uplink(key, uplink, report=report)
         )
-        self._tasks: dict[Upstream, asyncio.Task[None]] = {}
+        self._tasks: dict[str, tuple[Uplink, asyncio.Task[None]]] = {}
         # Written by the watchers on the loop, read by request threads; each value is replaced
         # whole, never mutated.
-        self._states: dict[Upstream, UplinkState] = {}
+        self._states: dict[str, UplinkState] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
     async def run(self) -> None:
@@ -122,37 +115,36 @@ class UplinkWatchers:
         try:
             await asyncio.Event().wait()
         finally:
-            tasks = list(self._tasks.values())
+            tasks = [task for _uplink, task in self._tasks.values()]
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    def _apply(self, uplinks: list[Upstream]) -> None:
-        for upstream in list(self._tasks):
-            if upstream not in uplinks:
-                self._tasks.pop(upstream).cancel()
-                self._states.pop(upstream, None)
-        for upstream in uplinks:
-            if upstream not in self._tasks:
-                self._tasks[upstream] = asyncio.ensure_future(
-                    self._watch(upstream, self._reporter(upstream))
-                )
+    def _apply(self, uplinks: Mapping[str, Uplink]) -> None:
+        for key in list(self._tasks):
+            if uplinks.get(key) != self._tasks[key][0]:
+                self._tasks.pop(key)[1].cancel()
+                self._states.pop(key, None)
+        for key, uplink in uplinks.items():
+            if key not in self._tasks:
+                task = asyncio.ensure_future(self._watch(key, uplink, self._reporter(key)))
+                self._tasks[key] = (uplink, task)
 
-    def _reporter(self, upstream: Upstream) -> Report:
+    def _reporter(self, key: str) -> Report:
         def report(state: UplinkState) -> None:
-            if upstream in self._tasks:
-                self._states[upstream] = state
+            if key in self._tasks:
+                self._states[key] = state
 
         return report
 
-    def sync(self, uplinks: list[Upstream]) -> None:
-        self._wanted = list(uplinks)
+    def sync(self, uplinks: Mapping[str, Uplink]) -> None:
+        self._wanted = dict(uplinks)
         if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._apply, list(uplinks))
+            self._loop.call_soon_threadsafe(self._apply, dict(uplinks))
 
-    def watched(self) -> list[Upstream]:
+    def watched(self) -> list[str]:
         return list(self._tasks)
 
-    def states(self) -> dict[Upstream, UplinkState]:
+    def states(self) -> dict[str, UplinkState]:
         """The last round of every watched uplink; an uplink not probed yet is absent."""
         return dict(self._states)

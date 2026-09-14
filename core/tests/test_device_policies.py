@@ -26,7 +26,7 @@ from vibedpn.config_edit import (
     unset_device,
 )
 from vibedpn.engine.devices import DeviceStore, Neighbour
-from vibedpn.engine.router import RouterError
+from vibedpn.engine.router import UPLINKS, RouterError, Uplink
 
 from .conftest import client_config
 
@@ -95,32 +95,37 @@ def test_a_policy_for_a_disabled_uplink_is_refused_unwritten(tmp_path: Path) -> 
 
 
 def test_watchers_follow_the_uplinks_in_use() -> None:
-    started: list[Upstream] = []
-    cancelled: list[Upstream] = []
+    started: list[str] = []
+    cancelled: list[str] = []
+    vps, dpn = UPLINKS[Upstream.VPS], UPLINKS[Upstream.DPN]
 
-    async def watch(upstream: Upstream, _report: object) -> None:
-        started.append(upstream)
+    async def watch(key: str, _uplink: Uplink, _report: object) -> None:
+        started.append(key)
         try:
             await asyncio.Event().wait()
         finally:
-            cancelled.append(upstream)
+            cancelled.append(key)
 
     async def scenario() -> None:
-        watchers = UplinkWatchers([Upstream.VPS], watch=watch)
+        watchers = UplinkWatchers({"vps": vps}, watch=watch)
         runner = asyncio.ensure_future(watchers.run())
         await asyncio.sleep(0)
-        watchers.sync([Upstream.VPS, Upstream.DPN])
+        watchers.sync({"vps": vps, "dpn": dpn})
         await asyncio.sleep(0.01)
-        assert watchers.watched() == [Upstream.VPS, Upstream.DPN]
-        watchers.sync([Upstream.DPN])
+        assert watchers.watched() == ["vps", "dpn"]
+        watchers.sync({"dpn": dpn})
         await asyncio.sleep(0.01)
-        assert watchers.watched() == [Upstream.DPN]
+        assert watchers.watched() == ["dpn"]
+        # a renumbered country: the same key with another uplink gets a fresh watcher
+        watchers.sync({"dpn": vps})
+        await asyncio.sleep(0.01)
+        assert watchers.watched() == ["dpn"]
         runner.cancel()
         await asyncio.gather(runner, return_exceptions=True)
 
     asyncio.run(scenario())
-    assert started == [Upstream.VPS, Upstream.DPN]
-    assert cancelled == [Upstream.VPS, Upstream.DPN]
+    assert started == ["vps", "dpn", "dpn"]
+    assert cancelled == ["vps", "dpn", "dpn"]
 
 
 class FakeWatchers:

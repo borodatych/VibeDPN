@@ -67,7 +67,6 @@ from vibedpn.engine.router import (
     NFT_TABLE,
     ROUTER_COMMENT,
     ROUTER_TABLE,
-    UPLINKS,
     UPSTREAMS_BRIDGE,
     RouterError,
     docker_user_chain,
@@ -77,6 +76,8 @@ from vibedpn.engine.router import (
     plan_docker_user,
     read_routing,
     router_docker_user_rules,
+    uplink_service,
+    uplink_table,
     used_uplinks,
 )
 from vibedpn.engine.wg import SERVER_CONF_FILE, SERVER_KEY_FILE, server_address
@@ -537,10 +538,11 @@ def _router_result(config: Config, facts: DoctorFacts) -> CheckResult:  # noqa: 
             "router", Verdict.OK, f"routing.mode {mode}: LAN goes direct through the box"
         )
     failopen = config.routing is not None and config.routing.failopen
+    known = uplink_table(config)
     for uplink in uplinks:
-        table = UPLINKS[uplink].table
-        gateway = facts.uplink_routes.get(uplink.value)
-        last_resort = facts.last_resort_routes.get(uplink.value)
+        table = known[uplink].table
+        gateway = facts.uplink_routes.get(uplink)
+        last_resort = facts.last_resort_routes.get(uplink)
         if gateway is None or (not failopen and last_resort is None):
             return CheckResult("router", Verdict.WARN, f"cannot read routing table {table}", hint)
         if not failopen and not last_resort:
@@ -560,10 +562,10 @@ def _router_result(config: Config, facts: DoctorFacts) -> CheckResult:  # noqa: 
             return CheckResult(
                 "router",
                 Verdict.WARN,
-                f"uplink {uplink} gateway {UPLINKS[uplink].gateway} does not answer; {fate}",
-                f"vibedpn logs {UPLINK_SERVICES[uplink]}",
+                f"uplink {uplink} gateway {known[uplink].gateway} does not answer; {fate}",
+                f"vibedpn logs {uplink_service(uplink)}",
             )
-    in_use = ", ".join(f"{uplink} ({UPLINKS[uplink].gateway})" for uplink in uplinks)
+    in_use = ", ".join(f"{uplink} ({known[uplink].gateway})" for uplink in uplinks)
     return CheckResult("router", Verdict.OK, f"routing.mode {mode}, uplinks in use: {in_use}")
 
 
