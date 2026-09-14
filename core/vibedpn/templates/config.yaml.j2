@@ -66,15 +66,40 @@ network:
 
 # Политика для трафика LAN.
 # mode: off — всё напрямую; full — всё через default_upstream;
-#       smart — через аплинк только smart_domains и устройства с политикой.
-# default_upstream: vps | dpn — куда идёт трафик в full/smart; у роли home есть только dpn.
+#       smart — по правилам domains, остальное напрямую; устройства с политикой — как в full.
+# default_upstream: vps | dpn — куда идёт трафик в full; у роли home есть только dpn.
 # failopen: false — упал аплинк, трафик стоит (kill-switch); true — уходит напрямую, осознанно.
-# smart_domains: доменные суффиксы для режима smart, например [netflix.com, bbc.co.uk].
+# domains: правила режима smart. Домен покрывает поддомены; via: vps | dpn | direct;
+#   country — страна выхода для dpn; learn — CDN, которые сайт вызывает, идут за ним сами;
+#   also — CDN, закреплённые за сайтом вручную.
 routing:
   mode: {{ config.routing.mode.value }}
   default_upstream: {{ config.routing.default_upstream.value }}
   failopen: {{ config.routing.failopen | tojson }}
-  smart_domains: {{ config.routing.smart_domains | tojson }}
+{% if config.routing.domains %}
+  domains:
+{% for rule in config.routing.domains %}
+    - domain: {{ rule.domain }}
+      via: {{ rule.via.value }}
+{% if rule.country %}
+      country: {{ rule.country }}
+{% endif %}
+{% if not rule.learn %}
+      learn: false
+{% endif %}
+{% if rule.also %}
+      also: {{ rule.also | tojson }}
+{% endif %}
+{% endfor %}
+{% else %}
+  domains: []
+  # domains:
+  #   - domain: kinopoisk.ru
+  #     via: dpn
+  #     country: DE
+  #   - domain: bank.example
+  #     via: direct
+{% endif %}
 
 # Устройства LAN с собственной политикой поверх routing.mode: vps | dpn | bypass | block.
 # Идентификация по MAC, IP — запасной вариант.

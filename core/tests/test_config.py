@@ -195,17 +195,47 @@ def test_lan_subnet_must_be_a_network(home: dict[str, Any]) -> None:
     assert "lan_subnet" in errors_of(home)
 
 
-def test_smart_domains_are_normalized(home: dict[str, Any]) -> None:
-    home["routing"]["smart_domains"] = [".Netflix.com.", "bbc.co.uk"]
-    assert Config.model_validate(home).routing is not None
-    assert Config.model_validate(home).routing.smart_domains == ["netflix.com", "bbc.co.uk"]  # type: ignore[union-attr]
+def test_domain_rules_are_normalized(home: dict[str, Any]) -> None:
+    home["routing"]["domains"] = [
+        {"domain": ".Kinopoisk.RU.", "via": "dpn", "country": "de", "also": ["STRM.yandex.net"]},
+        {"domain": "bank.example", "via": "direct", "learn": False},
+    ]
+    routing = Config.model_validate(home).routing
+    assert routing is not None
+    first, second = routing.domains
+    assert (first.domain, first.country, first.also, first.learn) == (
+        "kinopoisk.ru",
+        "DE",
+        ["strm.yandex.net"],
+        True,
+    )
+    assert second.names() == ["bank.example"] and second.learn is False
 
 
-def test_smart_domains_reject_garbage_and_duplicates(home: dict[str, Any]) -> None:
-    home["routing"]["smart_domains"] = ["not a domain"]
+def test_domain_rules_reject_garbage_twins_and_stray_countries(home: dict[str, Any]) -> None:
+    home["routing"]["domains"] = [{"domain": "not a domain", "via": "dpn"}]
     assert "is not a domain name" in errors_of(home)
-    home["routing"]["smart_domains"] = ["a.com", "A.com"]
-    assert "has duplicates: a.com" in errors_of(home)
+    home["routing"]["domains"] = [
+        {"domain": "a.com", "via": "dpn"},
+        {"domain": "b.com", "via": "direct", "also": ["A.com"]},
+    ]
+    assert "names a domain twice: a.com" in errors_of(home)
+    home["routing"]["domains"] = [{"domain": "a.com", "via": "direct", "country": "DE"}]
+    assert "only chosen for via dpn" in errors_of(home)
+    home["routing"]["domains"] = [{"domain": "a.com", "via": "vps"}]
+    assert "a.com goes via vps but that uplink is not enabled" in errors_of(home)
+
+
+def test_old_smart_domains_become_rules_through_the_default_upstream(home: dict[str, Any]) -> None:
+    home["routing"]["smart_domains"] = ["netflix.com", "bbc.co.uk"]
+    routing = Config.model_validate(home).routing
+    assert routing is not None
+    assert [(rule.domain, rule.via.value) for rule in routing.domains] == [
+        ("netflix.com", "dpn"),
+        ("bbc.co.uk", "dpn"),
+    ]
+    home["routing"]["domains"] = []
+    assert "smart_domains is the old form" in errors_of(home)
 
 
 def test_country_is_upper_cased(home: dict[str, Any]) -> None:

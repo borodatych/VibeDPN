@@ -43,3 +43,17 @@ https://help.mystnodes.com/en/articles/3777670-running-a-mystnodes-as-docker-ima
 https://github.com/mysteriumnetwork/node/blob/1.39.5/tequilapi/endpoints/pilvytis.go ,
 https://help.mystnodes.com/en/articles/8004186-adding-myst-token-to-metamask-on-the-polygon-mainnet ,
 https://help.mystnodes.com/en/articles/8004190-where-to-buy-polygon-myst .
+
+## [провайдер] Несколько соединений в одной ноде — только прокси-режимом
+
+**Контекст:** Stage 10, несколько стран Mysterium одновременно (решение 11), 2026-09-14.
+
+**Суть (исходники node 1.39.5, тег `1.39.5`, коммит `c45527af`):**
+TequilAPI работает через `connection.MultiManager` (`core/connection/multi.go`): отдельный менеджер соединения на каждый `connect_options.proxy_port`, соединение выбирается параметром `id`.
+Какой клиент WireGuard создать, решает глобальный флаг ноды, а не запрос (`services/wireguard/endpoint/wg_client.go`): `--proxymode` → `proxyclient`, иначе клиент ядра, если он поддерживается.
+`proxyclient` поднимает WireGuard в netstack — стеке TCP/IP внутри процесса, без интерфейса в ядре — и отдаёт его наружу HTTP-сервером (`net/http`, `newProxyHandler`) на `:<proxy_port>` (адрес задаёт `FlagProxyBindAddress`).
+
+**Как применять:** маршрутизировать трафик LAN через такое соединение, как через туннель, нельзя — только HTTP-прокси, и UDP (QUIC видео) через него не пройдёт.
+Страна на соединение в режиме туннеля ядра — это отдельная нода, то есть свой контейнер consumer со своим сетевым пространством.
+
+**Источники:** https://github.com/mysteriumnetwork/node/blob/1.39.5/core/connection/multi.go ; https://github.com/mysteriumnetwork/node/blob/1.39.5/services/wireguard/endpoint/wg_client.go ; https://github.com/mysteriumnetwork/node/blob/1.39.5/services/wireguard/endpoint/proxyclient/client.go ; https://github.com/mysteriumnetwork/node/blob/1.39.5/tequilapi/endpoints/connection.go

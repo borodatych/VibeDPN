@@ -141,6 +141,16 @@ def check_endpoint(value: str) -> str:
     return value
 
 
+def normalize_country(value: object) -> str:
+    """Upper-case an ISO 3166-1 alpha-2 code; raise ``ValueError`` if it is not one."""
+    if not isinstance(value, str):
+        raise ValueError(f"{value!r} is not a country code")
+    code = value.strip().upper()
+    if COUNTRY_PATTERN.fullmatch(code) is None:
+        raise ValueError(f"{value!r} is not an ISO 3166-1 alpha-2 country code")
+    return code
+
+
 def normalize_domain(value: str) -> str:
     """Lower-case a domain suffix, strip surrounding dots; raise ``ValueError`` if invalid."""
     domain = value.lower().strip(".")
@@ -184,13 +194,10 @@ class WifiConfig(StrictModel):
             raise ValueError(f"{value!r} is not an SSID (1 to {SSID_MAX_BYTES} bytes, one line)")
         return value
 
-    @field_validator("country")
+    @field_validator("country", mode="before")
     @classmethod
-    def check_country(cls, value: str) -> str:
-        code = value.upper()
-        if COUNTRY_PATTERN.fullmatch(code) is None:
-            raise ValueError(f"{value!r} is not an ISO 3166-1 alpha-2 country code")
-        return code
+    def check_country(cls, value: object) -> str:
+        return normalize_country(value)
 
     @model_validator(mode="after")
     def check_channel(self) -> Self:
@@ -296,22 +303,79 @@ class NetworkConfig(StrictModel):
         return self
 
 
+class DomainVia(StrEnum):
+    """Where a domain of routing.domains goes in routing.mode smart."""
+
+    VPS = "vps"
+    DPN = "dpn"
+    DIRECT = "direct"
+
+
+class DomainRule(StrictModel):
+    """One site of the smart mode (docs/decisions.md, 11): the domain with its subdomains, the
+    channel, and the CDNs that follow it. ``also`` holds the ones the owner pinned; the ones core
+    learned live in its own store, not in config.yaml."""
+
+    domain: str
+    via: DomainVia
+    country: str | None = None  # via dpn: the exit country; None: any
+    learn: bool = True  # CDNs asked by a device right after this site follow it automatically
+    also: list[str] = Field(default_factory=list)
+
+    @field_validator("domain")
+    @classmethod
+    def check_domain(cls, value: str) -> str:
+        return normalize_domain(value)
+
+    @field_validator("also")
+    @classmethod
+    def check_also(cls, values: list[str]) -> list[str]:
+        return [normalize_domain(value) for value in values]
+
+    @field_validator("country", mode="before")
+    @classmethod
+    def check_country(cls, value: object) -> str | None:
+        return None if value is None else normalize_country(value)
+
+    @model_validator(mode="after")
+    def check_country_channel(self) -> Self:
+        if self.country is not None and self.via is not DomainVia.DPN:
+            raise ValueError(f"{self.domain}: a country is only chosen for via dpn")
+        return self
+
+    def names(self) -> list[str]:
+        return [self.domain, *self.also]
+
+
 class RoutingConfig(StrictModel):
-    """LAN traffic policy: everything direct, everything via an uplink, or by domain list."""
+    """LAN traffic policy: everything direct, everything via an uplink, or by domain rules."""
 
     mode: RoutingMode = RoutingMode.OFF
     default_upstream: Upstream
     failopen: bool = False
-    smart_domains: list[str] = Field(default_factory=list)
+    domains: list[DomainRule] = Field(default_factory=list)
 
-    @field_validator("smart_domains")
+    @model_validator(mode="before")
     @classmethod
-    def check_domains(cls, domains: list[str]) -> list[str]:
-        normalized = [normalize_domain(domain) for domain in domains]
-        duplicates = sorted({d for d in normalized if normalized.count(d) > 1})
+    def migrate_smart_domains(cls, data: object) -> object:
+        """Before Stage 10 the smart list was plain suffixes through default_upstream."""
+        if not isinstance(data, dict) or "smart_domains" not in data:
+            return data
+        if "domains" in data:
+            raise ValueError("routing: use domains; smart_domains is the old form of the same list")
+        migrated = dict(data)
+        suffixes = migrated.pop("smart_domains") or []
+        via = migrated.get("default_upstream")
+        migrated["domains"] = [{"domain": suffix, "via": via} for suffix in suffixes]
+        return migrated
+
+    @model_validator(mode="after")
+    def check_unique_names(self) -> Self:
+        names = [name for rule in self.domains for name in rule.names()]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
         if duplicates:
-            raise ValueError(f"routing.smart_domains has duplicates: {', '.join(duplicates)}")
-        return normalized
+            raise ValueError(f"routing.domains names a domain twice: {', '.join(duplicates)}")
+        return self
 
 
 class DeviceConfig(StrictModel):
@@ -357,14 +421,7 @@ class DpnUplink(StrictModel):
     @field_validator("country", mode="before")
     @classmethod
     def check_country(cls, value: object) -> str | None:
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            raise ValueError(f"{value!r} is not a country code")
-        code = value.strip().upper()
-        if COUNTRY_PATTERN.fullmatch(code) is None:
-            raise ValueError(f"{value!r} is not an ISO 3166-1 alpha-2 country code")
-        return code
+        return None if value is None else normalize_country(value)
 
 
 class UpstreamsConfig(StrictModel):
@@ -590,7 +647,18 @@ class Config(StrictModel):
         if self.wg_server is not None:
             errors.append("wg_server: only role 'vps' runs the WireGuard server")
         errors.extend(self._device_errors())
+        errors.extend(self._domain_errors())
         return errors
+
+    def _domain_errors(self) -> list[str]:
+        if self.routing is None:
+            return []
+        uplinks = {DomainVia.VPS: Upstream.VPS, DomainVia.DPN: Upstream.DPN}
+        return [
+            f"routing.domains: {rule.domain} goes via {rule.via} but that uplink is not enabled"
+            for rule in self.routing.domains
+            if rule.via in uplinks and not self.upstreams.is_enabled(uplinks[rule.via])
+        ]
 
     def _device_errors(self) -> list[str]:
         errors: list[str] = []
