@@ -553,6 +553,33 @@ print(".".join(map(str, r[-4:])) if struct.unpack("!H", r[6:8])[0] else "")' "$S
     fail "the resolver of core did not put $WEB_IP into the set smart_vps"
   await_exit "$VPS_IP" "a device that asked a rule name does not leave through the VPS in mode smart"
   echo "smart, $SMART_NAME asked: $WEB_IP in smart_vps, the device leaves as $(exit_address)"
+
+  log "smart: the DNS journal of the device and a CDN learned after its site"
+  core_get() {
+    curl -s --max-time 5 "http://127.0.0.1:4480$1"
+  }
+  device_ip="$(sudo ip netns exec "$NETNS" ip -4 -o addr show | awk '$2 != "lo" { split($4, a, "/"); print a[1]; exit }')"
+  i=0
+  until core_get "/dns/journal/$device_ip" | grep -q "\"name\":\"$SMART_NAME\",[^}]*\"channel\":\"smart_vps\""; do
+    i=$((i + 2))
+    [ "$i" -lt 60 ] || fail "the DNS journal of $device_ip does not show $SMART_NAME through smart_vps: $(core_get "/dns/journal/$device_ip")"
+    sleep 2
+  done
+  echo "journal of $device_ip: $SMART_NAME through smart_vps"
+  # the site again, then a name no rule covers, within the learning window
+  CDN_NAME="$(fresh_name 9)"
+  fresh_answers "$SMART_NAME" >/dev/null
+  fresh_answers "$CDN_NAME" >/dev/null
+  i=0
+  until core_get "/learned" | grep -q "\"name\":\"$CDN_NAME\",\"parent\":\"$SMART_NAME\""; do
+    i=$((i + 2))
+    [ "$i" -lt 60 ] || fail "$CDN_NAME asked right after $SMART_NAME was not learned: $(core_get /learned)"
+    sleep 2
+  done
+  echo "learned: $CDN_NAME follows $SMART_NAME"
+  sudo "$CLI" rule forget "$CDN_NAME" --dir "$BOX" | grep -q "forgotten" || fail "vibedpn rule forget failed"
+  core_get "/learned" | grep -q "\"name\":\"$CDN_NAME\"" && fail "$CDN_NAME is still learned after rule forget"
+  echo "rule forget: $CDN_NAME goes direct again"
 fi
 
 log "E2E-ROUTER-OK"
