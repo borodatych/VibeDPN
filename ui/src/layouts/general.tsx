@@ -23,6 +23,7 @@ type NavItem = { label: string; to: string }
 const navLinks: NavItem[] = [
   { label: 'Status', to: routes.home() },
   { label: 'Devices', to: routes.devices() },
+  { label: 'Rules', to: routes.rules() },
   { label: 'Node', to: routes.node() },
   { label: 'Network', to: routes.network() },
 ]
