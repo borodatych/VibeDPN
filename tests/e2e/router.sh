@@ -68,6 +68,9 @@ isp_rules() {
 }
 
 cleanup() {
+  if [ -n "${LIST_SERVER:-}" ]; then
+    kill "$LIST_SERVER" 2>/dev/null || true
+  fi
   if [ -n "${CLI:-}" ] && [ -f "$BOX/config.yaml" ]; then
     sudo "$CLI" down --dir "$BOX" >/dev/null 2>&1 || true
   fi
@@ -580,6 +583,34 @@ print(".".join(map(str, r[-4:])) if struct.unpack("!H", r[6:8])[0] else "")' "$S
   sudo "$CLI" rule forget "$CDN_NAME" --dir "$BOX" | grep -q "forgotten" || fail "vibedpn rule forget failed"
   core_get "/learned" | grep -q "\"name\":\"$CDN_NAME\"" && fail "$CDN_NAME is still learned after rule forget"
   echo "rule forget: $CDN_NAME goes direct again"
+
+  log "smart: a ready domain list by URL gives its domains the channel of the list"
+  # core runs in the host network: a list served on the host loopback is a real URL for it
+  LIST_NAME="$(fresh_name 11)"
+  mkdir "$WORK/lists"
+  printf '# e2e list\n0.0.0.0 %s\n' "$LIST_NAME" >"$WORK/lists/e2e.txt"
+  "$PY" -m http.server 18080 --bind 127.0.0.1 --directory "$WORK/lists" >/dev/null 2>&1 &
+  LIST_SERVER=$!
+  LIST_URL="http://127.0.0.1:18080/e2e.txt"
+  sudo "$CLI" lists add "$LIST_URL" vps --dir "$BOX" | grep -q "via vps" || fail "vibedpn lists add failed"
+  grep -q "$LIST_URL" "$BOX/config.yaml" || fail "vibedpn lists add did not write config.yaml"
+  i=0
+  until sudo "$CLI" lists show --dir "$BOX" | grep -q "(1 domains, fetched "; do
+    i=$((i + 2))
+    [ "$i" -lt 60 ] || fail "core did not fetch the domain list: $(sudo "$CLI" lists show --dir "$BOX")"
+    sleep 2
+  done
+  fresh_answers "$LIST_NAME" >/dev/null
+  i=0
+  until core_get "/dns/journal/$device_ip" | grep -q "\"name\":\"$LIST_NAME\",[^}]*\"channel\":\"smart_vps\""; do
+    i=$((i + 2))
+    [ "$i" -lt 60 ] || fail "$LIST_NAME of the list did not go through smart_vps: $(core_get "/dns/journal/$device_ip")"
+    sleep 2
+  done
+  echo "list: $LIST_NAME through smart_vps"
+  sudo "$CLI" lists rm "$LIST_URL" --dir "$BOX" | grep -q "list removed" || fail "vibedpn lists rm failed"
+  kill "$LIST_SERVER" 2>/dev/null || true
+  LIST_SERVER=""
 fi
 
 log "E2E-ROUTER-OK"
