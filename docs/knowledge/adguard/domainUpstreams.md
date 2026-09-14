@@ -28,6 +28,10 @@ TTL ответа задаёт резолвер ядра, таймаут элем
 
 **Суть (документация dnspython 2.8.0, ISC, чистый Python, Python ≥3.10):** `dns.query.https(q, where, timeout, port=443, …, session=httpx.Client, path="/dns-query", post=True, bootstrap_address=…, http_version=…)` — DoH идёт через `httpx`, можно передать готовый клиент и адрес, чтобы не разрешать имя апстрима; `dns.query.udp(q, where, timeout, port=53, …)` — обычный DNS.
 Альтернатива dnslib 0.9.26 (BSD) только кодирует и разбирает пакеты, без клиента DoH.
+**Грабля (исполнением, образ ядра на Python 3.12, 2026-09-14):** без extra `doh` DoH через httpx молча не работает.
+`dns._features` требует для `doh` пакеты `httpcore>=1.0.0`, `httpx>=0.28.0` и `h2>=4.2.0`; в образе были httpx и httpcore, но не `h2` — `have("doh")` возвращал `False`.
+Тогда `https()` при `http_version=DEFAULT` уходит в ветку HTTP/3 и с переданным `httpx.Client` падает: `ValueError: session parameter must be a dns.quic.SyncQuicConnection.`
+Зависимость ставится как `dnspython[doh]` — она тянет `h2`, `hpack`, `hyperframe`.
 
 **Источники:** https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/v0.107.79/openapi/openapi.yaml ; https://dnspython.readthedocs.io/en/stable/query.html ; https://pypi.org/pypi/dnspython/json ; https://pypi.org/pypi/dnslib/json
 

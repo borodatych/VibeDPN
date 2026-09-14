@@ -6,6 +6,7 @@ import asyncio
 import dns.message
 import dns.rcode
 import dns.rrset
+import pytest
 
 from vibedpn.config import Config
 from vibedpn.engine.resolver import (
@@ -211,3 +212,24 @@ def test_an_unlearned_cdn_goes_direct_again() -> None:
     assert resolver.index.match("analytics.example") is None
     assert resolver.learned == {}
     assert resolver.index.match("www.kinopoisk.ru") == "smart_dpn_de"  # the rule itself stays
+
+
+def test_any_failure_still_answers_servfail_and_is_logged_once(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def broken(_query: dns.message.Message) -> dns.message.Message:
+        raise ValueError("session parameter must be a dns.quic.SyncQuicConnection.")
+
+    sent: list[bytes] = []
+
+    class Transport:
+        def sendto(self, data: bytes, _addr: object) -> None:
+            sent.append(data)
+
+    protocol = ResolverProtocol(Resolver(RuleIndex(), broken, Nft()))
+    protocol.transport = Transport()  # type: ignore[assignment]
+    query = dns.message.make_query("example.org", "A")
+    for _ in range(2):
+        asyncio.run(protocol._answer(query.to_wire(), ("127.0.0.1", 5353)))
+    assert [dns.message.from_wire(data).rcode() for data in sent] == [dns.rcode.SERVFAIL] * 2
+    assert capsys.readouterr().err.count("resolver: ValueError") == 1

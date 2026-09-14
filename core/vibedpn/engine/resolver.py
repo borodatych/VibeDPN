@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import sys
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
@@ -266,6 +267,7 @@ class ResolverProtocol(asyncio.DatagramProtocol):
     def __init__(self, resolver: Resolver) -> None:
         self.resolver = resolver
         self.transport: asyncio.DatagramTransport | None = None
+        self.last_error = ""  # logged once per distinct failure
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         assert isinstance(transport, asyncio.DatagramTransport)
@@ -281,7 +283,12 @@ class ResolverProtocol(asyncio.DatagramProtocol):
             return
         try:
             response = await asyncio.to_thread(self.resolver.resolve, query)
-        except (ResolverError, dns.exception.DNSException):
+        except Exception as exc:
+            # an unanswered query makes AdGuard wait for its timeout; SERVFAIL answers at once
+            message = f"{exc.__class__.__name__}: {exc}"
+            if message != self.last_error:
+                sys.stderr.write(f"vibedpn-core: resolver: {message}\n")
+                self.last_error = message
             response = dns.message.make_response(query)
             response.set_rcode(dns.rcode.SERVFAIL)
         if self.transport is not None:
@@ -297,8 +304,6 @@ async def serve_resolver(resolver: Resolver) -> None:
             lambda: ResolverProtocol(resolver), local_addr=(RESOLVER_HOST, RESOLVER_PORT)
         )
     except OSError as exc:
-        import sys  # noqa: PLC0415 - the only message of this module
-
         sys.stderr.write(
             f"vibedpn-core: resolver cannot listen on {RESOLVER_HOST}:{RESOLVER_PORT}:"
             f" {exc.strerror}; smart mode has no domain sets\n"
