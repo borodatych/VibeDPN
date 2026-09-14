@@ -264,16 +264,16 @@ jobs:
             cat > /tmp/router.py <<"PY"
           import sys
           from vibedpn.config import Config, Upstream
-          from vibedpn.engine.router import apply_router, remove_router, set_gateway_route
+          from vibedpn.engine.router import UPLINKS, apply_router, remove_router, set_gateway_route
           def box(mode, failopen=False):
               return Config.model_validate({"version": 1, "role": "client", "network": {"lan_interface": "eth0", "lan_subnet": "192.168.1.0/24", "lan_address": "192.168.1.50"}, "routing": {"mode": mode, "default_upstream": "vps", "failopen": failopen}, "upstreams": {"vps": {"enabled": True}}})
           step = sys.argv[1]
           if step == "full":
               assert apply_router(box("full")) == [Upstream.VPS]
           elif step == "alive":
-              set_gateway_route(Upstream.VPS, True)
+              set_gateway_route(UPLINKS[Upstream.VPS], True)
           elif step == "dead":
-              set_gateway_route(Upstream.VPS, False)
+              set_gateway_route(UPLINKS[Upstream.VPS], False)
           elif step == "failopen":
               apply_router(box("full", failopen=True))
           elif step == "off":
