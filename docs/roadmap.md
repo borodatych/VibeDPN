@@ -141,6 +141,7 @@
 - [x] **`vibedpn rule add|rm|list`** — ✅ (2026-09-14, `next`) ядро: `GET /rules`, `PUT /rules/{domain}` (добавить или заменить правило), `DELETE /rules/{domain}`; правка `routing.domains` в `config.yaml` с сохранением комментариев, полной проверкой модели и применением на лету через `BoxState` (ошибка правки — 422, нет правила — 404, отказ роутера — 503 с откатом); CLI `rule add <домен> vps|dpn|direct [--country] [--no-learn] [--also …]`, `rule rm`, `rule list`. Тесты API и CLI
 - [x] **`vibedpn dns watch <устройство>`, `vibedpn rule learned|forget`** — ✅ (2026-09-14, `next`) живой журнал устройства по адресу или MAC, строка: время, тип, имя, канал, кэш, «выучено за сайтом». Команды проверены unit-тестами; на стенде проверены API, которые они читают, и `rule forget` исполнением
 - [ ] E2E: домен через VPS, напрямую, CDN по CNAME, CDN по времени, две страны
+  - [x] **две страны на стенде `home`** — ✅ (2026-09-14, `next`) правила DE и NL в `smart`, `vibedpn restart`: контейнеры `myst-consumer-de`/`-nl` запущены, `ip rule` 0x40→7740 и 0x41→7741 с `unreachable default`, ядро создало identity в каждой стране (в `/status` `dpn_countries` — две identity и адреса пополнения), TequilAPI страны из LAN недоступен; стенд прошёл целиком. Реальное подключение в стране не проверено — нужны регистрация и MYST
 - [ ] Импорт готовых списков (по URL, с кэшем)
 
 ## Stage 11 — Полировка и раздача

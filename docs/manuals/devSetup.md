@@ -73,7 +73,7 @@ colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && VIBEDPN_TA
 
 `tests/e2e/home.sh` — стенд коробки роли `home`: все сервисы роли (ядро, панель с Postgres, AdGuard,
 нода и consumer Mysterium) и отсутствие петли — в режиме `full` через `dpn` нода выходит в интернет с тем
-же адресом, что и хост. Своя LAN на мосту `lan0`, нужен настоящий интернет (образы Mysterium и эхо-сервис
+же адресом, что и хост; две страны правил доменов (DE, NL) в `smart` — у каждой свой контейнер consumer, своя identity, `ip rule` и таблица с kill-switch, TequilAPI страны из LAN недоступен. Своя LAN на мосту `lan0`, нужен настоящий интернет (образы Mysterium и эхо-сервис
 адреса, `VIBEDPN_E2E_EXIT_URL`). Образ панели локально на VM с 2 ГиБ не соберётся — возьмите
 опубликованный и перетегируйте:
 

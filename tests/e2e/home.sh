@@ -224,6 +224,60 @@ log "status and doctor"
 sudo "$CLI" status --dir "$BOX" | grep -q "^uplink dpn: gateway" || fail "vibedpn status does not show uplink dpn"
 sudo "$CLI" doctor --dir "$BOX" | grep -q "\[ ok \] router" || fail "doctor does not confirm the router"
 
+log "two exit countries of domain rules: a consumer, a rule and a kill switch each"
+sudo "$PY" - "$BOX/config.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = "  domains: []\n"
+assert text.count(old) == 1, "config.yaml has no empty domains list"
+text = text.replace(old, (
+    "  domains:\n"
+    "    - domain: zdf.de\n      via: dpn\n      country: DE\n"
+    "    - domain: npo.nl\n      via: dpn\n      country: NL\n"
+))
+assert text.count("  mode: full\n") == 1, "config.yaml is not in mode full"
+path.write_text(text.replace("  mode: full\n", "  mode: smart\n"), encoding="utf-8")
+PY
+sudo "$CLI" restart --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn restart with two rule countries failed"
+for code in de nl; do
+  grep -q "myst-consumer-$code:" "$BOX/compose.countries.yaml" || fail "compose.countries.yaml has no consumer for $code"
+done
+i=0
+until [ "$(docker inspect -f '{{.State.Status}}' vibedpn-myst-consumer-de-1 2>/dev/null)" = running ] &&
+  [ "$(docker inspect -f '{{.State.Status}}' vibedpn-myst-consumer-nl-1 2>/dev/null)" = running ]; do
+  i=$((i + 5))
+  [ "$i" -lt 120 ] || fail "the consumers of DE and NL are not running"
+  sleep 5
+done
+wait_core=0
+until curl -s --max-time 5 "http://127.0.0.1:4480/health" >/dev/null; do
+  wait_core=$((wait_core + 5))
+  [ "$wait_core" -lt 120 ] || fail "core does not answer after the restart"
+  sleep 5
+done
+# DE sorts first: mark 0x40, table 7740, gateway 10.77.0.40; NL: 0x41, 7741, 10.77.0.41
+country_table() {
+  # $1: mark without 0x, $2: table
+  ip rule show | grep -qE "fwmark 0x$1 lookup $2" || fail "no ip rule for the country table $2"
+  ip route show table "$2" | grep -q "^unreachable default" || fail "the country table $2 has no kill switch"
+}
+country_table 40 7740
+country_table 41 7741
+i=0
+until [ "$(curl -s --max-time 5 "http://127.0.0.1:4480/status" | grep -o '"dpn_countries":\[.*\]' | grep -o '"identity":"0x' | wc -l)" = 2 ]; do
+  i=$((i + 5))
+  [ "$i" -lt 180 ] || fail "core did not create an identity in each country consumer: $(curl -s http://127.0.0.1:4480/status)"
+  sleep 5
+done
+curl -s --max-time 5 "http://127.0.0.1:4480/status" | grep -o '"dpn_countries":\[[^]]*\]'
+if sudo ip netns exec "$NETNS" curl -s -o /dev/null --max-time 5 "http://10.77.0.40:4050/healthcheck"; then
+  fail "a LAN device reaches TequilAPI of the DE consumer"
+fi
+echo "DE and NL: own consumer, identity, ip rule and kill switch; the LAN does not reach their TequilAPI"
+
 log "memory of the role (informational)"
 docker ps -q --filter name=vibedpn- | xargs docker stats --no-stream --format '{{.Name}} {{.MemUsage}}'
 
