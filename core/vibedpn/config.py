@@ -175,6 +175,7 @@ WIFI_CHANNELS = {
     WifiBand.BAND_5: range(36, 166),
 }
 SSID_MAX_BYTES = 32
+MAX_RULE_COUNTRIES = 8  # engine/router.py MAX_COUNTRIES: one consumer per country
 COUNTRY_PATTERN = re.compile(r"^[A-Z]{2}$")
 
 
@@ -659,6 +660,16 @@ class Config(StrictModel):
             for rule in self.routing.domains
             if rule.via in uplinks and not self.upstreams.is_enabled(uplinks[rule.via])
         ]
+        countries = {
+            rule.country
+            for rule in self.routing.domains
+            if rule.via is DomainVia.DPN and rule.country is not None
+        }
+        if len(countries) > MAX_RULE_COUNTRIES:
+            errors.append(
+                f"routing.domains: {len(countries)} exit countries, at most {MAX_RULE_COUNTRIES}"
+                " (each one is a consumer of its own)"
+            )
         if self.routing.mode is RoutingMode.SMART:
             exit_country = self.upstreams.dpn.country
             # temporary (docs/decisions.md, 18): one dpn uplink until a consumer per country

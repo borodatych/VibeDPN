@@ -295,6 +295,32 @@ UPLINKS: dict[Upstream, Uplink] = {
     Upstream.VPS: Uplink(mark=0x10, table=7710, gateway="10.77.0.10"),
     Upstream.DPN: Uplink(mark=0x20, table=7720, gateway="10.77.0.20"),
 }
+# Countries of routing.domains get their own consumer (docs/decisions.md, 20): the i-th country in
+# sorted order has mark 0x40+i, table 7740+i and gateway 10.77.0.40+i.
+MAX_COUNTRIES = 8
+COUNTRY_MARK_BASE = 0x40
+COUNTRY_TABLE_BASE = 7740
+COUNTRY_GATEWAY_BASE = 40  # last octet in UPSTREAMS_SUBNET
+
+
+def rule_countries(config: Config) -> list[str]:
+    """The exit countries domain rules ask for, sorted: each one is a consumer of its own."""
+    rules = config.routing.domains if config.routing is not None else []
+    return sorted({rule.country for rule in rules if rule.via is DomainVia.DPN and rule.country})
+
+
+def country_uplinks(config: Config) -> dict[str, Uplink]:
+    """Country → its uplink; the numbering follows the sorted set, which changes only on restart."""
+    return {
+        country: Uplink(
+            mark=COUNTRY_MARK_BASE + index,
+            table=COUNTRY_TABLE_BASE + index,
+            gateway=f"10.77.0.{COUNTRY_GATEWAY_BASE + index}",
+        )
+        for index, country in enumerate(rule_countries(config))
+    }
+
+
 # Device policies that send a device through an uplink.
 POLICY_UPLINKS: dict[DevicePolicy, Upstream] = {
     DevicePolicy.VPS: Upstream.VPS,
