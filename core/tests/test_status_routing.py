@@ -15,7 +15,7 @@ from vibedpn.api.state import BoxState
 from vibedpn.api.uplink import UplinkState, UplinkWatchers, watch_uplink
 from vibedpn.bootstrap import render_config
 from vibedpn.config import Config, RoutingMode, Upstream, load_config
-from vibedpn.engine.adguard import CORE_USER, AdguardError, adguard_text, set_aaaa_disabled
+from vibedpn.engine.adguard import CORE_USER, AdguardError, adguard_text, set_dns_mode
 from vibedpn.engine.consumer import CountryOffer
 from vibedpn.engine.myst import MystError
 from vibedpn.engine.router import RouterError, RoutingFacts
@@ -62,7 +62,7 @@ def box(
         state=state,
         watchers=watchers,  # type: ignore[arg-type]
         routing_reader=lambda _config: FACTS,
-        dns_mode=dns or (lambda _config: True),  # type: ignore[arg-type]
+        dns_mode=dns or (lambda _config, _changed: True),  # type: ignore[arg-type]
     )
     return TestClient(app), path
 
@@ -100,7 +100,7 @@ def test_a_box_without_a_lan_has_no_status(tmp_path: Path) -> None:
 def test_routing_changes_live_and_reports_adguard(tmp_path: Path) -> None:
     told: list[RoutingMode] = []
 
-    def dns(config: Config) -> bool:
+    def dns(config: Config, _changed: bool = False) -> bool:
         assert config.routing is not None
         told.append(config.routing.mode)
         return True
@@ -116,14 +116,14 @@ def test_routing_changes_live_and_reports_adguard(tmp_path: Path) -> None:
 
 
 def test_a_silent_or_absent_adguard_does_not_undo_the_router(tmp_path: Path) -> None:
-    def silent(_config: Config) -> bool:
+    def silent(_config: Config, _changed: bool = False) -> bool:
         raise AdguardError("AdGuard does not answer")
 
     client, path = box(tmp_path, dns=silent)
     assert client.put("/routing", json={"mode": "off"}).json()["adguard"] == "pending"
     routing = load_config(path).routing
     assert routing is not None and routing.mode is RoutingMode.OFF
-    client, _ = box(tmp_path, dns=lambda _config: None)
+    client, _ = box(tmp_path, dns=lambda _config, _changed=False: None)
     assert client.put("/routing", json={"mode": "full"}).json()["adguard"] == "none"
 
 
@@ -131,7 +131,7 @@ def test_bad_routing_requests_change_nothing(tmp_path: Path) -> None:
     client, path = box(tmp_path)
     before = path.read_text(encoding="utf-8")
     assert client.put("/routing", json={}).status_code == 422
-    assert client.put("/routing", json={"mode": "smart"}).status_code == 422
+    assert client.put("/routing", json={"mode": "fastest"}).status_code == 422
     refused = client.put("/routing", json={"default_upstream": "dpn"})  # dpn is not enabled
     assert refused.status_code == 422 and "not changed" in refused.json()["detail"]
     assert path.read_text(encoding="utf-8") == before
@@ -224,7 +224,7 @@ def test_the_dns_mode_reaches_adguard_with_basic_auth(tmp_path: Path) -> None:
         return httpx.Response(200)
 
     config = Config.model_validate(client_config())  # mode full
-    assert set_aaaa_disabled(config, tmp_path, transport=httpx.MockTransport(adguard)) is True
+    assert set_dns_mode(config, tmp_path, transport=httpx.MockTransport(adguard)) is True
     request = seen[0]
     assert str(request.url) == "http://192.168.1.50:3000/control/dns_config"
     assert json.loads(request.content) == {"disable_ipv6": True}
@@ -232,10 +232,10 @@ def test_the_dns_mode_reaches_adguard_with_basic_auth(tmp_path: Path) -> None:
     assert request.headers["authorization"] == f"Basic {token}"
     refused = httpx.MockTransport(lambda _request: httpx.Response(401))
     with pytest.raises(AdguardError, match="HTTP 401"):
-        set_aaaa_disabled(config, tmp_path, transport=refused)
+        set_dns_mode(config, tmp_path, transport=refused)
     raw = client_config()
     raw["dns"] = {"enabled": False}
-    assert set_aaaa_disabled(Config.model_validate(raw), tmp_path) is None
+    assert set_dns_mode(Config.model_validate(raw), tmp_path) is None
 
 
 def test_client_reads_status_and_sets_routing() -> None:

@@ -40,6 +40,7 @@ MAX_ANSWER_TTL = 300  # seconds: a name under a rule is asked again at least thi
 SET_MARGIN_SECONDS = 60  # a set element outlives the TTL AdGuard caches the answer for
 RECENT_ANSWERS = 4096
 UPSTREAM_TIMEOUT_SECONDS = 5.0
+DIRECT_SET = "smart_direct"
 
 
 class ResolverError(RuntimeError):
@@ -50,7 +51,7 @@ def channel_set(rule: DomainRule) -> str:
     """The nft set of a rule's channel: smart_direct, smart_vps, smart_dpn_<country|any>."""
     if rule.via is DomainVia.DPN:
         return f"smart_dpn_{(rule.country or 'any').lower()}"
-    return f"smart_{rule.via.value}"
+    return DIRECT_SET if rule.via is DomainVia.DIRECT else f"smart_{rule.via.value}"
 
 
 def smart_set_names(config: Config) -> list[str]:
@@ -170,8 +171,14 @@ class Resolver:
     clock: Callable[[], float] = time.monotonic
     recent: OrderedDict[str, tuple[list[str], int, float]] = field(default_factory=OrderedDict)
     cnames: dict[str, str] = field(default_factory=dict)  # CNAME target → the name that led to it
+    learned: dict[str, str] = field(default_factory=dict)  # CDN → the site it follows
 
     def resolve(self, query: dns.message.Message) -> dns.message.Message:
+        if query.question and query.question[0].rdtype == dns.rdatatype.AAAA:
+            qname = query.question[0].name.to_text().rstrip(".").lower()
+            if self.index.match(qname) not in (None, DIRECT_SET):
+                # the channel sets are IPv4: an IPv6 address of this site would leave around them
+                return dns.message.make_response(query)
         response = self.exchange(query)
         if not query.question:
             return response
@@ -198,8 +205,25 @@ class Resolver:
         if set_name is None:
             return False
         self.index.add(name, set_name)
+        self.learned[name] = parent
         self._fill(name, set_name)
         return True
+
+    def reload(self, config: Config) -> None:
+        """config.yaml changed (rules, mode) and the router rebuilt its table: take the new rules,
+        keep what was learned for sites still under a rule, fill the sets again."""
+        self.index = RuleIndex.from_config(config)
+        for target, site in self.cnames.items():
+            set_name = self.index.match(site)
+            if set_name is not None:
+                self.index.add(target, set_name)
+        for name, parent in list(self.learned.items()):
+            set_name = self.index.match(parent)
+            if set_name is None:
+                del self.learned[name]
+            else:
+                self.index.add(name, set_name)
+        self.replay()
 
     def replay(self) -> None:
         """Fill every set again from the last answers: the router rebuilt its table."""
@@ -253,3 +277,25 @@ class ResolverProtocol(asyncio.DatagramProtocol):
             response.set_rcode(dns.rcode.SERVFAIL)
         if self.transport is not None:
             self.transport.sendto(response.to_wire(), addr)
+
+
+async def serve_resolver(resolver: Resolver) -> None:
+    """The UDP endpoint on loopback for AdGuard; a port taken logs once and core keeps running
+    (AdGuard answers through its fallback servers)."""
+    loop = asyncio.get_running_loop()
+    try:
+        transport, _protocol = await loop.create_datagram_endpoint(
+            lambda: ResolverProtocol(resolver), local_addr=(RESOLVER_HOST, RESOLVER_PORT)
+        )
+    except OSError as exc:
+        import sys  # noqa: PLC0415 - the only message of this module
+
+        sys.stderr.write(
+            f"vibedpn-core: resolver cannot listen on {RESOLVER_HOST}:{RESOLVER_PORT}:"
+            f" {exc.strerror}; smart mode has no domain sets\n"
+        )
+        return
+    try:
+        await asyncio.Future()
+    finally:
+        transport.close()

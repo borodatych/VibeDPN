@@ -19,10 +19,18 @@ from dataclasses import dataclass
 from enum import StrEnum
 from itertools import takewhile
 
-from vibedpn.config import Config, DevicePolicy, Role, RoutingMode, Upstream, parse_port_range
+from vibedpn.config import (
+    Config,
+    DevicePolicy,
+    DomainVia,
+    Role,
+    RoutingMode,
+    Upstream,
+    parse_port_range,
+)
 from vibedpn.detect import SBIN_DIRS
 from vibedpn.engine.myst import NODEUI_PORT
-from vibedpn.engine.resolver import smart_set_names
+from vibedpn.engine.resolver import channel_set, smart_set_names
 from vibedpn.templating import template_environment
 
 NFT = "nft"
@@ -294,6 +302,8 @@ POLICY_UPLINKS: dict[DevicePolicy, Upstream] = {
 }
 # policy block: no ip rule knows this mark, and the forward chain drops it.
 BLOCK_MARK = 0x30
+# Domain rules of routing.mode smart that leave through an uplink; `direct` needs no mark.
+RULE_UPLINKS: dict[DomainVia, Upstream] = {DomainVia.VPS: Upstream.VPS, DomainVia.DPN: Upstream.DPN}
 # AdGuard Home runs as this user (compose.yaml `user:`), so its own DoH traffic can be told from
 # the host's and steered into the uplink of routing.mode full (docs/decisions.md, decision 14).
 ADGUARD_UID = 7753
@@ -303,20 +313,23 @@ def active_uplink(config: Config) -> Upstream | None:
     """The uplink LAN traffic leaves through, or ``None`` when everything goes direct."""
     if config.network is None or config.routing is None:
         return None
-    if config.routing.mode is RoutingMode.SMART:
-        raise RouterError("routing.mode smart is not implemented yet; use off or full")
-    if config.routing.mode is RoutingMode.OFF:
-        return None
+    if config.routing.mode is not RoutingMode.FULL:
+        return None  # off: everything direct; smart: each rule names its own channel
     return config.routing.default_upstream
 
 
 def used_uplinks(config: Config) -> list[Upstream]:
-    """Every uplink some LAN traffic may take: the one of routing.mode full, and the ones device
-    policies name. Each needs its ip rule, its table with the kill switch and a watcher."""
+    """Every uplink some LAN traffic may take: the one of routing.mode full, the ones device
+    policies name, and in smart the ones domain rules name. Each needs its ip rule, its table with
+    the kill switch and a watcher."""
     wanted: set[Upstream] = set()
     active = active_uplink(config)
     if active is not None:
         wanted.add(active)
+    if config.routing is not None and config.routing.mode is RoutingMode.SMART:
+        wanted.update(
+            RULE_UPLINKS[rule.via] for rule in config.routing.domains if rule.via in RULE_UPLINKS
+        )
     if config.network is not None:
         wanted.update(
             POLICY_UPLINKS[device.policy]
@@ -361,6 +374,18 @@ class UplinkPolicy:
     mark: str
 
 
+def smart_marks(config: Config) -> list[UplinkPolicy]:
+    """routing.mode smart: the channel sets that carry an uplink mark (until one consumer per
+    country exists, every dpn set takes the mark of the one dpn uplink — decision 18)."""
+    if config.routing is None or config.routing.mode is not RoutingMode.SMART:
+        return []
+    marks = {}
+    for rule in config.routing.domains:
+        if rule.via in RULE_UPLINKS:
+            marks[channel_set(rule)] = hex(UPLINKS[RULE_UPLINKS[rule.via]].mark)
+    return [UplinkPolicy(name, mark) for name, mark in sorted(marks.items())]
+
+
 def router_ruleset(config: Config) -> str | None:
     """The nftables ruleset of a LAN box, or ``None`` when this box routes no LAN."""
     if config.network is None:
@@ -377,6 +402,8 @@ def router_ruleset(config: Config) -> str | None:
             sets=device_sets(config),
             # channel sets of routing.domains, filled by the resolver of core (engine/resolver.py)
             smart_sets=smart_set_names(config),
+            # tunnel channels first: an address two rules share (one CDN) leaves through the tunnel
+            smart_marks=smart_marks(config),
             block_mark=hex(BLOCK_MARK),
             uplink_policies=[
                 UplinkPolicy(policy.value, hex(UPLINKS[upstream].mark))

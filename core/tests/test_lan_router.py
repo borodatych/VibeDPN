@@ -16,7 +16,6 @@ from vibedpn.engine.router import (
     UPLINKS,
     UPSTREAMS_BRIDGE,
     UPSTREAMS_SUBNET,
-    RouterError,
     active_uplink,
     apply_router,
     device_sets,
@@ -123,11 +122,11 @@ def test_mode_off_marks_nothing_but_still_routes_direct() -> None:
     assert active_uplink(lan_box("off")) is None
 
 
-def test_no_router_without_a_lan_and_no_smart_mode_yet() -> None:
+def test_no_router_without_a_lan_and_smart_has_no_mode_mark() -> None:
     assert router_ruleset(vps_box()) is None
     assert router_docker_user_rules(vps_box()) == []
-    with pytest.raises(RouterError, match="smart"):
-        router_ruleset(lan_box("smart"))
+    smart = router_ruleset(lan_box("smart")) or ""
+    assert "LAN traffic leaves through uplink" not in smart  # smart marks nothing by mode
 
 
 def test_rule_plan_from_a_real_listing() -> None:
@@ -337,3 +336,31 @@ def test_gateway_mode_nats_the_lan_out_of_the_wan() -> None:
     assert any("-s 192.168.1.0/24 -i eth0 -o eth1" in rule for rule in rules)
     assert any("-d 192.168.1.0/24 -i eth1 -o eth0" in rule for rule in rules)
     assert 'masquerade comment "gateway' not in (router_ruleset(lan_box("off")) or "")
+
+
+def test_smart_marks_rule_sets_tunnels_first_and_uses_their_uplinks() -> None:
+    raw: dict[str, Any] = {
+        "version": 1,
+        "role": "client",
+        "network": {
+            "lan_interface": "eth0",
+            "lan_subnet": "192.168.1.0/24",
+            "lan_address": "192.168.1.50",
+        },
+        "routing": {
+            "mode": "smart",
+            "default_upstream": "vps",
+            "domains": [
+                {"domain": "netflix.com", "via": "vps"},
+                {"domain": "bank.example", "via": "direct"},
+                {"domain": "kinopoisk.ru", "via": "dpn"},
+            ],
+        },
+        "upstreams": {"vps": {"enabled": True}, "dpn": {"enabled": True}},
+    }
+    config = Config.model_validate(raw)
+    text = router_ruleset(config) or ""
+    assert "ip daddr @smart_vps meta mark set 0x10 return" in text
+    assert "ip daddr @smart_dpn_any meta mark set 0x20 return" in text
+    assert "@smart_direct meta mark" not in text
+    assert used_uplinks(config) == [Upstream.VPS, Upstream.DPN]

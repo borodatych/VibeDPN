@@ -23,6 +23,7 @@ from vibedpn.atomic import write_private
 from vibedpn.bootstrap import ADGUARD_CORE_PASSWORD_FILE, HTPASSWD_FILE, UI_USER
 from vibedpn.config import Config, RoutingMode
 from vibedpn.config_edit import round_trip_yaml
+from vibedpn.engine.resolver import RESOLVER_HOST, RESOLVER_PORT
 
 CONF_FILE = "AdGuardHome.yaml"
 # The schema of adguard/adguardhome v0.107.79, the tag compose.yaml pins: a file without it is
@@ -102,9 +103,20 @@ def _set_managed(
     # Only the LAN address: the stub of systemd-resolved keeps 127.0.0.53:53 without a conflict.
     dns["bind_hosts"] = CommentedSeq([str(network.lan_address)])
     dns["port"] = DNS_PORT
-    dns["upstream_dns"] = CommentedSeq(config.dns.upstreams)
+    upstreams, fallbacks = dns_upstreams(config)
+    dns["upstream_dns"] = CommentedSeq(upstreams)
+    dns["fallback_dns"] = CommentedSeq(fallbacks)
     # In full, IPv6 of the devices would bypass the uplinks (docs/knowledge/linux/lanRouter.md).
     dns["aaaa_disabled"] = config.routing is not None and config.routing.mode is RoutingMode.FULL
+
+
+def dns_upstreams(config: Config) -> tuple[list[str], list[str]]:
+    """``upstream_dns`` and ``fallback_dns``: in smart the resolver of core asks the DoH servers and
+    fills the channel sets; the DoH servers stay as fallback, so DNS lives without core
+    (docs/decisions.md, 17)."""
+    if config.routing is not None and config.routing.mode is RoutingMode.SMART:
+        return [f"{RESOLVER_HOST}:{RESOLVER_PORT}"], list(config.dns.upstreams)
+    return list(config.dns.upstreams), []
 
 
 def _set_box_name(data: CommentedMap, config: Config, previous: str | None) -> None:
@@ -222,22 +234,31 @@ def _read_core_password(secrets_dir: Path) -> str:
     return password
 
 
-def set_aaaa_disabled(
-    config: Config, secrets_dir: Path, transport: httpx.BaseTransport | None = None
+def set_dns_mode(
+    config: Config,
+    secrets_dir: Path,
+    transport: httpx.BaseTransport | None = None,
+    *,
+    upstreams_changed: bool = False,
 ) -> bool | None:
     """Tell the running AdGuard the DNS mode of ``routing.mode``; ``None`` when this box runs no
-    AdGuard, ``True`` once it accepted. The file carries the same value for its next start."""
+    AdGuard, ``True`` once it accepted. The file carries the same values for its next start.
+    The upstreams go only when smart came or went: changing them restarts AdGuard's DNS server."""
     network = config.network
     if network is None or not config.dns.enabled:
         return None
     password = _read_core_password(secrets_dir)
     disabled = config.routing is not None and config.routing.mode is RoutingMode.FULL
+    body: dict[str, object] = {"disable_ipv6": disabled}
+    if upstreams_changed:
+        upstreams, fallbacks = dns_upstreams(config)
+        body |= {"upstream_dns": upstreams, "fallback_dns": fallbacks}
     url = f"http://{network.lan_address}:{config.dns.web_port}{DNS_CONFIG_PATH}"
     try:
         with httpx.Client(
             timeout=ADGUARD_API_TIMEOUT_SECONDS, transport=transport, trust_env=False
         ) as client:
-            response = client.post(url, json={"disable_ipv6": disabled}, auth=(CORE_USER, password))
+            response = client.post(url, json=body, auth=(CORE_USER, password))
     except httpx.HTTPError as exc:
         raise AdguardError(f"AdGuard does not answer at {url}: {exc.__class__.__name__}") from exc
     if response.status_code != httpx.codes.OK:

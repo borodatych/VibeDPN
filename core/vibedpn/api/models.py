@@ -112,9 +112,9 @@ class BoxStatus(BaseModel):
 
 
 class RoutingUpdate(BaseModel):
-    """A change of routing; at least one field. ``smart`` is not switchable yet (Stage 10)."""
+    """A change of routing; at least one field."""
 
-    mode: Literal["off", "full"] | None = None
+    mode: Literal["off", "full", "smart"] | None = None
     default_upstream: Upstream | None = None
 
 

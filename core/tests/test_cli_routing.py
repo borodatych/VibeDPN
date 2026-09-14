@@ -102,10 +102,13 @@ def test_the_same_mode_touches_nothing(tmp_path: Path, monkeypatch: pytest.Monke
     assert recorder.calls == []
 
 
-def test_smart_is_not_offered_yet(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_smart_is_a_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     make_box(tmp_path, monkeypatch, client_config())
-    code, _ = invoke(tmp_path, "mode", "smart")
-    assert code == 2  # rejected by the argument parser, before config.yaml is read
+    core_down(monkeypatch)
+    code, output = invoke(tmp_path, "mode", "smart")
+    assert code == 0 and "mode=smart" in output
+    routing = load_config(tmp_path / "config.yaml").routing
+    assert routing is not None and routing.mode is RoutingMode.SMART
 
 
 def test_a_vps_has_no_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

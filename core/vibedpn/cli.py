@@ -586,10 +586,11 @@ def _routing_line(config: Config) -> str:
 
 
 class SwitchableMode(StrEnum):
-    """Modes the router implements; ``smart`` joins in Stage 10."""
+    """Modes the router implements."""
 
     OFF = RoutingMode.OFF.value
     FULL = RoutingMode.FULL.value
+    SMART = RoutingMode.SMART.value
 
 
 def _switch_routing(
@@ -624,7 +625,10 @@ def _switch_routing(
 
 @app.command()
 def mode(
-    value: Annotated[SwitchableMode, typer.Argument(help="off: LAN direct; full: all via uplink.")],
+    value: Annotated[
+        SwitchableMode,
+        typer.Argument(help="off: LAN direct; full: all via uplink; smart: by routing.domains."),
+    ],
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
     """Switch routing.mode of the LAN router and apply it."""

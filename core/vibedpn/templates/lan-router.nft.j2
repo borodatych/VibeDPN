@@ -38,6 +38,9 @@ table inet vibedpn_router {
     ether saddr @devices_{{ policy.name }}_mac meta mark set {{ policy.mark }} return comment "policy {{ policy.name }}: through uplink {{ policy.name }}"
     ip saddr @devices_{{ policy.name }}_ip meta mark set {{ policy.mark }} return comment "policy {{ policy.name }}: through uplink {{ policy.name }}"
 {% endfor %}
+{% for mark in smart_marks %}
+    ip daddr @{{ mark.name }} meta mark set {{ mark.mark }} return comment "routing.mode smart: a domain rule through its uplink"
+{% endfor %}
 {% if mode_mark %}
     meta mark set {{ mode_mark }} comment "routing.mode full: LAN traffic leaves through uplink {{ mode_upstream }}"
 {% endif %}

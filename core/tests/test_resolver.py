@@ -178,3 +178,27 @@ def test_a_failing_upstream_answers_servfail() -> None:
     query = dns.message.make_query("example.org", "A")
     asyncio.run(protocol._answer(query.to_wire(), ("127.0.0.1", 5353)))
     assert dns.message.from_wire(sent[0]).rcode() == dns.rcode.SERVFAIL
+
+
+def test_aaaa_of_a_tunnel_rule_is_empty_and_the_upstream_is_not_asked() -> None:
+    upstream = Upstream(("www.netflix.com.", 300, "AAAA", "2001:db8::1"))
+    resolver = Resolver(RuleIndex.from_config(smart_box()), upstream, Nft())
+    response = resolver.resolve(dns.message.make_query("www.netflix.com", "AAAA"))
+    assert response.answer == [] and upstream.asked == []
+    direct = resolver.resolve(dns.message.make_query("bank.example", "AAAA"))
+    assert direct.answer and upstream.asked == ["bank.example."]
+
+
+def test_reload_keeps_what_was_learned_for_sites_still_under_a_rule() -> None:
+    config = smart_box()
+    resolver = Resolver(RuleIndex.from_config(config), Upstream(), Nft())
+    assert resolver.learn("strm.yandex.net", "kinopoisk.ru")
+    assert resolver.learn("nflx-cdn.example", "netflix.com")
+    raw = config.model_dump(mode="json", exclude_none=True, exclude={"firewall"})
+    raw["routing"]["domains"] = [
+        rule for rule in raw["routing"]["domains"] if rule["domain"] != "netflix.com"
+    ]
+    resolver.reload(Config.model_validate(raw))
+    assert resolver.index.match("strm.yandex.net") == "smart_dpn_de"
+    assert resolver.index.match("nflx-cdn.example") is None
+    assert resolver.learned == {"strm.yandex.net": "kinopoisk.ru"}

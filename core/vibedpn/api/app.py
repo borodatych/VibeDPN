@@ -47,7 +47,7 @@ from vibedpn.config_edit import (
     unset_device,
 )
 from vibedpn.detect import DetectError, HostProbe, Interface
-from vibedpn.engine.adguard import AdguardError, set_aaaa_disabled
+from vibedpn.engine.adguard import AdguardError, set_dns_mode
 from vibedpn.engine.consumer import (
     CONSUMER_TEQUILAPI,
     CONSUMER_TIMEOUT_SECONDS,
@@ -76,7 +76,7 @@ from vibedpn.engine.wg import (
 StatsSource = Callable[[], ProviderStats]
 RoutingReader = Callable[[Config], RoutingFacts]
 # Tells the running AdGuard the DNS mode; None: no AdGuard on this box.
-DnsModeSetter = Callable[[Config], bool | None]
+DnsModeSetter = Callable[[Config, bool], bool | None]  # the box, did smart come or go
 NO_LAN = "this box routes no LAN"
 DpnOffers = Callable[[], list[CountryOffer]]
 LinkSource = Callable[[], dict[str, PeerLink] | None]
@@ -478,7 +478,10 @@ def _add_routing_routes(
             ) from exc
         adguard: Literal["applied", "pending", "none"]
         try:
-            adguard = "none" if dns_mode(updated) is None else "applied"
+            entered_or_left_smart = (box.routing.mode is RoutingMode.SMART) != (
+                updated.routing is not None and updated.routing.mode is RoutingMode.SMART
+            )
+            adguard = "none" if dns_mode(updated, entered_or_left_smart) is None else "applied"
         except AdguardError:
             adguard = "pending"
         routing = updated.routing
@@ -538,10 +541,10 @@ def create_app(
             raise HTTPException(status_code=404, detail=NO_TUNNEL)
         return box, secrets_dir
 
-    def default_dns_mode(box: Config) -> bool | None:
+    def default_dns_mode(box: Config, upstreams_changed: bool) -> bool | None:
         if secrets_dir is None:
             return None
-        return set_aaaa_disabled(box, secrets_dir)
+        return set_dns_mode(box, secrets_dir, upstreams_changed=upstreams_changed)
 
     _add_routing_routes(
         application,

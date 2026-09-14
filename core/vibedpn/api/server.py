@@ -12,6 +12,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
+import httpx
 from pydantic import ValidationError
 
 from vibedpn.api.app import create_app
@@ -24,6 +25,13 @@ from vibedpn.engine import hostapd
 from vibedpn.engine.adguard import AdguardError, ensure_adguard, give_to_adguard
 from vibedpn.engine.devices import DB_FILE, DeviceError, DeviceStore
 from vibedpn.engine.dnsmasq import DnsmasqError, core_dir, ensure_dnsmasq
+from vibedpn.engine.resolver import (
+    UPSTREAM_TIMEOUT_SECONDS,
+    Resolver,
+    RuleIndex,
+    doh_exchange,
+    serve_resolver,
+)
 from vibedpn.engine.router import (
     ADGUARD_UID,
     EGRESS_TABLE,
@@ -135,7 +143,7 @@ def main() -> None:
             sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
             raise SystemExit(os.EX_CONFIG) from None
     watchers = UplinkWatchers(uplinks)
-    box_state = BoxState(config, config_path, watchers=watchers)
+    box_state, resolver = _box_state(config, config_path, watchers)
     consumer = ConsumerStatus()
     application = create_app(
         config,
@@ -150,7 +158,10 @@ def main() -> None:
         application,
         watchers=watchers,
         devices=devices,
-        extra=_consumer_task(config, box_state, consumer, secrets_dir),
+        extra=[
+            *_consumer_task(config, box_state, consumer, secrets_dir),
+            *([partial(serve_resolver, resolver)] if resolver is not None else []),
+        ],
     )
 
 
@@ -201,3 +212,33 @@ def _hand_adguard_dirs(config: Config, conf_dir: Path) -> None:
     except AdguardError as exc:
         sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
         raise SystemExit(os.EX_CONFIG) from None
+
+
+def _resolver(config: Config) -> Resolver | None:
+    """The resolver of routing.mode smart runs on every LAN box with AdGuard: the mode switches
+    live, and until smart AdGuard simply does not ask it."""
+    if config.network is None or not config.dns.enabled:
+        return None
+    client = httpx.Client(timeout=UPSTREAM_TIMEOUT_SECONDS, trust_env=False)
+    return Resolver(RuleIndex.from_config(config), doh_exchange(list(config.dns.upstreams), client))
+
+
+def _apply_with_resolver(resolver: Resolver | None) -> Callable[[Config], list[Upstream]]:
+    """Applying the router rebuilds its table and empties the channel sets: refill them at once."""
+
+    def apply(config: Config) -> list[Upstream]:
+        uplinks = apply_router(config)
+        if resolver is not None:
+            resolver.reload(config)
+        return uplinks
+
+    return apply
+
+
+def _box_state(
+    config: Config, config_path: Path, watchers: UplinkWatchers
+) -> tuple[BoxState, Resolver | None]:
+    """The live configuration, with the resolver of smart refilled after every router apply."""
+    resolver = _resolver(config)
+    state = BoxState(config, config_path, apply=_apply_with_resolver(resolver), watchers=watchers)
+    return state, resolver

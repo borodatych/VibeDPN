@@ -654,11 +654,24 @@ class Config(StrictModel):
         if self.routing is None:
             return []
         uplinks = {DomainVia.VPS: Upstream.VPS, DomainVia.DPN: Upstream.DPN}
-        return [
+        errors = [
             f"routing.domains: {rule.domain} goes via {rule.via} but that uplink is not enabled"
             for rule in self.routing.domains
             if rule.via in uplinks and not self.upstreams.is_enabled(uplinks[rule.via])
         ]
+        if self.routing.mode is RoutingMode.SMART:
+            exit_country = self.upstreams.dpn.country
+            # temporary (docs/decisions.md, 18): one dpn uplink until a consumer per country
+            errors += [
+                f"routing.domains: {rule.domain} wants country {rule.country}, but uplink dpn"
+                f" leaves in {exit_country or 'any country'}; a consumer per country is not there"
+                " yet (set upstreams.dpn.country or drop the country of the rule)"
+                for rule in self.routing.domains
+                if rule.via is DomainVia.DPN
+                and rule.country is not None
+                and rule.country != exit_country
+            ]
+        return errors
 
     def _device_errors(self) -> list[str]:
         errors: list[str] = []

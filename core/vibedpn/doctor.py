@@ -60,6 +60,7 @@ from vibedpn.engine.myst import (
     TequilaClient,
     nat_type,
 )
+from vibedpn.engine.resolver import RESOLVER_HOST, RESOLVER_PORT
 from vibedpn.engine.router import (
     EGRESS_COMMENT,
     EGRESS_TABLE,
@@ -242,6 +243,7 @@ def port_needs(config: Config) -> list[PortNeed]:
                 PortNeed("adguard", "udp", lan, DNS_PORT),
                 PortNeed("adguard", "tcp", lan, DNS_PORT),
                 PortNeed("adguard", "tcp", lan, config.dns.web_port),
+                PortNeed("core", "udp", RESOLVER_HOST, RESOLVER_PORT),
             ]
         if config.ui.enabled:
             needs.append(PortNeed("ui", "tcp", lan, config.ui.port))
