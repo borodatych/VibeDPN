@@ -23,6 +23,7 @@ from vibedpn.atomic import write_like
 from vibedpn.config import (
     Config,
     DevicePolicy,
+    DomainList,
     DomainRule,
     NetworkConfig,
     RoutingMode,
@@ -296,5 +297,54 @@ def remove_domain_rule(path: Path, domain: str) -> tuple[Config, bool]:
                 del rules[index]
                 return
         raise RuleNotFoundError(f"config.yaml has no rule for {wanted}")
+
+    return _edit(path, mutate)
+
+
+class ListNotFoundError(ConfigEditError):
+    """``config.yaml`` has no list with this URL."""
+
+
+def _lists(data: CommentedMap, path: Path) -> CommentedSeq:
+    routing = data.get("routing")
+    if not isinstance(routing, CommentedMap):
+        raise ConfigEditError(f"{path} has no routing section: a box of this role routes no LAN")
+    lists = routing.get("lists")
+    if lists is None:
+        lists = CommentedSeq()
+        routing["lists"] = lists
+    if not isinstance(lists, CommentedSeq):
+        raise ConfigEditError("config.yaml: routing.lists must be a list")
+    lists.fa.set_block_style()  # the template writes `lists: []`
+    return lists
+
+
+def set_domain_list(path: Path, item: DomainList) -> tuple[Config, bool]:
+    """Add a domain list by URL, or change the channel of the one config.yaml has."""
+
+    def mutate(data: CommentedMap) -> None:
+        lists = _lists(data, path)
+        entry = CommentedMap([("url", item.url), ("via", item.via.value)])
+        if item.country is not None:
+            entry["country"] = item.country
+        for index, existing in enumerate(lists):
+            if isinstance(existing, dict) and str(existing.get("url", "")) == item.url:
+                lists[index] = entry
+                return
+        lists.append(entry)
+
+    return _edit(path, mutate)
+
+
+def remove_domain_list(path: Path, url: str) -> tuple[Config, bool]:
+    """Remove a domain list: its domains go direct in smart again."""
+
+    def mutate(data: CommentedMap) -> None:
+        lists = _lists(data, path)
+        for index, existing in enumerate(lists):
+            if isinstance(existing, dict) and str(existing.get("url", "")) == url:
+                del lists[index]
+                return
+        raise ListNotFoundError(f"config.yaml has no domain list {url}")
 
     return _edit(path, mutate)

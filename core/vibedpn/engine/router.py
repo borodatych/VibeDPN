@@ -295,8 +295,8 @@ UPLINKS: dict[Upstream, Uplink] = {
     Upstream.VPS: Uplink(mark=0x10, table=7710, gateway="10.77.0.10"),
     Upstream.DPN: Uplink(mark=0x20, table=7720, gateway="10.77.0.20"),
 }
-# Countries of routing.domains get their own consumer (docs/decisions.md, 20): the i-th country in
-# sorted order has mark 0x40+i, table 7740+i and gateway 10.77.0.40+i.
+# Countries of routing.domains and routing.lists get their own consumer (docs/decisions.md, 20):
+# the i-th country in sorted order has mark 0x40+i, table 7740+i and gateway 10.77.0.40+i.
 MAX_COUNTRIES = 8
 COUNTRY_MARK_BASE = 0x40
 COUNTRY_TABLE_BASE = 7740
@@ -305,8 +305,8 @@ COUNTRY_GATEWAY_BASE = 40  # last octet in UPSTREAMS_SUBNET
 
 def rule_countries(config: Config) -> list[str]:
     """The exit countries domain rules ask for, sorted: each one is a consumer of its own."""
-    rules = config.routing.domains if config.routing is not None else []
-    return sorted({rule.country for rule in rules if rule.via is DomainVia.DPN and rule.country})
+    channels = config.routing.channels() if config.routing is not None else []
+    return sorted({item.country for item in channels if item.via is DomainVia.DPN and item.country})
 
 
 def country_uplinks(config: Config) -> dict[str, Uplink]:
@@ -382,11 +382,11 @@ def used_uplinks(config: Config) -> list[str]:
     if active is not None:
         wanted.add(active.value)
     if config.routing is not None and config.routing.mode is RoutingMode.SMART:
-        for rule in config.routing.domains:
-            if rule.via is DomainVia.DPN and rule.country:
-                wanted.add(country_key(rule.country))
-            elif rule.via in RULE_UPLINKS:
-                wanted.add(RULE_UPLINKS[rule.via].value)
+        for item in config.routing.channels():
+            if item.via is DomainVia.DPN and item.country:
+                wanted.add(country_key(item.country))
+            elif item.via in RULE_UPLINKS:
+                wanted.add(RULE_UPLINKS[item.via].value)
     if config.network is not None:
         wanted.update(
             POLICY_UPLINKS[device.policy].value
@@ -438,11 +438,11 @@ def smart_marks(config: Config) -> list[UplinkPolicy]:
         return []
     table = uplink_table(config)
     marks = {}
-    for rule in config.routing.domains:
-        if rule.via is DomainVia.DPN and rule.country:
-            marks[channel_set(rule)] = hex(table[country_key(rule.country)].mark)
-        elif rule.via in RULE_UPLINKS:
-            marks[channel_set(rule)] = hex(UPLINKS[RULE_UPLINKS[rule.via]].mark)
+    for item in config.routing.channels():
+        if item.via is DomainVia.DPN and item.country:
+            marks[channel_set(item)] = hex(table[country_key(item.country)].mark)
+        elif item.via in RULE_UPLINKS:
+            marks[channel_set(item)] = hex(UPLINKS[RULE_UPLINKS[item.via]].mark)
     return [UplinkPolicy(name, mark) for name, mark in sorted(marks.items())]
 
 

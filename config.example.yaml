@@ -48,6 +48,8 @@ network:
 # domains: правила режима smart. Домен покрывает поддомены; via: vps | dpn | direct;
 #   country — страна выхода для dpn; learn — CDN, которые сайт вызывает, идут за ним сами;
 #   also — CDN, закреплённые за сайтом вручную.
+# lists: готовые списки сайтов по URL — у каждого домена списка канал списка (via, country);
+#   ядро скачивает список, хранит копию и обновляет раз в сутки; правило domains сильнее списка.
 routing:
   mode: off
   default_upstream: dpn
@@ -59,6 +61,10 @@ routing:
   #     country: DE
   #   - domain: bank.example
   #     via: direct
+  lists: []
+  # lists:
+  #   - url: https://example.org/blocked-in-my-country.txt
+  #     via: vps
 
 # Устройства LAN с собственной политикой поверх routing.mode: vps | dpn | bypass | block.
 # Идентификация по MAC, IP — запасной вариант.

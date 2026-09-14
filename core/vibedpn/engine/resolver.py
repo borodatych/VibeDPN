@@ -31,7 +31,7 @@ import dns.rcode
 import dns.rdatatype
 import httpx
 
-from vibedpn.config import Config, DomainRule, DomainVia
+from vibedpn.config import Config, DomainChannel, DomainVia
 from vibedpn.detect import find_tool
 
 RESOLVER_HOST = "127.0.0.1"
@@ -48,17 +48,17 @@ class ResolverError(RuntimeError):
     """A user-facing reason why a name could not be resolved or its set not filled."""
 
 
-def channel_set(rule: DomainRule) -> str:
-    """The nft set of a rule's channel: smart_direct, smart_vps, smart_dpn_<country|any>."""
-    if rule.via is DomainVia.DPN:
-        return f"smart_dpn_{(rule.country or 'any').lower()}"
-    return DIRECT_SET if rule.via is DomainVia.DIRECT else f"smart_{rule.via.value}"
+def channel_set(channel: DomainChannel) -> str:
+    """The nft set of a channel: smart_direct, smart_vps, smart_dpn_<country|any>."""
+    if channel.via is DomainVia.DPN:
+        return f"smart_dpn_{(channel.country or 'any').lower()}"
+    return DIRECT_SET if channel.via is DomainVia.DIRECT else f"smart_{channel.via.value}"
 
 
 def smart_set_names(config: Config) -> list[str]:
     """Every channel set the rules of this box need, in a stable order."""
-    rules = config.routing.domains if config.routing is not None else []
-    return sorted({channel_set(rule) for rule in rules})
+    channels = config.routing.channels() if config.routing is not None else []
+    return sorted({channel_set(item) for item in channels})
 
 
 class RuleIndex:

@@ -31,6 +31,7 @@ DEFAULT_UI_HOST_NAME = "vibedpn.lan"
 LITE_DB_SHARED_BUFFERS = "32MB"
 LITE_DB_MAX_CONNECTIONS = 20
 DOH_URL_PATTERN = re.compile(r"^https://[^\s/]+/\S*$")
+LIST_URL_PATTERN = re.compile(r"^https?://[^\s/]+(/\S*)?$")
 HOSTNAME_PATTERN = re.compile(
     r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$"
 )
@@ -311,14 +312,35 @@ class DomainVia(StrEnum):
     DIRECT = "direct"
 
 
-class DomainRule(StrictModel):
+class DomainChannel(StrictModel):
+    """Where the names of a site or of a whole list go in smart: an uplink, Mysterium in a country,
+    or direct. Sets, marks, uplinks and country consumers are built from channels."""
+
+    via: DomainVia
+    country: str | None = None  # via dpn: the exit country; None: any
+
+    @field_validator("country", mode="before")
+    @classmethod
+    def check_country(cls, value: object) -> str | None:
+        return None if value is None else normalize_country(value)
+
+    def subject(self) -> str:
+        """What the owner calls this entry in a message."""
+        raise NotImplementedError
+
+    @model_validator(mode="after")
+    def check_country_channel(self) -> Self:
+        if self.country is not None and self.via is not DomainVia.DPN:
+            raise ValueError(f"{self.subject()}: a country is only chosen for via dpn")
+        return self
+
+
+class DomainRule(DomainChannel):
     """One site of the smart mode (docs/decisions.md, 11): the domain with its subdomains, the
     channel, and the CDNs that follow it. ``also`` holds the ones the owner pinned; the ones core
     learned live in its own store, not in config.yaml."""
 
     domain: str
-    via: DomainVia
-    country: str | None = None  # via dpn: the exit country; None: any
     learn: bool = True  # CDNs asked by a device right after this site follow it automatically
     also: list[str] = Field(default_factory=list)
 
@@ -332,19 +354,28 @@ class DomainRule(StrictModel):
     def check_also(cls, values: list[str]) -> list[str]:
         return [normalize_domain(value) for value in values]
 
-    @field_validator("country", mode="before")
-    @classmethod
-    def check_country(cls, value: object) -> str | None:
-        return None if value is None else normalize_country(value)
-
-    @model_validator(mode="after")
-    def check_country_channel(self) -> Self:
-        if self.country is not None and self.via is not DomainVia.DPN:
-            raise ValueError(f"{self.domain}: a country is only chosen for via dpn")
-        return self
+    def subject(self) -> str:
+        return self.domain
 
     def names(self) -> list[str]:
         return [self.domain, *self.also]
+
+
+class DomainList(DomainChannel):
+    """A ready list of sites by URL (docs/decisions.md, 21): every domain of it takes the channel of
+    the list; a rule of routing.domains for the same name wins. Core fetches and caches it."""
+
+    url: str
+
+    @field_validator("url")
+    @classmethod
+    def check_url(cls, value: str) -> str:
+        if LIST_URL_PATTERN.fullmatch(value) is None:
+            raise ValueError(f"{value!r} is not an http(s) URL of a domain list")
+        return value
+
+    def subject(self) -> str:
+        return self.url
 
 
 class RoutingConfig(StrictModel):
@@ -354,6 +385,11 @@ class RoutingConfig(StrictModel):
     default_upstream: Upstream
     failopen: bool = False
     domains: list[DomainRule] = Field(default_factory=list)
+    lists: list[DomainList] = Field(default_factory=list)
+
+    def channels(self) -> list[DomainChannel]:
+        """Every channel the rules and the lists name: what sets, marks and uplinks follow."""
+        return [*self.domains, *self.lists]
 
     @model_validator(mode="before")
     @classmethod
@@ -375,6 +411,10 @@ class RoutingConfig(StrictModel):
         duplicates = sorted({name for name in names if names.count(name) > 1})
         if duplicates:
             raise ValueError(f"routing.domains names a domain twice: {', '.join(duplicates)}")
+        urls = [item.url for item in self.lists]
+        repeated = sorted({url for url in urls if urls.count(url) > 1})
+        if repeated:
+            raise ValueError(f"routing.lists names a URL twice: {', '.join(repeated)}")
         return self
 
 
@@ -654,19 +694,20 @@ class Config(StrictModel):
         if self.routing is None:
             return []
         uplinks = {DomainVia.VPS: Upstream.VPS, DomainVia.DPN: Upstream.DPN}
+        channels = self.routing.channels()
         errors = [
-            f"routing.domains: {rule.domain} goes via {rule.via} but that uplink is not enabled"
-            for rule in self.routing.domains
-            if rule.via in uplinks and not self.upstreams.is_enabled(uplinks[rule.via])
+            f"routing: {item.subject()} goes via {item.via} but that uplink is not enabled"
+            for item in channels
+            if item.via in uplinks and not self.upstreams.is_enabled(uplinks[item.via])
         ]
         countries = {
-            rule.country
-            for rule in self.routing.domains
-            if rule.via is DomainVia.DPN and rule.country is not None
+            item.country
+            for item in channels
+            if item.via is DomainVia.DPN and item.country is not None
         }
         if len(countries) > MAX_RULE_COUNTRIES:
             errors.append(
-                f"routing.domains: {len(countries)} exit countries, at most {MAX_RULE_COUNTRIES}"
+                f"routing: {len(countries)} exit countries, at most {MAX_RULE_COUNTRIES}"
                 " (each one is a consumer of its own)"
             )
         return errors

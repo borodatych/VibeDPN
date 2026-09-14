@@ -77,7 +77,8 @@ ADGUARD_SECRETS = (ADGUARD_CORE_PASSWORD_FILE,)
 # The passphrase of the dpn consumer identity (engine/consumer.py): losing it locks the identity.
 MYST_CONSUMER_PASSPHRASE_FILE = "myst-consumer-passphrase"
 CONSUMER_SECRETS = (MYST_CONSUMER_PASSPHRASE_FILE,)
-# One consumer per exit country of routing.domains (docs/decisions.md, 20), each with its identity.
+# One consumer per exit country of routing rules and lists (docs/decisions.md, 20), each with its
+# identity.
 COUNTRY_PASSPHRASE_TEMPLATE = "myst-consumer-{country}-passphrase"
 # The Wi-Fi passphrase of gateway mode: generated like the others, shown by `vibedpn wifi show`.
 WIFI_SECRETS = (WIFI_PASSPHRASE_FILE,)
@@ -514,8 +515,10 @@ def country_passphrase_file(country: str) -> str:
 
 def country_secrets(config: Config) -> list[str]:
     """The passphrases of the country consumers this configuration runs."""
-    rules = config.routing.domains if config.routing is not None else []
-    countries = sorted({rule.country for rule in rules if rule.via.value == "dpn" and rule.country})
+    channels = config.routing.channels() if config.routing is not None else []
+    countries = sorted(
+        {item.country for item in channels if item.via.value == "dpn" and item.country}
+    )
     return [country_passphrase_file(country) for country in countries]
 
 

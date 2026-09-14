@@ -223,7 +223,7 @@ def test_domain_rules_reject_garbage_twins_and_stray_countries(home: dict[str, A
     home["routing"]["domains"] = [{"domain": "a.com", "via": "direct", "country": "DE"}]
     assert "only chosen for via dpn" in errors_of(home)
     home["routing"]["domains"] = [{"domain": "a.com", "via": "vps"}]
-    assert "a.com goes via vps but that uplink is not enabled" in errors_of(home)
+    assert "routing: a.com goes via vps but that uplink is not enabled" in errors_of(home)
 
 
 def test_old_smart_domains_become_rules_through_the_default_upstream(home: dict[str, Any]) -> None:
