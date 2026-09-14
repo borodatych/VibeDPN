@@ -76,6 +76,9 @@ class RuleIndex:
     def add(self, name: str, set_name: str) -> None:
         self._sets[name.lower().rstrip(".")] = set_name
 
+    def remove(self, name: str) -> None:
+        self._sets.pop(name.lower().rstrip("."), None)
+
     def match(self, qname: str) -> str | None:
         labels = qname.lower().rstrip(".").split(".")
         for start in range(len(labels) - 1):
@@ -208,6 +211,12 @@ class Resolver:
         self.learned[name] = parent
         self._fill(name, set_name)
         return True
+
+    def unlearn(self, name: str) -> None:
+        """A learned name is generic after all (or the owner removed it): it goes direct again.
+        Its addresses leave the channel set when their timeout runs out."""
+        if self.learned.pop(name, None) is not None:
+            self.index.remove(name)
 
     def reload(self, config: Config) -> None:
         """config.yaml changed (rules, mode) and the router rebuilt its table: take the new rules,

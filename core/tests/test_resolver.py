@@ -202,3 +202,12 @@ def test_reload_keeps_what_was_learned_for_sites_still_under_a_rule() -> None:
     assert resolver.index.match("strm.yandex.net") == "smart_dpn_de"
     assert resolver.index.match("nflx-cdn.example") is None
     assert resolver.learned == {"strm.yandex.net": "kinopoisk.ru"}
+
+
+def test_an_unlearned_cdn_goes_direct_again() -> None:
+    resolver = Resolver(RuleIndex.from_config(smart_box()), Upstream(), Nft())
+    assert resolver.learn("analytics.example", "kinopoisk.ru")
+    resolver.unlearn("analytics.example")
+    assert resolver.index.match("analytics.example") is None
+    assert resolver.learned == {}
+    assert resolver.index.match("www.kinopoisk.ru") == "smart_dpn_de"  # the rule itself stays

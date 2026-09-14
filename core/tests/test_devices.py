@@ -216,15 +216,16 @@ def test_a_policy_for_a_device_not_seen_yet_is_listed(tmp_path: Path) -> None:
     assert any("old-tv" in line and "aa:bb:cc:dd:ee:ff" in line for line in lines)
 
 
-# dnsmasq 2.92 (Alpine 3.24) lease lines as written on the colima VM, plus an expired lease,
+# dnsmasq 2.92 (Alpine 3.24) lease lines as written on the colima VM (live leases get an expiry in
+# 2100, so discovery on the real clock keeps them), plus an expired lease,
 # a lease without an end, a nameless client, a foreign address and a torn line.
 LEASES = (
-    "1789371673 76:39:40:76:15:d0 192.168.88.143 lab-phone 01:76:39:40:76:15:d0\n"
+    "4102444800 76:39:40:76:15:d0 192.168.88.143 lab-phone 01:76:39:40:76:15:d0\n"
     "1000 aa:bb:cc:dd:ee:01 192.168.88.144 old-tv *\n"
     "0 aa:bb:cc:dd:ee:02 192.168.88.145 printer *\n"
-    "1789371673 aa:bb:cc:dd:ee:03 192.168.88.146 * *\n"
-    "1789371673 aa:bb:cc:dd:ee:04 10.0.0.5 stranger *\n"
-    "1789371673 aa:bb:cc\n"
+    "4102444800 aa:bb:cc:dd:ee:03 192.168.88.146 * *\n"
+    "4102444800 aa:bb:cc:dd:ee:04 10.0.0.5 stranger *\n"
+    "4102444800 aa:bb:cc\n"
 )
 
 
