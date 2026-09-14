@@ -52,7 +52,11 @@ def box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Recorder
 
 
 def tail(argv: list[str]) -> list[str]:
-    return argv[4:]  # after: docker compose --project-directory <dir>
+    """What follows the options that root Compose at the box: --project-directory and each -f."""
+    start = 4  # docker compose --project-directory <dir>
+    while argv[start : start + 1] == ["-f"]:
+        start += 2
+    return argv[start:]
 
 
 def test_up_refreshes_env_and_starts(box: tuple[Path, Recorder]) -> None:

@@ -12,6 +12,7 @@ import re
 import secrets as secrets_module
 import shutil
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -76,6 +77,8 @@ ADGUARD_SECRETS = (ADGUARD_CORE_PASSWORD_FILE,)
 # The passphrase of the dpn consumer identity (engine/consumer.py): losing it locks the identity.
 MYST_CONSUMER_PASSPHRASE_FILE = "myst-consumer-passphrase"
 CONSUMER_SECRETS = (MYST_CONSUMER_PASSPHRASE_FILE,)
+# One consumer per exit country of routing.domains (docs/decisions.md, 20), each with its identity.
+COUNTRY_PASSPHRASE_TEMPLATE = "myst-consumer-{country}-passphrase"
 # The Wi-Fi passphrase of gateway mode: generated like the others, shown by `vibedpn wifi show`.
 WIFI_SECRETS = (WIFI_PASSPHRASE_FILE,)
 GENERATED_SECRETS = UI_SECRETS + ADGUARD_SECRETS + CONSUMER_SECRETS + WIFI_SECRETS
@@ -140,6 +143,7 @@ def required_secrets(config: Config) -> list[str]:
     if config.provider.enabled:
         needed.append(NODEUI_PASS_FILE)
     needed.extend(generated_secrets(config))
+    needed.extend(country_secrets(config))
     return needed
 
 
@@ -163,11 +167,11 @@ def _present(path: Path) -> bool | None:
         return None
 
 
-def secrets_present(box_dir: Path) -> dict[str, bool | None]:
+def secrets_present(box_dir: Path, extra: Iterable[str] = ()) -> dict[str, bool | None]:
     """Presence of every known secret, checked one by one so a closed secrets/ does not hide
     the node's password file, which lives in the world-readable data/ tree."""
     found: dict[str, bool | None] = {
-        name: _present(box_dir / SECRETS_DIR / name) for name in KNOWN_SECRETS
+        name: _present(box_dir / SECRETS_DIR / name) for name in (*KNOWN_SECRETS, *extra)
     }
     found[NODEUI_PASS_FILE] = _present(box_dir / DATA_DIR / MYST_PROVIDER_DATA / NODEUI_PASS_FILE)
     return found
@@ -502,3 +506,29 @@ def write_file(path: Path, text: str, mode: int) -> Path:
         handle.write(text)
     path.chmod(mode)
     return path
+
+
+def country_passphrase_file(country: str) -> str:
+    return COUNTRY_PASSPHRASE_TEMPLATE.format(country=country.lower())
+
+
+def country_secrets(config: Config) -> list[str]:
+    """The passphrases of the country consumers this configuration runs."""
+    rules = config.routing.domains if config.routing is not None else []
+    countries = sorted({rule.country for rule in rules if rule.via.value == "dpn" and rule.country})
+    return [country_passphrase_file(country) for country in countries]
+
+
+def ensure_country_secrets(box_dir: Path, config: Config) -> list[Path]:
+    """Create the passphrase of every country consumer that has none yet (a country added after
+    `init`); an existing one is never replaced — it unlocks that country's identity."""
+    secrets_dir = box_dir / SECRETS_DIR
+    created = []
+    for name in country_secrets(config):
+        path = secrets_dir / name
+        if _present(path):
+            continue
+        secrets_dir.mkdir(mode=SECRET_DIR_MODE, exist_ok=True)
+        token = secrets_module.token_urlsafe(GENERATED_SECRET_BYTES)
+        created.append(write_file(path, token, SECRET_FILE_MODE))
+    return created

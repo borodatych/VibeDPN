@@ -34,3 +34,23 @@ https://api.github.com/repos/docker/compose/releases/latest .
 **Как применять:** свой генерируемый файл передаётся явным `-f`, и тогда `compose.override.yaml` владельца нужно передать тоже, если он есть; генерируемый файл должен существовать всегда.
 
 **Источник:** https://docs.docker.com/compose/how-tos/multiple-compose-files/merge/
+
+## [провайдер] `extends` из другого файла: сервис страны без копии определения
+
+**Суть (исполнением, Compose v5.1.4, копия `compose.yaml` проекта и `compose.countries.yaml`, 2026-09-14):**
+```yaml
+services:
+  myst-consumer-de:
+    extends:
+      file: compose.yaml
+      service: myst-consumer
+    networks:
+      upstreams:
+        ipv4_address: 10.77.0.40
+    volumes:
+      - ./data/myst-consumer-de:/var/lib/mysterium-node
+```
+`docker compose -f compose.yaml -f compose.countries.yaml --profile consumer config myst-consumer-de` — сервис унаследовал `image`, `profiles: [consumer]`, `cap_add: NET_ADMIN`, `devices: /dev/net/tun`, `healthcheck`, `command` с `--firewall.killSwitch.always`; `ipv4_address` стал `10.77.0.40`; том с тем же `target` заменён, а не добавлен (один `source` — каталог страны).
+`config --services --profile consumer` — `myst-consumer-de` и `myst-consumer`.
+
+**Как применять:** генерируемый сервис страны задаёт только то, что отличается; правка `myst-consumer` в `compose.yaml` доходит до всех стран сама.

@@ -32,16 +32,27 @@ def make_box(tmp_path: Path) -> Path:
     return box
 
 
-def test_compose_argv_roots_at_box_dir() -> None:
-    assert compose_argv(Path("/opt/vibedpn"), "up", "-d") == [
+def test_compose_argv_roots_at_box_dir_and_names_its_files(tmp_path: Path) -> None:
+    base = [
         "docker",
         "compose",
         "--project-directory",
-        "/opt/vibedpn",
-        "up",
-        "-d",
+        str(tmp_path),
+        "-f",
+        str(tmp_path / "compose.yaml"),
     ]
-    assert compose_argv(Path("/b"), "down", all_profiles=True)[4:] == ["--profile", "*", "down"]
+    assert compose_argv(tmp_path, "up", "-d") == [*base, "up", "-d"]
+    assert compose_argv(tmp_path, "down", all_profiles=True) == [*base, "--profile", "*", "down"]
+    (tmp_path / "compose.countries.yaml").write_text("services: {}\n", encoding="utf-8")
+    (tmp_path / "compose.override.yaml").write_text("services: {}\n", encoding="utf-8")
+    assert compose_argv(tmp_path, "ps") == [
+        *base,
+        "-f",
+        str(tmp_path / "compose.countries.yaml"),
+        "-f",
+        str(tmp_path / "compose.override.yaml"),
+        "ps",
+    ]
 
 
 def test_check_box_requires_checkout_and_config(tmp_path: Path) -> None:

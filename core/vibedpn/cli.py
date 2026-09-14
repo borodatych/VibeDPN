@@ -36,6 +36,7 @@ from vibedpn.bootstrap import (
     HostFacts,
     build_config,
     check_password,
+    ensure_country_secrets,
     ensure_replaceable,
     public_address,
     write_box,
@@ -49,6 +50,7 @@ from vibedpn.compose import (
     compose_argv,
     parse_ps,
     preflight,
+    refresh_countries,
     refresh_env,
     run,
     stale_services,
@@ -371,8 +373,11 @@ def _prepare(box_dir: Path, *, refresh: bool) -> Config:
         config = check_box(box_dir)
         preflight()
         if refresh:
+            for created in ensure_country_secrets(box_dir, config):
+                typer.echo(f"created {created} for the consumer of a new exit country")
             check_secrets(box_dir, config)
             refresh_env(box_dir, config)
+            refresh_countries(box_dir, config)
     except ComposeError as exc:
         raise _fail(str(exc)) from None
     return config
