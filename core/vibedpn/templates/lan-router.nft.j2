@@ -17,6 +17,12 @@ table inet vibedpn_router {
 {% endif %}
   }
 {% endfor %}
+{% for set in smart_sets %}
+  set {{ set }} {
+    type ipv4_addr
+    flags timeout
+  }
+{% endfor %}
   chain prerouting {
     type filter hook prerouting priority mangle; policy accept;
     iifname != "{{ lan_interface }}" return

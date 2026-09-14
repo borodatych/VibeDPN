@@ -7,6 +7,7 @@ license = "MIT"
 dependencies = [
   "bcrypt>=5.0.0",
   "cryptography>=46",
+  "dnspython==2.8.0",
   "fastapi>=0.115",
   "httpx>=0.28",
   "jinja2>=3.1",

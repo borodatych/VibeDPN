@@ -22,6 +22,7 @@ from itertools import takewhile
 from vibedpn.config import Config, DevicePolicy, Role, RoutingMode, Upstream, parse_port_range
 from vibedpn.detect import SBIN_DIRS
 from vibedpn.engine.myst import NODEUI_PORT
+from vibedpn.engine.resolver import smart_set_names
 from vibedpn.templating import template_environment
 
 NFT = "nft"
@@ -374,6 +375,8 @@ def router_ruleset(config: Config) -> str | None:
             upstreams_subnet=UPSTREAMS_SUBNET,
             bridge=UPSTREAMS_BRIDGE,
             sets=device_sets(config),
+            # channel sets of routing.domains, filled by the resolver of core (engine/resolver.py)
+            smart_sets=smart_set_names(config),
             block_mark=hex(BLOCK_MARK),
             uplink_policies=[
                 UplinkPolicy(policy.value, hex(UPLINKS[upstream].mark))

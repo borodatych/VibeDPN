@@ -30,3 +30,24 @@ TTL ответа задаёт резолвер ядра, таймаут элем
 Альтернатива dnslib 0.9.26 (BSD) только кодирует и разбирает пакеты, без клиента DoH.
 
 **Источники:** https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/v0.107.79/openapi/openapi.yaml ; https://dnspython.readthedocs.io/en/stable/query.html ; https://pypi.org/pypi/dnspython/json ; https://pypi.org/pypi/dnslib/json
+
+## [провайдер] Смена `upstream_dns` через API перезапускает DNS-сервер
+
+**Суть (исходники v0.107.79, `internal/dnsforward/http.go`):** `handleSetConfig` вызывает `setConfig`; если изменилось `UpstreamDNS`, `setConfigRestartable` возвращает `shouldRestart`, и после `ConfModifier.Apply` идёт `s.Reconfigure` — перезапуск DNS-сервера.
+Так же перезапускают: `LocalPTRResolvers`, `UpstreamDNSFileName`, `BootstrapDNS`, `FallbackDNS`, `EDNSClientSubnet.Enabled`, настройки кэша (`CacheEnabled`, `CacheSize`, `CacheMinTTL`, `CacheMaxTTL`, `CacheOptimistic`), `UseRDNS`, `UsePrivateRDNS`, лимиты запросов, `UpstreamTimeout`.
+Без перезапуска применяются: `BlockingMode`, `BlockedResponseTTL`, `ProtectionEnabled`, `UpstreamMode`, `EDNSCSUseCustom`, `EnableDNSSEC`, `AAAADisabled`.
+
+**Как применять:** список доменов в `upstream_dns` нельзя менять при каждом выученном CDN — это перезапуск DNS всего дома; менять можно только редко (смена режима).
+
+**Источник:** https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/dnsforward/http.go
+
+## [провайдер] `fallback_dns`: закрытый порт апстрима — ответ сразу
+
+**Суть (исполнением, v0.107.79, `upstream_dns: [127.0.0.1:5399]` без слушателя, `fallback_dns: [1.1.1.1]`, кэш выключен, colima VM):**
+AdGuard пишет `dnsproxy: exchange failed upstream=127.0.0.1:5399 … read: connection refused` и отвечает через запасной сервер: `example.com` — 2 ответа, rcode 0, за 0.22 с при `upstream_timeout: 10s`; при `1s` — 0.36 и 0.22 с.
+Отказ соединения на loopback приходит мгновенно, таймаут не ждётся; ждать `upstream_timeout` пришлось бы, только если апстрим принимает запросы и молчит.
+Документация: «List of fallback DNS servers used when upstream DNS servers are not responding» (с v0.107.37).
+
+**Как применять:** резолвер ядра на loopback как апстрим безопасен для дома: остановленное ядро не оставляет устройства без DNS.
+
+**Источник:** https://github.com/AdguardTeam/AdGuardHome/wiki/Configuration (fallback_dns).

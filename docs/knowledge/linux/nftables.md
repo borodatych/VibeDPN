@@ -69,3 +69,15 @@ ACCEPT`): `ip6 saddr fe80::/10 ip6 daddr fe80::/10 udp sport 547 udp dport 546 a
 https://www.rfc-editor.org/rfc/rfc8415#section-16 (клиент шлёт с link-local),
 https://wiki.nftables.org/wiki-nftables/index.php/Configuring_tables (add/delete table);
 исполнение 2026-09-12.
+
+## [провайдер] `add element` не продлевает таймаут существующего элемента
+
+**Контекст:** Stage 10, резолвер ядра кладёт адреса доменов в наборы `smart_*` с таймаутом и продлевает его при каждом ответе, 2026-09-14.
+
+**Суть (исполнением, nftables 1.1.6 в Alpine 3.24, набор `type ipv4_addr; flags timeout`, colima VM):**
+`add element … { 198.51.100.7 timeout 30s }`, затем `add element … { 198.51.100.7 timeout 600s }` — код 0, но элемент остаётся `timeout 30s expires 29s…`.
+`create element` на существующем — `Error: Could not process rule: File exists`.
+`delete element` и отдельный `add element` дают `timeout 10m`, но между командами адреса в наборе нет.
+Одна транзакция `nft -f -` из трёх строк — `add element … { a timeout T, b timeout T }`, `delete element … { a, b }`, `add element … { a timeout T, b timeout T }` — код 0: существующий `a` получил `timeout 10m`, новый `b` создан с тем же таймаутом.
+Транзакция применяется целиком или не применяется, поэтому адрес не выпадает из набора.
+
