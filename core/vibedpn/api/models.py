@@ -173,3 +173,20 @@ class NetworkView(BaseModel):
 
 class NetworkUpdate(BaseModel):
     lan_interface: str | None  # None: sidecar on the default-route interface
+
+
+class DomainRuleUpdate(BaseModel):
+    """The channel of a site in routing.mode smart; the domain comes from the path."""
+
+    via: Literal["vps", "dpn", "direct"]
+    country: str | None = None
+    learn: bool = True
+    also: list[str] = []
+
+
+class DomainRuleView(BaseModel):
+    domain: str
+    via: str
+    country: str | None
+    learn: bool
+    also: list[str]

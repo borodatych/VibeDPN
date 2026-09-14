@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from vibedpn import __version__
 from vibedpn.api.consumer import ConsumerStatus
@@ -15,6 +15,8 @@ from vibedpn.api.models import (
     DevicePolicyUpdate,
     DevicePolicyView,
     DeviceView,
+    DomainRuleUpdate,
+    DomainRuleView,
     DpnCountry,
     DpnCountryUpdate,
     DpnCountryView,
@@ -34,12 +36,15 @@ from vibedpn.api.models import (
 from vibedpn.api.state import BoxState
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.bootstrap import BootstrapError, network_for
-from vibedpn.config import Config, DeviceConfig, NetworkMode, RoutingMode, Upstream
+from vibedpn.config import Config, DeviceConfig, DomainRule, NetworkMode, RoutingMode, Upstream
 from vibedpn.config_edit import (
     ConfigEditError,
     DeviceIdent,
     DeviceNotFoundError,
+    RuleNotFoundError,
+    remove_domain_rule,
     set_device,
+    set_domain_rule,
     set_dpn_country,
     set_network,
     set_routing,
@@ -350,6 +355,66 @@ def _host_interfaces() -> tuple[Interface | None, list[Interface]]:
     return probe.default_interface(), probe.interfaces()
 
 
+def _rule_view(rule: DomainRule) -> DomainRuleView:
+    return DomainRuleView(
+        domain=rule.domain,
+        via=rule.via.value,
+        country=rule.country,
+        learn=rule.learn,
+        also=list(rule.also),
+    )
+
+
+def _add_rule_routes(application: FastAPI, state: BoxState | None) -> None:
+    """``/rules``: domain rules of routing.mode smart, edited in config.yaml, applied live."""
+
+    def lan_state() -> BoxState:
+        if state is None or state.config.routing is None:
+            raise HTTPException(status_code=404, detail=NO_LAN)
+        return state
+
+    def run_edit(box_state: BoxState, change: Callable[[Path], tuple[Config, bool]]) -> Config:
+        try:
+            return box_state.edit(change)
+        except RuleNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ConfigEditError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RouterError as exc:
+            raise HTTPException(
+                status_code=503, detail=f"router refused the change, config.yaml restored: {exc}"
+            ) from exc
+
+    @application.get("/rules", response_model=list[DomainRuleView])
+    def rules() -> list[DomainRuleView]:
+        routing = lan_state().config.routing
+        return [_rule_view(rule) for rule in routing.domains] if routing is not None else []
+
+    @application.put("/rules/{domain}", response_model=DomainRuleView)
+    def put_rule(domain: str, request: DomainRuleUpdate) -> DomainRuleView:
+        box_state = lan_state()
+        try:
+            rule = DomainRule.model_validate({"domain": domain, **request.model_dump()})
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()[0]["msg"]) from exc
+        updated = run_edit(box_state, lambda path: set_domain_rule(path, rule))
+        routing = updated.routing
+        saved = (
+            next((item for item in routing.domains if item.domain == rule.domain), None)
+            if routing
+            else None
+        )
+        if saved is None:  # set_domain_rule wrote it; keeps the type narrow
+            raise HTTPException(status_code=500, detail="the rule did not reach config.yaml")
+        return _rule_view(saved)
+
+    @application.delete("/rules/{domain}", status_code=204)
+    def delete_rule(domain: str) -> Response:
+        box_state = lan_state()
+        run_edit(box_state, lambda path: remove_domain_rule(path, domain))
+        return Response(status_code=204)
+
+
 def _add_network_routes(
     application: FastAPI, state: BoxState | None, interfaces_source: InterfacesSource
 ) -> None:
@@ -557,6 +622,7 @@ def create_app(
     )
     _add_dpn_routes(application, current, state, dpn_offers or _default_dpn_offers)
     _add_network_routes(application, state, interfaces_source)
+    _add_rule_routes(application, state)
 
     @application.get("/health", response_model=Health)
     def health() -> Health:

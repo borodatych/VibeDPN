@@ -24,7 +24,7 @@ from vibedpn.api.client import (
     StatsUnavailableError,
     fetch_provider_stats,
 )
-from vibedpn.api.models import PeerFile
+from vibedpn.api.models import DomainRuleUpdate, PeerFile
 from vibedpn.atomic import write_private
 from vibedpn.bootstrap import (
     CONFIG_FILE,
@@ -55,6 +55,7 @@ from vibedpn.compose import (
 from vibedpn.config import (
     Config,
     DevicePolicy,
+    DomainVia,
     NetworkMode,
     Role,
     RoutingMode,
@@ -806,6 +807,11 @@ device_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(device_app, name="device")
+rule_app = typer.Typer(
+    help="Domain rules of routing.mode smart: which channel each site takes.",
+    no_args_is_help=True,
+)
+app.add_typer(rule_app, name="rule")
 
 PeerName = Annotated[
     str, typer.Argument(help="Peer name: 1-32 lowercase letters, digits and hyphens.")
@@ -835,7 +841,7 @@ def _core_call(call: Callable[[], T]) -> T:
         return call()
     except CoreUnreachableError:
         raise _fail("core is not running; start the box with `vibedpn up`") from None
-    except (PeerRequestError, DeviceRequestError) as exc:
+    except (PeerRequestError, DeviceRequestError, core_api.RuleRequestError) as exc:
         raise _fail(str(exc)) from None
 
 
@@ -932,6 +938,58 @@ def _lan_box(box_dir: Path) -> Config:
 
 
 DeviceId = Annotated[str, typer.Argument(help="The device: its MAC, or its IPv4 address.")]
+
+
+@rule_app.command("list")
+def rule_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """The domain rules of routing.mode smart: each site with its channel."""
+    config = _lan_box(box_dir)
+    rules = _core_call(lambda: core_api.list_rules(config.api.port))
+    if not rules:
+        typer.echo("no domain rules (vibedpn rule add <domain> vps|dpn|direct)")
+    for rule in rules:
+        country = f" {rule.country}" if rule.country else ""
+        extras = []
+        if not rule.learn:
+            extras.append("learn off")
+        if rule.also:
+            extras.append("also " + ", ".join(rule.also))
+        suffix = f"  ({'; '.join(extras)})" if extras else ""
+        typer.echo(f"{rule.domain}  {rule.via}{country}{suffix}")
+
+
+@rule_app.command("add")
+def rule_add(
+    domain: Annotated[str, typer.Argument(help="The site; its subdomains follow it.")],
+    via: Annotated[DomainVia, typer.Argument(help="vps | dpn | direct.")],
+    country: Annotated[
+        str | None, typer.Option("--country", help="Exit country of via dpn (ISO code).")
+    ] = None,
+    learn: Annotated[
+        bool, typer.Option("--learn/--no-learn", help="CDNs the site calls follow it.")
+    ] = True,
+    also: Annotated[
+        list[str] | None, typer.Option("--also", help="A CDN pinned to the site; repeatable.")
+    ] = None,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Give a site its channel in routing.mode smart; a rule for the same domain is replaced."""
+    config = _lan_box(box_dir)
+    update = DomainRuleUpdate(via=via.value, country=country, learn=learn, also=also or [])
+    rule = _core_call(lambda: core_api.set_rule(config.api.port, domain, update))
+    country_text = f" {rule.country}" if rule.country else ""
+    typer.echo(f"{rule.domain}: via {rule.via}{country_text}, applied")
+
+
+@rule_app.command("rm")
+def rule_rm(
+    domain: Annotated[str, typer.Argument(help="The site whose rule goes.")],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Remove the rule of a site: in routing.mode smart it goes direct again."""
+    config = _lan_box(box_dir)
+    _core_call(lambda: core_api.remove_rule(config.api.port, domain))
+    typer.echo(f"{domain}: rule removed, goes direct in smart")
 
 
 @device_app.command("list")

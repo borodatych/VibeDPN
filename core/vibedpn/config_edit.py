@@ -23,9 +23,11 @@ from vibedpn.atomic import write_like
 from vibedpn.config import (
     Config,
     DevicePolicy,
+    DomainRule,
     NetworkConfig,
     RoutingMode,
     Upstream,
+    normalize_domain,
     normalize_mac,
     parse_yaml,
 )
@@ -240,5 +242,59 @@ def unset_device(path: Path, ident: DeviceIdent) -> tuple[Config, bool]:
                 del devices[index]
                 return
         raise DeviceNotFoundError(f"config.yaml has no device {ident.mac or ident.ip}")
+
+    return _edit(path, mutate)
+
+
+class RuleNotFoundError(ConfigEditError):
+    """``config.yaml`` has no rule for this domain."""
+
+
+def _rule_list(data: CommentedMap, path: Path) -> CommentedSeq:
+    routing = data.get("routing")
+    if not isinstance(routing, CommentedMap):
+        raise ConfigEditError(f"{path} has no routing section: a box of this role routes no LAN")
+    rules = routing.get("domains")
+    if rules is None:
+        rules = CommentedSeq()
+        routing["domains"] = rules
+    if not isinstance(rules, CommentedSeq):
+        raise ConfigEditError("config.yaml: routing.domains must be a list")
+    rules.fa.set_block_style()  # the template writes `domains: []`
+    return rules
+
+
+def set_domain_rule(path: Path, rule: DomainRule) -> tuple[Config, bool]:
+    """Add the rule of a site, or replace the one config.yaml has for that domain."""
+
+    def mutate(data: CommentedMap) -> None:
+        rules = _rule_list(data, path)
+        entry = CommentedMap([("domain", rule.domain), ("via", rule.via.value)])
+        if rule.country is not None:
+            entry["country"] = rule.country
+        if not rule.learn:
+            entry["learn"] = False
+        if rule.also:
+            entry["also"] = CommentedSeq(rule.also)
+        for index, item in enumerate(rules):
+            if isinstance(item, dict) and str(item.get("domain", "")).lower() == rule.domain:
+                rules[index] = entry
+                return
+        rules.append(entry)
+
+    return _edit(path, mutate)
+
+
+def remove_domain_rule(path: Path, domain: str) -> tuple[Config, bool]:
+    """Remove the rule of a site: in smart it goes direct again."""
+    wanted = normalize_domain(domain)
+
+    def mutate(data: CommentedMap) -> None:
+        rules = _rule_list(data, path)
+        for index, item in enumerate(rules):
+            if isinstance(item, dict) and str(item.get("domain", "")).lower() == wanted:
+                del rules[index]
+                return
+        raise RuleNotFoundError(f"config.yaml has no rule for {wanted}")
 
     return _edit(path, mutate)

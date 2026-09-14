@@ -17,6 +17,8 @@ from vibedpn.api.models import (
     DevicePolicyUpdate,
     DevicePolicyView,
     DeviceView,
+    DomainRuleUpdate,
+    DomainRuleView,
     DpnCountryView,
     PeerCreate,
     PeerFile,
@@ -53,6 +55,10 @@ class PeerRequestError(RuntimeError):
 
 class DeviceRequestError(RuntimeError):
     """``core`` refused or failed a device request; the text is its ``detail``."""
+
+
+class RuleRequestError(RuntimeError):
+    """Core refused a domain rule, or answered something else."""
 
 
 class RoutingRequestError(RuntimeError):
@@ -257,3 +263,49 @@ def set_dpn_country(
         raise RoutingRequestError(
             f"core answered something that is not a dpn country ({VERSION_HINT})"
         ) from exc
+
+
+def list_rules(port: int, transport: httpx.BaseTransport | None = None) -> list[DomainRuleView]:
+    response = _peer_request(
+        port, "GET", "/rules", httpx.codes.OK, transport=transport, error=RuleRequestError
+    )
+    try:
+        return [DomainRuleView.model_validate(item) for item in response.json()]
+    except (ValueError, ValidationError, TypeError) as exc:
+        raise RuleRequestError(
+            f"core answered something that is not rules ({VERSION_HINT})"
+        ) from exc
+
+
+def set_rule(
+    port: int,
+    domain: str,
+    update: DomainRuleUpdate,
+    transport: httpx.BaseTransport | None = None,
+) -> DomainRuleView:
+    response = _peer_request(
+        port,
+        "PUT",
+        f"/rules/{quote(domain, safe='')}",
+        httpx.codes.OK,
+        body=update.model_dump(mode="json"),
+        transport=transport,
+        error=RuleRequestError,
+    )
+    try:
+        return DomainRuleView.model_validate(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise RuleRequestError(
+            f"core answered something that is not a rule ({VERSION_HINT})"
+        ) from exc
+
+
+def remove_rule(port: int, domain: str, transport: httpx.BaseTransport | None = None) -> None:
+    _peer_request(
+        port,
+        "DELETE",
+        f"/rules/{quote(domain, safe='')}",
+        httpx.codes.NO_CONTENT,
+        transport=transport,
+        error=RuleRequestError,
+    )
