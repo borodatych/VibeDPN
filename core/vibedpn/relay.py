@@ -185,7 +185,7 @@ class Relay:
         try:
             opened = await self._open(host, hello, cut, split=False)
         except (TimeoutError, ConnectionError, RelayError) as exc:
-            self.log(f"{host}: the handshake does not go through as it is ({exc}); cutting it")
+            self.log(f"{host}: no handshake as it is ({exc or type(exc).__name__}); cutting it")
             opened = await self._open(host, hello, cut, split=True)
             self.split[host] = True
             self.log(f"{host}: the cut ClientHello goes through")
@@ -196,7 +196,14 @@ class Relay:
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
-            hello = await read_hello(reader)
+            try:
+                hello = await read_hello(reader)
+            except asyncio.IncompleteReadError as exc:
+                # nothing was said at all: a health check or a port scan, not worth a line
+                if not exc.partial:
+                    writer.close()
+                    return
+                raise
             host, at = server_name(hello)
             if not self.serves(host):
                 raise RelayError(f"{host} is not in {self.zone}: the relay serves that zone only")

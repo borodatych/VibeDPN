@@ -102,11 +102,12 @@ async def talk(relay: Relay, isp: FakeIsp, host: str = HOST) -> bytes:
     return answer + rest
 
 
-def relay_to(isp: FakeIsp, **kwargs: object) -> Relay:
+def relay_to(isp: FakeIsp, said: list[str] | None = None, **kwargs: object) -> Relay:
     async def resolve(_host: str) -> tuple[str, int]:
         return "127.0.0.1", isp.port
 
-    return Relay(resolve=resolve, log=lambda _message: None, **kwargs)  # type: ignore[arg-type]
+    lines = said if said is not None else []
+    return Relay(resolve=resolve, log=lines.append, **kwargs)  # type: ignore[arg-type]
 
 
 def test_a_blocked_name_goes_through_cut_and_the_choice_is_remembered() -> None:
@@ -147,5 +148,24 @@ def test_a_name_outside_the_zone_is_refused() -> None:
         relay = relay_to(isp)
         assert await talk(relay, isp, host="example.com") == b""
         assert isp.records == [] and relay.split == {}
+
+    asyncio.run(scenario())
+
+
+def test_a_caller_that_says_nothing_closes_without_a_word() -> None:
+    """The healthcheck of the container opens the port and closes it: not a line every 30 s."""
+
+    async def scenario() -> None:
+        isp = FakeIsp(blocked=None)
+        await isp.start()
+        said: list[str] = []
+        relay = relay_to(isp, said=said)
+        server = await asyncio.start_server(relay.handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        _reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.close()
+        await asyncio.sleep(0.05)
+        server.close()
+        assert said == [] and isp.records == []
 
     asyncio.run(scenario())
