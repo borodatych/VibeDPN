@@ -85,9 +85,11 @@ vm 'uname -r; /usr/sbin/modinfo -n mac80211_hwsim' || fail "the VM kernel has no
 
 log "vm: this checkout, installed by install.sh as on a box"
 tar -C "$REPO" -cf - . | vm "mkdir -p src && tar -C src -xf -"
-vm "git -C src checkout -q -B $BRANCH" || fail "cannot branch the copied checkout"
-vm "sudo DEBIAN_FRONTEND=noninteractive apt-get update -q >/dev/null && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q iw wpasupplicant dhcpcd-base curl >/dev/null" ||
-  fail "cannot install the device-side tools in the VM"
+vm "sudo DEBIAN_FRONTEND=noninteractive apt-get update -q >/dev/null && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q git iw wpasupplicant dhcpcd-base curl >/dev/null" ||
+  fail "cannot install git and the device-side tools in the VM"
+# install.sh clones the copy as root, and git refuses a repository another user owns
+vm "sudo git config --system --add safe.directory '*' && git -C src checkout -q -B $BRANCH" ||
+  fail "cannot branch the copied checkout"
 vm "sudo VIBEDPN_REPO=\$HOME/src VIBEDPN_BRANCH=$BRANCH bash src/install.sh" || fail "install.sh failed in the VM"
 
 log "vm: the images the box runs"
