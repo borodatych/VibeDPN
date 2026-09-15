@@ -5,7 +5,15 @@ import ssl
 
 import pytest
 
-from vibedpn.relay import RECORD_HEADER, Relay, RelayError, read_hello, server_name, split_hello
+from vibedpn.relay import (
+    RECORD_HEADER,
+    Relay,
+    RelayError,
+    read_hello,
+    reason,
+    server_name,
+    split_hello,
+)
 
 HOST = "observer.mysterium.network"
 
@@ -169,3 +177,11 @@ def test_a_caller_that_says_nothing_closes_without_a_word() -> None:
         assert said == [] and isp.records == []
 
     asyncio.run(scenario())
+
+
+def test_the_log_names_a_failure_that_carries_no_text() -> None:
+    """A timeout prints as an empty string: the log would then explain nothing."""
+    assert reason(TimeoutError()) == "TimeoutError"
+    assert (
+        reason(RelayError("the server closed the connection")) == "the server closed the connection"
+    )

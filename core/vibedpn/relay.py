@@ -51,6 +51,11 @@ class RelayError(RuntimeError):
     """A connection this relay cannot serve, with the reason the owner reads in the log."""
 
 
+def reason(exc: BaseException) -> str:
+    """What to write in the log: a timeout carries no text, so its name stands for it."""
+    return str(exc) or type(exc).__name__
+
+
 def _u16(data: bytes, at: int) -> int:
     if at + 2 > len(data):
         raise RelayError("the TLS record ends in the middle of a length")
@@ -185,7 +190,7 @@ class Relay:
         try:
             opened = await self._open(host, hello, cut, split=False)
         except (TimeoutError, ConnectionError, RelayError) as exc:
-            self.log(f"{host}: no handshake as it is ({exc or type(exc).__name__}); cutting it")
+            self.log(f"{host}: no handshake as it is ({reason(exc)}); cutting it")
             opened = await self._open(host, hello, cut, split=True)
             self.split[host] = True
             self.log(f"{host}: the cut ClientHello goes through")
@@ -217,7 +222,7 @@ class Relay:
             asyncio.IncompleteReadError,
             OSError,
         ) as exc:
-            self.log(f"connection refused: {exc}")
+            self.log(f"connection refused: {reason(exc)}")
             writer.close()
             return
         writer.write(answer)

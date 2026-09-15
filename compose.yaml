@@ -155,6 +155,11 @@ services:
     profiles:
       - provider
     restart: unless-stopped
+    # The nodes talk to mysterium.network through the relay: it has to answer before they start
+    # (a node that cannot reach those names exits, and Docker restarts it).
+    depends_on:
+      myst-relay:
+        condition: service_healthy
     cap_add:
       - NET_ADMIN
     devices:
@@ -237,6 +242,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    # The nodes talk to mysterium.network through the relay: it has to answer before they start
+    # (a node that cannot reach those names exits, and Docker restarts it).
+    depends_on:
+      myst-relay:
+        condition: service_healthy
     cap_add:
       - NET_ADMIN
     devices:
