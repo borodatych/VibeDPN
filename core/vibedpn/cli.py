@@ -36,6 +36,7 @@ from vibedpn.atomic import write_private
 from vibedpn.bootstrap import (
     CONFIG_FILE,
     DEFAULT_BOX_DIR,
+    SECRET_DIR_MODE,
     SECRETS_DIR,
     Answers,
     BootstrapError,
@@ -45,6 +46,7 @@ from vibedpn.bootstrap import (
     ensure_country_secrets,
     ensure_replaceable,
     public_address,
+    read_peer_config,
     set_panel_password,
     write_box,
 )
@@ -59,10 +61,12 @@ from vibedpn.compose import (
     preflight,
     refresh_countries,
     refresh_env,
+    refresh_wg_uplinks,
     run,
     stale_services,
 )
 from vibedpn.config import (
+    WG_UPLINK_NAME,
     Config,
     DevicePolicy,
     DomainVia,
@@ -70,11 +74,16 @@ from vibedpn.config import (
     Role,
     RoutingMode,
     UiVariant,
-    Upstream,
     WifiConfig,
     check_endpoint,
 )
-from vibedpn.config_edit import ConfigEditError, set_routing
+from vibedpn.config_edit import (
+    ConfigEditError,
+    WgUplinkNotFoundError,
+    remove_wg_uplink,
+    set_routing,
+    set_wg_uplink,
+)
 from vibedpn.detect import DetectError, HostProbe, find_tool
 from vibedpn.device_view import render_devices
 from vibedpn.doctor import evaluate, gather, has_failures, render, to_json
@@ -391,6 +400,7 @@ def _prepare(box_dir: Path, *, refresh: bool) -> Config:
             check_secrets(box_dir, config)
             refresh_env(box_dir, config)
             refresh_countries(box_dir, config)
+            refresh_wg_uplinks(box_dir, config)
     except ComposeError as exc:
         raise _fail(str(exc)) from None
     return config
@@ -600,7 +610,7 @@ def _routing_line(config: Config) -> str:
         return "routing: -"
     return (
         f"routing: mode={config.routing.mode.value}"
-        f" default_upstream={config.routing.default_upstream.value}"
+        f" default_upstream={config.routing.default_upstream}"
         f" failopen={str(config.routing.failopen).lower()}"
     )
 
@@ -614,7 +624,7 @@ class SwitchableMode(StrEnum):
 
 
 def _switch_routing(
-    box_dir: Path, *, mode: RoutingMode | None = None, upstream: Upstream | None = None
+    box_dir: Path, *, mode: RoutingMode | None = None, upstream: str | None = None
 ) -> None:
     """Change routing through core when it runs: config.yaml, the router and AdGuard follow live
     and nothing restarts. Without core the file is changed and applies at `vibedpn up`."""
@@ -657,11 +667,82 @@ def mode(
 
 @app.command()
 def upstream(
-    value: Annotated[Upstream, typer.Argument(help="The uplink of routing.mode full.")],
+    value: Annotated[
+        str,
+        typer.Argument(help="The uplink of routing.mode full: vps, dpn, or wg-<name>."),
+    ],
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
     """Switch routing.default_upstream and apply it."""
     _switch_routing(box_dir, upstream=value)
+
+
+uplink_app = typer.Typer(
+    help="Own exits by a ready WireGuard file, one per name (docs/manuals/wgUplink.md).",
+    no_args_is_help=True,
+)
+app.add_typer(uplink_app, name="uplink")
+
+
+def _wg_conf_path(box_dir: Path, name: str) -> Path:
+    if not WG_UPLINK_NAME.fullmatch(name):
+        raise _fail(f"{name!r} is not a usable name: lowercase letters, digits and '-', up to 24")
+    return box_dir / SECRETS_DIR / f"wg-{name}.conf"
+
+
+@uplink_app.command("add")
+def uplink_add(
+    name: Annotated[str, typer.Argument(help="Name of the exit: a-z, 0-9 and '-'.")],
+    peer_config: Annotated[Path, typer.Argument(help="The WireGuard .conf of the provider.")],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Take a ready WireGuard file as an exit of this box; `vibedpn up` starts it."""
+    target = _wg_conf_path(box_dir, name)
+    try:
+        text = read_peer_config(peer_config)
+    except BootstrapError as exc:
+        raise _fail(str(exc)) from None
+    try:
+        target.parent.mkdir(mode=SECRET_DIR_MODE, exist_ok=True)
+        write_private(target, text)
+    except OSError as exc:
+        raise _fail(f"cannot write {target}: {exc.strerror}; run with sudo?") from None
+    try:
+        set_wg_uplink(box_dir / CONFIG_FILE, name)
+    except ConfigEditError as exc:
+        raise _fail(str(exc)) from None
+    typer.echo(f"uplink wg-{name}: {target} saved; `vibedpn up`, then `vibedpn upstream wg-{name}`")
+
+
+@uplink_app.command("rm")
+def uplink_rm(
+    name: Annotated[str, typer.Argument(help="Name of the exit to drop.")],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Drop a named exit; its file in secrets/ stays where it is."""
+    try:
+        remove_wg_uplink(box_dir / CONFIG_FILE, name)
+    except WgUplinkNotFoundError as exc:
+        raise _fail(str(exc)) from None
+    except ConfigEditError as exc:
+        raise _fail(str(exc)) from None
+    kept = _wg_conf_path(box_dir, name)
+    typer.echo(f"uplink wg-{name} removed; {kept} kept — delete it yourself if it is not needed")
+
+
+@uplink_app.command("show")
+def uplink_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """The named WireGuard exits of config.yaml and whether their files are in place."""
+    config = check_box(box_dir)
+    if not config.upstreams.wg:
+        typer.echo("no WireGuard exits (vibedpn uplink add <name> <file.conf>)")
+        return
+    for name in sorted(config.upstreams.wg):
+        uplink = config.upstreams.wg[name]
+        state = "enabled" if uplink.enabled else "disabled"
+        path = box_dir / SECRETS_DIR / f"wg-{name}.conf"
+        file_state = "file in place" if path.is_file() else f"NO FILE at {path}"
+        typer.echo(f"wg-{name}  {state}  ({file_state})")
 
 
 dpn_app = typer.Typer(
@@ -760,7 +841,8 @@ def status(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     typer.echo(f"role: {config.role.value}")
     if config.routing is not None:
         typer.echo(_routing_line(config))
-    uplinks = [name for name in ("vps", "dpn") if config.upstreams.is_enabled(Upstream(name))]
+    keys = ["vps", "dpn", *(f"wg-{name}" for name in sorted(config.upstreams.wg))]
+    uplinks = [key for key in keys if config.upstreams.is_key_enabled(key)]
     typer.echo(f"uplinks: {', '.join(uplinks) or '-'}")
     for line in _router_lines(config):
         typer.echo(line)

@@ -24,7 +24,8 @@ export const routingUpdateMutation = root.lets
   .input(
     z.object({
       mode: z.enum(['off', 'full']).optional(),
-      default_upstream: z.enum(['vps', 'dpn']).optional(),
+      // an uplink key, not a fixed set: the names of the WireGuard exits are the owner's
+      default_upstream: z.string().optional(),
     }),
   )
   .loader(async ({ input }) => {

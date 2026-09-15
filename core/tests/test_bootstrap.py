@@ -52,7 +52,7 @@ def test_home_config_from_detected_lan() -> None:
     assert str(config.network.lan_subnet) == "192.168.1.0/24"
     assert config.routing is not None
     assert config.routing.mode.value == "off"
-    assert config.routing.default_upstream.value == "dpn"
+    assert config.routing.default_upstream == "dpn"
     assert config.upstreams.dpn.enabled and config.provider.enabled
     assert [p.value for p in config.compose_profiles()] == [
         "provider",
@@ -67,7 +67,7 @@ def test_client_config_uses_vps_uplink() -> None:
     config = build_config(Answers(Role.CLIENT, password="x" * 8, peer_config=Path("p.conf")), LAN)
     assert config.upstreams.vps.enabled and not config.upstreams.dpn.enabled
     assert config.routing is not None
-    assert config.routing.default_upstream.value == "vps"
+    assert config.routing.default_upstream == "vps"
     assert not config.provider.enabled
 
 

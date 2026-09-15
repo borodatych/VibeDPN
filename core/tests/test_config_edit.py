@@ -57,7 +57,7 @@ def test_an_invalid_result_is_refused_before_writing(tmp_path: Path) -> None:
     path = write(tmp_path, raw)
     before = path.read_text(encoding="utf-8")
     with pytest.raises(ConfigEditError, match=r"config\.yaml not changed: .*vps"):
-        set_routing(path, mode=RoutingMode.FULL, upstream=Upstream.VPS)
+        set_routing(path, mode=RoutingMode.FULL, upstream=Upstream.VPS.value)
     assert path.read_text(encoding="utf-8") == before
 
 

@@ -2,6 +2,9 @@
 /config.yaml
 /config.yaml.bak
 /.env
+# Compose files vibedpn generates on the box at every `up`: the checkout is the box directory.
+/compose.countries.yaml
+/compose.wg.yaml
 /secrets/
 /data/
 /backups/

@@ -67,7 +67,8 @@ network:
 # Политика для трафика LAN.
 # mode: off — всё напрямую; full — всё через default_upstream;
 #       smart — по правилам domains, остальное напрямую; устройства с политикой — как в full.
-# default_upstream: vps | dpn — куда идёт трафик в full; у роли home есть только dpn.
+# default_upstream: vps | dpn | wg-<имя> — куда идёт трафик в full; у роли home есть dpn
+#   и собственные выходы по файлу WireGuard из upstreams.wg (имя берётся оттуда).
 # failopen: false — упал аплинк, трафик стоит (kill-switch); true — уходит напрямую, осознанно.
 # domains: правила режима smart. Домен покрывает поддомены; via: vps | dpn | direct;
 #   country — страна выхода для dpn; learn — CDN, которые сайт вызывает, идут за ним сами;
@@ -76,7 +77,7 @@ network:
 #   ядро скачивает список, хранит копию и обновляет раз в сутки; правило domains сильнее списка.
 routing:
   mode: {{ config.routing.mode.value }}
-  default_upstream: {{ config.routing.default_upstream.value }}
+  default_upstream: {{ config.routing.default_upstream }}
   failopen: {{ config.routing.failopen | tojson }}
 {% if config.routing.domains %}
   domains:
@@ -146,6 +147,8 @@ devices: []
 # Аплинки — куда коробка может отправлять трафик.
 # vps: приватный WireGuard-туннель к своей VPS (только роль client; peer-файл — secrets/wg-client.conf).
 # dpn: consumer Mysterium — выход через ноду сети; country — ISO 3166-1 alpha-2, без строки — любая.
+# wg: свои выходы по готовому файлу WireGuard (бесплатный тариф, платный поставщик, вторая коробка);
+#   имя становится файлом secrets/wg-<имя>.conf, контейнером wg-<имя> и ключом маршрутизации.
 upstreams:
   vps:
     enabled: {{ config.upstreams.vps.enabled | tojson }}
@@ -157,6 +160,19 @@ upstreams:
     country: {{ config.upstreams.dpn.country }}
 {% else %}
     # country: DE
+{% endif %}
+{% if config.upstreams.wg %}
+  wg:
+{% for name, uplink in config.upstreams.wg.items() | sort %}
+    {{ name }}:
+      enabled: {{ uplink.enabled | tojson }}
+{% endfor %}
+{% else %}
+  # Свои выходы по готовому файлу WireGuard: имя -> настройки, файл в secrets/wg-<имя>.conf.
+  # Подключается командой `vibedpn uplink add <имя> <файл.conf>` (docs/manuals/wgUplink.md).
+  # wg:
+  #   proton:
+  #     enabled: true
 {% endif %}
 {% endif %}
 

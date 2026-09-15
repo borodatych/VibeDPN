@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from vibedpn.config import DevicePolicy, Upstream
+from vibedpn.config import DevicePolicy
 
 
 class PeerCreate(BaseModel):
@@ -117,7 +117,8 @@ class RoutingUpdate(BaseModel):
     """A change of routing; at least one field."""
 
     mode: Literal["off", "full", "smart"] | None = None
-    default_upstream: Upstream | None = None
+    # An uplink key: vps, dpn, or wg-<name>; the box refuses one it does not run.
+    default_upstream: str | None = None
 
 
 class RoutingView(BaseModel):

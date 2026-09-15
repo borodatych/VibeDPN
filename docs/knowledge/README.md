@@ -27,6 +27,7 @@
 - [hostNetworkAndProfiles.md](compose/hostNetworkAndProfiles.md) — что нельзя с `network_mode: host`
   (ports, networks, sysctl `net.*`), статические IP, профили, `compose.yaml` вместо `docker-compose.yml`
 - [cliWrapper.md](compose/cliWrapper.md) — `--project-directory`, `--remove-orphans`, `--profile '*'`
+- [extendsMerging.md](compose/extendsMerging.md) — `extends` складывает профили и заменяет монтирования по цели: проверено `docker compose config`
   для `down`, двухшаговый `restart`, `.env` как производная перед `up`
 
 ## docker

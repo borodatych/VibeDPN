@@ -1067,7 +1067,7 @@ def _read_rp_filter() -> int | None:
 
 def _dns_leak_result(config: Config, loaded: bool | None) -> CheckResult:
     """routing.mode full: AdGuard's upstream queries must take the uplink (decision 14)."""
-    upstream = config.routing.default_upstream.value if config.routing else "-"
+    upstream = config.routing.default_upstream if config.routing else "-"
     if loaded:
         found = f"AdGuard asks its upstreams through uplink {upstream}"
         return CheckResult("dns leak", Verdict.OK, found)

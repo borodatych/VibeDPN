@@ -30,7 +30,7 @@ from vibedpn.api.models import (
     RoutingUpdate,
     RoutingView,
 )
-from vibedpn.config import DevicePolicy, RoutingMode, Upstream
+from vibedpn.config import DevicePolicy, RoutingMode
 from vibedpn.engine.myst import STATS_DEADLINE_SECONDS, ProviderStats
 
 CORE_API_HOST = "127.0.0.1"
@@ -226,7 +226,7 @@ def unset_device(port: int, ident: str, transport: httpx.BaseTransport | None = 
 def set_routing(
     port: int,
     mode: RoutingMode | None = None,
-    upstream: Upstream | None = None,
+    upstream: str | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> RoutingView:
     body = RoutingUpdate.model_validate(

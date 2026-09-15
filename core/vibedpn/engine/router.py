@@ -20,6 +20,7 @@ from enum import StrEnum
 from itertools import takewhile
 
 from vibedpn.config import (
+    WG_KEY_PREFIX,
     Config,
     DevicePolicy,
     DomainVia,
@@ -336,10 +337,38 @@ def country_key(country: str) -> str:
     return f"{COUNTRY_KEY_PREFIX}{country.lower()}"
 
 
+MAX_WG_UPLINKS = 8
+WG_MARK_BASE = 0x50
+WG_TABLE_BASE = 7750
+WG_GATEWAY_BASE = 50  # last octet in UPSTREAMS_SUBNET
+
+
+def wg_key(name: str) -> str:
+    return f"{WG_KEY_PREFIX}{name}"
+
+
+def wg_uplinks(config: Config) -> dict[str, Uplink]:
+    """Name → its uplink for every named WireGuard exit, in the sorted order of the names.
+
+    The numbering follows that order, exactly as the country consumers do: it changes only when
+    the owner adds or removes a name, which needs a restart anyway.
+    """
+    return {
+        name: Uplink(
+            mark=WG_MARK_BASE + index,
+            table=WG_TABLE_BASE + index,
+            gateway=f"10.77.0.{WG_GATEWAY_BASE + index}",
+        )
+        for index, name in enumerate(sorted(config.upstreams.wg))
+    }
+
+
 def uplink_table(config: Config) -> dict[str, Uplink]:
-    """Every uplink this configuration may use, by key: vps, dpn, and dpn-<cc> per rule country."""
+    """Every uplink this configuration may use, by key: vps, dpn, dpn-<cc> per rule country, and
+    wg-<name> per named WireGuard exit."""
     table: dict[str, Uplink] = {upstream.value: uplink for upstream, uplink in UPLINKS.items()}
     table.update({country_key(cc): uplink for cc, uplink in country_uplinks(config).items()})
+    table.update({wg_key(name): uplink for name, uplink in wg_uplinks(config).items()})
     return table
 
 
@@ -347,6 +376,8 @@ def uplink_service(key: str) -> str:
     """The Compose service of an uplink key."""
     if key.startswith(COUNTRY_KEY_PREFIX):
         return f"myst-consumer-{key.removeprefix(COUNTRY_KEY_PREFIX)}"
+    if key.startswith(WG_KEY_PREFIX):
+        return key  # the generated service is named after the key: wg-<name>
     return {Upstream.VPS.value: "wg-client", Upstream.DPN.value: "myst-consumer"}[key]
 
 
@@ -364,8 +395,8 @@ RULE_UPLINKS: dict[DomainVia, Upstream] = {DomainVia.VPS: Upstream.VPS, DomainVi
 ADGUARD_UID = 7753
 
 
-def active_uplink(config: Config) -> Upstream | None:
-    """The uplink LAN traffic leaves through, or ``None`` when everything goes direct."""
+def active_uplink(config: Config) -> str | None:
+    """The uplink key LAN traffic leaves through, or ``None`` when everything goes direct."""
     if config.network is None or config.routing is None:
         return None
     if config.routing.mode is not RoutingMode.FULL:
@@ -380,7 +411,7 @@ def used_uplinks(config: Config) -> list[str]:
     wanted: set[str] = set()
     active = active_uplink(config)
     if active is not None:
-        wanted.add(active.value)
+        wanted.add(active)
     if config.routing is not None and config.routing.mode is RoutingMode.SMART:
         for item in config.routing.channels():
             if item.via is DomainVia.DPN and item.country:
@@ -469,8 +500,8 @@ def router_ruleset(config: Config) -> str | None:
                 UplinkPolicy(policy.value, hex(UPLINKS[upstream].mark))
                 for policy, upstream in POLICY_UPLINKS.items()
             ],
-            mode_upstream=active.value if active else "",
-            mode_mark=hex(UPLINKS[active].mark) if active else "",
+            mode_upstream=active or "",
+            mode_mark=hex(uplink_table(config)[active].mark) if active else "",
             # The VPS forwards no peer to private ranges (tunnel egress), so the only private
             # target behind the tunnel is the VPS itself: its node panel and core API. Closing
             # the ranges needs no knowledge of the tunnel subnet, which the peer file lacks.
@@ -478,7 +509,9 @@ def router_ruleset(config: Config) -> str | None:
             vps_mark=hex(UPLINKS[Upstream.VPS].mark),
             private_ranges=EGRESS_BLOCKED_RANGES,
             # routing.mode full with AdGuard: its upstream queries leave through the same uplink
-            dns_mark=hex(UPLINKS[active].mark) if active and config.dns.enabled else "",
+            dns_mark=hex(uplink_table(config)[active].mark)
+            if active and config.dns.enabled
+            else "",
             adguard_uid=ADGUARD_UID,
             # gateway mode: the box is the router of its LAN, so the direct path is NATed here
             wan_interface=config.network.wan_interface or "",

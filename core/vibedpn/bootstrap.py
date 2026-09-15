@@ -145,6 +145,7 @@ def required_secrets(config: Config) -> list[str]:
         needed.append(NODEUI_PASS_FILE)
     needed.extend(generated_secrets(config))
     needed.extend(country_secrets(config))
+    needed.extend(wg_uplink_secrets(config))
     return needed
 
 
@@ -259,7 +260,7 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
             role=Role.HOME,
             network=network,
             ui=UiConfig(variant=ui_variant_for(answers, facts)),
-            routing=RoutingConfig(default_upstream=Upstream.DPN),
+            routing=RoutingConfig(default_upstream=Upstream.DPN.value),
             upstreams=UpstreamsConfig(dpn=DpnUplink(enabled=True)),
             provider=ProviderConfig(enabled=True),
         )
@@ -268,7 +269,7 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
         role=Role.CLIENT,
         network=network,
         ui=UiConfig(variant=ui_variant_for(answers, facts)),
-        routing=RoutingConfig(default_upstream=Upstream.VPS),
+        routing=RoutingConfig(default_upstream=Upstream.VPS.value),
         upstreams=UpstreamsConfig(vps=VpsUplink(enabled=True)),
     )
 
@@ -529,6 +530,12 @@ def write_file(path: Path, text: str, mode: int) -> Path:
 
 def country_passphrase_file(country: str) -> str:
     return COUNTRY_PASSPHRASE_TEMPLATE.format(country=country.lower())
+
+
+def wg_uplink_secrets(config: Config) -> list[str]:
+    """The peer file of every named WireGuard exit; the owner supplies these, nothing generates
+    them — a configuration file of a provider is the whole uplink (decision 23)."""
+    return [f"wg-{name}.conf" for name in sorted(config.upstreams.wg)]
 
 
 def country_secrets(config: Config) -> list[str]:

@@ -3,7 +3,7 @@ import type { Params } from '@/modules/i18n/shared'
 
 /** The answer of core's `GET /status` (core/vibedpn/api/models.py: BoxStatus). */
 export type UplinkStatus = {
-  /** vps, dpn, or dpn-<country> for the consumer of a rule country */
+  /** vps, dpn, dpn-<country> for the consumer of a rule country, or wg-<name> for a named WireGuard exit */
   name: string
   enabled: boolean
   in_use: boolean
@@ -36,7 +36,8 @@ export type DpnCountry = {
 
 export type BoxStatus = {
   mode: 'off' | 'full' | 'smart'
-  default_upstream: 'vps' | 'dpn'
+  /** an uplink key: vps, dpn, or wg-<name> of a named WireGuard exit */
+  default_upstream: string
   failopen: boolean
   rules_current: boolean | null
   lan_without_exit: boolean

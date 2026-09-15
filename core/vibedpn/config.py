@@ -39,6 +39,10 @@ HOSTNAME_PATTERN = re.compile(
     r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$"
 )
 INTERFACE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")  # IFNAMSIZ is 16 with the NUL
+# A named WireGuard uplink: the name becomes secrets/wg-<name>.conf, the Compose service
+# wg-<name> and the routing key wg-<name>, so it stays within what all three accept.
+WG_UPLINK_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
+WG_KEY_PREFIX = "wg-"
 PORT_MIN = 1
 PORT_MAX = 65535
 DEFAULT_SSH_PORT = 22
@@ -68,6 +72,7 @@ class Profile(StrEnum):
     CONSUMER = "consumer"
     WG_SERVER = "wg-server"
     WG_CLIENT = "wg-client"
+    WG_UPLINK = "wg-uplink"  # the named uplinks of upstreams.wg, generated from compose.yaml
     ROUTER = "router"
     DHCP = "dhcp"  # dnsmasq: gateway mode only, never next to the DHCP of an ISP router
     WIFI = "wifi"  # hostapd: gateway mode with network.wifi, the LAN interface is the radio
@@ -385,7 +390,9 @@ class RoutingConfig(StrictModel):
     """LAN traffic policy: everything direct, everything via an uplink, or by domain rules."""
 
     mode: RoutingMode = RoutingMode.OFF
-    default_upstream: Upstream
+    # An uplink key: `vps`, `dpn`, or `wg-<name>` of upstreams.wg (decision 23). Not an enum:
+    # the named uplinks are the owner's, and their keys are known only from the configuration.
+    default_upstream: str
     failopen: bool = False
     domains: list[DomainRule] = Field(default_factory=list)
     lists: list[DomainList] = Field(default_factory=list)
@@ -393,6 +400,25 @@ class RoutingConfig(StrictModel):
     def channels(self) -> list[DomainChannel]:
         """Every channel the rules and the lists name: what sets, marks and uplinks follow."""
         return [*self.domains, *self.lists]
+
+    @field_validator("default_upstream")
+    @classmethod
+    def check_default_upstream(cls, value: str) -> str:
+        """A key of an uplink; whether that uplink is enabled is checked against upstreams."""
+        if value.startswith(WG_KEY_PREFIX):
+            if not WG_UPLINK_NAME.fullmatch(value.removeprefix(WG_KEY_PREFIX)):
+                raise ValueError(
+                    f"routing.default_upstream: {value!r} names no usable uplink "
+                    "(lowercase letters, digits and '-' after 'wg-')"
+                )
+            return value
+        try:
+            return Upstream(value).value
+        except ValueError:
+            raise ValueError(
+                f"routing.default_upstream: {value!r} is not an uplink "
+                "(vps, dpn, or wg-<name> of upstreams.wg)"
+            ) from None
 
     @model_validator(mode="before")
     @classmethod
@@ -467,12 +493,44 @@ class DpnUplink(StrictModel):
         return None if value is None else normalize_country(value)
 
 
+class WgUplink(StrictModel):
+    """An exit through a ready WireGuard configuration file, named by the owner.
+
+    The box does not know whose file it is: a free Proton account, a paid provider, another box —
+    all of them are this uplink. The file is not referenced here either: it is
+    ``secrets/wg-<name>.conf``, the path the generated Compose service mounts (decision 23).
+    """
+
+    enabled: bool = True
+
+
 class UpstreamsConfig(StrictModel):
     vps: VpsUplink = Field(default_factory=VpsUplink)
     dpn: DpnUplink = Field(default_factory=DpnUplink)
+    # name -> its uplink; the name reaches a file name, a Compose service and a routing key
+    wg: dict[str, WgUplink] = Field(default_factory=dict)
+
+    @field_validator("wg")
+    @classmethod
+    def check_names(cls, value: dict[str, WgUplink]) -> dict[str, WgUplink]:
+        for name in value:
+            if not WG_UPLINK_NAME.fullmatch(name):
+                raise ValueError(
+                    f"upstreams.wg: {name!r} is not a usable name "
+                    "(lowercase letters, digits and '-', up to 24 characters)"
+                )
+        return value
 
     def is_enabled(self, upstream: Upstream) -> bool:
         return self.vps.enabled if upstream is Upstream.VPS else self.dpn.enabled
+
+    def is_key_enabled(self, key: str) -> bool:
+        """Whether the uplink of a routing key is enabled: ``vps``, ``dpn``, ``dpn-<cc>`` (the
+        country consumers of uplink dpn) or ``wg-<name>``."""
+        if key.startswith(WG_KEY_PREFIX):
+            uplink = self.wg.get(key.removeprefix(WG_KEY_PREFIX))
+            return uplink is not None and uplink.enabled
+        return self.is_enabled(Upstream.DPN if key.startswith("dpn") else Upstream.VPS)
 
 
 class ProviderConfig(StrictModel):
@@ -690,7 +748,7 @@ class Config(StrictModel):
             errors.append(f"network: required for role '{self.role}'")
         if self.routing is None:
             errors.append(f"routing: required for role '{self.role}'")
-        elif self.routing.mode is not RoutingMode.OFF and not self.upstreams.is_enabled(
+        elif self.routing.mode is not RoutingMode.OFF and not self.upstreams.is_key_enabled(
             self.routing.default_upstream
         ):
             errors.append(
@@ -756,6 +814,9 @@ class Config(StrictModel):
             Profile.PROVIDER: self.provider.enabled,
             Profile.CONSUMER: self.upstreams.dpn.enabled,
             Profile.WG_CLIENT: self.role is Role.CLIENT,
+            # The generated services carry this profile and the inherited wg-client one, so they
+            # start here while the base service, whose file this box has not got, does not.
+            Profile.WG_UPLINK: bool(self.upstreams.wg),
             Profile.ROUTER: True,
             Profile.DHCP: self.network is not None and self.network.mode is NetworkMode.GATEWAY,
             Profile.WIFI: self.network is not None and self.network.wifi is not None,

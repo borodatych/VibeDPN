@@ -27,7 +27,6 @@ from vibedpn.config import (
     DomainRule,
     NetworkConfig,
     RoutingMode,
-    Upstream,
     normalize_domain,
     normalize_mac,
     parse_yaml,
@@ -97,7 +96,7 @@ def _edit(path: Path, mutate: Mutate) -> tuple[Config, bool]:
 
 
 def set_routing(
-    path: Path, *, mode: RoutingMode | None = None, upstream: Upstream | None = None
+    path: Path, *, mode: RoutingMode | None = None, upstream: str | None = None
 ) -> tuple[Config, bool]:
     """Set ``routing.mode`` and/or ``routing.default_upstream``; returns the validated result and
     whether the file changed. Nothing is written when the result would not be a valid box."""
@@ -111,7 +110,7 @@ def set_routing(
         if mode is not None:
             routing["mode"] = mode.value
         if upstream is not None:
-            routing["default_upstream"] = upstream.value
+            routing["default_upstream"] = upstream
 
     return _edit(path, mutate)
 
@@ -138,6 +137,49 @@ def set_dpn_country(path: Path, country: str | None) -> tuple[Config, bool]:
         if not isinstance(dpn, dict):
             raise ConfigEditError(f"{path} has no upstreams.dpn section")
         dpn["country"] = country
+
+    return _edit(path, mutate)
+
+
+class WgUplinkNotFoundError(ConfigEditError):
+    """``config.yaml`` has no named WireGuard exit by this name."""
+
+
+def _wg_uplinks(data: CommentedMap, path: Path) -> CommentedMap:
+    upstreams = data.get("upstreams")
+    if not isinstance(upstreams, CommentedMap):
+        raise ConfigEditError(f"{path} has no upstreams section: a box of this role has no uplink")
+    uplinks = upstreams.get("wg")
+    if uplinks is None:
+        uplinks = CommentedMap()
+        upstreams["wg"] = uplinks
+    if not isinstance(uplinks, CommentedMap):
+        raise ConfigEditError(f"{path}: upstreams.wg must be a mapping of name to its settings")
+    return uplinks
+
+
+def set_wg_uplink(path: Path, name: str, *, enabled: bool = True) -> tuple[Config, bool]:
+    """Add a named WireGuard exit to ``upstreams.wg``, or change whether it is enabled."""
+
+    def mutate(data: CommentedMap) -> None:
+        uplinks = _wg_uplinks(data, path)
+        entry = uplinks.get(name)
+        if isinstance(entry, CommentedMap):
+            entry["enabled"] = enabled
+            return
+        uplinks[name] = CommentedMap({"enabled": enabled})
+
+    return _edit(path, mutate)
+
+
+def remove_wg_uplink(path: Path, name: str) -> tuple[Config, bool]:
+    """Drop a named WireGuard exit; its peer file in ``secrets/`` is left where it is."""
+
+    def mutate(data: CommentedMap) -> None:
+        uplinks = _wg_uplinks(data, path)
+        if name not in uplinks:
+            raise WgUplinkNotFoundError(f"{path} has no WireGuard exit named {name!r}")
+        del uplinks[name]
 
     return _edit(path, mutate)
 

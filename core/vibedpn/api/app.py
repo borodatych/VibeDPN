@@ -289,12 +289,11 @@ def _uplink_statuses(
     states = {} if watchers is None else watchers.states()
     result = []
     for key in uplink_table(box):
-        upstream = Upstream.DPN if key.startswith(COUNTRY_KEY_PREFIX) else Upstream(key)
         state = states.get(key)
         result.append(
             UplinkStatus(
                 name=key,
-                enabled=box.upstreams.is_enabled(upstream),
+                enabled=box.upstreams.is_key_enabled(key),
                 in_use=key in in_use,
                 gateway_alive=None if state is None else state.alive,
                 checked_at=None
@@ -658,11 +657,11 @@ def _add_routing_routes(
             raise HTTPException(status_code=404, detail=NO_LAN)
         routing = box.routing
         uplinks = _uplink_statuses(box, watchers, routing_reader(box))
-        mode_uplink = next(item for item in uplinks if item.name == routing.default_upstream.value)
+        mode_uplink = next(item for item in uplinks if item.name == routing.default_upstream)
         dpn, dpn_countries = _dpn_statuses(consumer)
         return BoxStatus(
             mode=routing.mode.value,
-            default_upstream=routing.default_upstream.value,
+            default_upstream=routing.default_upstream,
             failopen=routing.failopen,
             rules_current=routing_reader(box).rules_current,
             lan_without_exit=routing.mode is RoutingMode.FULL
@@ -706,7 +705,7 @@ def _add_routing_routes(
             raise HTTPException(status_code=404, detail=NO_LAN)
         return RoutingView(
             mode=routing.mode.value,
-            default_upstream=routing.default_upstream.value,
+            default_upstream=routing.default_upstream,
             adguard=adguard,
         )
 
