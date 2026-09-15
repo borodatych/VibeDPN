@@ -159,6 +159,23 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
+    # The ISP may drop TLS naming mysterium.network: the nodes reach those names through the relay
+    # (docs/decisions.md, 22). broker (NATS 4222) and echo (UDP) are not TLS and stay direct.
+    extra_hosts:
+      - "discovery.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "transactor.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "affiliator.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "pilvytis.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "observer.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "trust.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "location.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "quality.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "feedback.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "hermes.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "hermes2.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "hermes3.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "polygon1.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "ethereum1.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
     ports:
       - 127.0.0.1:4449:4449  # NodeUI; keep equal to NODEUI_PORT in core/vibedpn/engine/myst.py
       - 127.0.0.1:4050:4050  # TequilAPI; keep equal to TEQUILAPI_PORT there
@@ -171,6 +188,34 @@ services:
       - --tequilapi.address=0.0.0.0
       - service
       - --agreed-terms-and-conditions
+
+  # SNI relay of the Mysterium nodes (docs/decisions.md, 22): an ISP that blocks Mysterium by name
+  # drops every TLS connection whose first record carries `mysterium.network`. The relay forwards the
+  # bytes to the real address, cutting that record in two for the names that need it — it decrypts
+  # nothing and replaces no certificate, the node verifies the server itself. Runs the core image
+  # with another command; it is on the gateway network, which admits the provider's bridge too.
+  myst-relay:
+    image: ghcr.io/borodatych/vibedpn-core:${VIBEDPN_TAG:-latest}
+    build:
+      context: ./core
+    profiles:
+      - consumer
+      - provider
+    restart: unless-stopped
+    command: ["python", "-m", "vibedpn.relay"]
+    networks:
+      upstreams:
+        ipv4_address: ${VIBEDPN_MYST_RELAY:-10.77.0.30}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; socket.create_connection(('127.0.0.1', 443), timeout=3).close()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   # Mysterium consumer = uplink `dpn`: a gateway container at 10.77.0.20 (roles home, client), built
   # on the official image (images/myst-consumer). Its entrypoint adds gateway rules — LAN traffic
@@ -198,6 +243,23 @@ services:
       - /dev/net/tun:/dev/net/tun
     sysctls:
       net.ipv4.ip_forward: 1
+    # The ISP may drop TLS naming mysterium.network: the nodes reach those names through the relay
+    # (docs/decisions.md, 22). broker (NATS 4222) and echo (UDP) are not TLS and stay direct.
+    extra_hosts:
+      - "discovery.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "transactor.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "affiliator.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "pilvytis.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "observer.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "trust.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "location.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "quality.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "feedback.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "hermes.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "hermes2.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "hermes3.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "polygon1.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+      - "ethereum1.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
     networks:
       upstreams:
         ipv4_address: 10.77.0.20
