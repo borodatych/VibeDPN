@@ -31,6 +31,8 @@ const table = {
   'auth.signOut': 'Sign Out',
   'auth.password': 'Password',
   'auth.passwordHint': 'The password from vibedpn init',
+  'auth.showPassword': 'Show the password',
+  'auth.hidePassword': 'Hide the password',
   'auth.closeDrawer': 'Close the sign-in panel',
 
   'error.unknown.title': 'Something went wrong',

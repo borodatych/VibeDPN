@@ -20,6 +20,8 @@
   "auth.signOut": "Выход",
   "auth.password": "Пароль",
   "auth.passwordHint": "Пароль из vibedpn init",
+  "auth.showPassword": "Показать пароль",
+  "auth.hidePassword": "Скрыть пароль",
   "auth.closeDrawer": "Закрыть панель входа",
   "error.unknown.title": "Что-то пошло не так",
   "error.unknown.description": "Произошла неизвестная ошибка",
