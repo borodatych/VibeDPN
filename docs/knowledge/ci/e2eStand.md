@@ -56,6 +56,7 @@ https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Read
 
 **Как устроено:** `tests/e2e/wifiVm.sh` поднимает `debian-13-generic-amd64.qcow2` в QEMU с KVM (seed cloud-init — ssh-ключ и sudo без пароля), копирует этот checkout, ставит коробку тем же `install.sh` (`VIBEDPN_REPO` — копия, ветка на её HEAD), собирает образы и запускает `tests/e2e/wifi.sh` без изменений.
 Облачный образ Debian приходит без `git`, а `install.sh` клонирует копию от root: скрипт ставит `git` заранее и разрешает чужого владельца репозитория (`safe.directory`).
+Первый прогон в VM дошёл до `wifi.sh` и упал на `iw is needed`: у обычного пользователя Debian в `PATH` нет `/usr/sbin`, где лежат `iw`, `wpa_supplicant` и `dhcpcd`; `wifi.sh` теперь сам добавляет sbin в `PATH`.
 
 **Источники:** https://github.blog/changelog/2024-04-02-github-actions-hardware-accelerated-android-virtualization-now-available/ (KVM и правило udev),
 https://cloud.debian.org/images/cloud/trixie/latest/ (имена образов),

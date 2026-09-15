@@ -14,6 +14,9 @@
 # internet, images ghcr.io/borodatych/vibedpn-{core,dnsmasq,hostapd}:$TAG.
 # The stand reloads mac80211_hwsim: virtual radios of anything else on the host disappear.
 set -eu
+# iw, wpa_supplicant and dhcpcd live in sbin, which Debian keeps off the PATH of an ordinary user
+PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
+export PATH
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 TAG="${VIBEDPN_TAG:-e2e}"
