@@ -571,31 +571,22 @@ jobs:
   e2e-wifi:
     name: e2e · Wi-Fi access point — a device joins over WPA3-SAE on virtual radios, DHCP and NAT
     runs-on: ubuntu-24.04
+    # The runner's Azure kernel has no mac80211_hwsim: the stand runs in a Debian 13 VM under KVM (tests/e2e/wifiVm.sh).
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.1.0
-        with:
-          version: ${{ env.UV_VERSION }}
-      - name: Virtual radios and the device side
+      - name: KVM for the VM
+        # github.blog/changelog/2024-04-02-github-actions-hardware-accelerated-android-virtualization-now-available
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: QEMU and cloud-init seed tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" iw wpasupplicant dhcpcd-base
-          modinfo mac80211_hwsim
-      - name: Build the images the box runs
-        run: |
-          docker build -q -t ghcr.io/borodatych/vibedpn-core:e2e core
-          docker build -q -t ghcr.io/borodatych/vibedpn-dnsmasq:e2e images/dnsmasq
-          docker build -q -t ghcr.io/borodatych/vibedpn-hostapd:e2e images/hostapd
-      - name: The CLI in a venv
-        run: |
-          uv venv /tmp/e2e-venv --python 3.12
-          uv pip install --python /tmp/e2e-venv/bin/python --require-hashes -r core/requirements.txt
-          uv pip install --python /tmp/e2e-venv/bin/python --no-deps ./core
-      - name: Run the stand
-        env:
-          VIBEDPN_TAG: e2e
-          VIBEDPN_E2E_PYTHON: /tmp/e2e-venv/bin/python
-        run: tests/e2e/wifi.sh
+          sudo apt-get install -y -q qemu-system-x86 qemu-utils cloud-image-utils
+      - name: Run the stand in the VM
+        run: tests/e2e/wifiVm.sh
 
   images:
     name: image · ${{ matrix.image.name }}
