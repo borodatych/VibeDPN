@@ -85,7 +85,13 @@ from vibedpn.engine.backup import (
     restore_archive,
     stamp,
 )
-from vibedpn.engine.hostapd import HostapdError, read_passphrase
+from vibedpn.engine.hostapd import (
+    PASSPHRASE_MAX,
+    PASSPHRASE_MIN,
+    HostapdError,
+    read_passphrase,
+    write_passphrase,
+)
 from vibedpn.engine.myst import render_stats
 from vibedpn.tunnel_view import qr_code, render_peers
 
@@ -684,6 +690,30 @@ def wifi_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     typer.echo(
         f"security: {wifi.security.value}, band {wifi.band.value} GHz, channel {wifi.channel}"
     )
+
+
+@wifi_app.command("passphrase")
+def wifi_passphrase(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Set your own Wi-Fi passphrase: asked twice without echo, then the access point restarts."""
+    config = _prepare(box_dir, refresh=False)
+    wifi = config.network.wifi if config.network is not None else None
+    if wifi is None:
+        raise _fail("this box serves no Wi-Fi: network.wifi is not set in config.yaml")
+    value = typer.prompt(
+        f"New passphrase of Wi-Fi {wifi.ssid!r} ({PASSPHRASE_MIN}-{PASSPHRASE_MAX} characters)",
+        hide_input=True,
+        confirmation_prompt=True,
+    )
+    try:
+        changed = write_passphrase(box_dir / SECRETS_DIR, value)
+    except HostapdError as exc:
+        raise _fail(str(exc)) from None
+    if not changed:
+        typer.echo(f"Wi-Fi {wifi.ssid!r} already has this passphrase: nothing to restart")
+        return
+    # core renders hostapd.conf from secrets/ at its start, hostapd reads that file at its own
+    _compose(box_dir, "up", "-d", "--force-recreate", "core", "hostapd")
+    typer.echo(f"Wi-Fi {wifi.ssid!r}: the new passphrase is in use, devices join with it now")
 
 
 ANY_COUNTRY = "any"

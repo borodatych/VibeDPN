@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 from vibedpn import cli
 from vibedpn.config import load_config
 from vibedpn.detect import Interface
+from vibedpn.engine.hostapd import HostapdError, check_passphrase
 
 runner = CliRunner()
 
@@ -411,3 +412,90 @@ def test_wifi_show_on_a_box_without_wifi(tmp_path: Path) -> None:
     (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
     shown = runner.invoke(cli.app, ["wifi", "show", "--dir", str(tmp_path)])
     assert shown.exit_code == 1 and "serves no Wi-Fi" in shown.output
+
+
+class ComposeRecorder:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def run(self, argv: list[str]) -> int:
+        self.calls.append(argv)
+        return 0
+
+
+@pytest.fixture
+def wifi_box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, ComposeRecorder]:
+    code, output = init_home(
+        tmp_path, "--lan-interface", "wlan0", "--wifi-ssid", "Home net", "--wifi-country", "DE"
+    )
+    assert code == 0, output
+    (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    recorder = ComposeRecorder()
+    monkeypatch.setattr(cli, "run", recorder.run)
+    monkeypatch.setattr(cli, "preflight", lambda: None)
+    return tmp_path, recorder
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        ("short", "8 to 63 characters, not 5"),
+        ("x" * 64, "8 to 63 characters, not 64"),
+        ("пароль-на-русском", "Latin letters"),
+        (" padded passphrase", "cannot start or end with a space"),
+    ],
+)
+def test_a_passphrase_hostapd_would_refuse_is_refused(value: str, reason: str) -> None:
+    with pytest.raises(HostapdError, match=reason):
+        check_passphrase(value)
+    assert check_passphrase("my home wifi 2026!") == "my home wifi 2026!"
+
+
+def test_wifi_passphrase_stores_what_the_owner_typed_and_restarts_the_access_point(
+    wifi_box: tuple[Path, ComposeRecorder],
+) -> None:
+    box_dir, recorder = wifi_box
+    result = runner.invoke(
+        cli.app,
+        ["wifi", "passphrase", "--dir", str(box_dir)],
+        input="my home wifi 2026!\nmy home wifi 2026!\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "my home wifi 2026!" not in result.output
+    secret = box_dir / "secrets" / "wifi-passphrase"
+    assert secret.read_text(encoding="utf-8") == "my home wifi 2026!"
+    assert secret.stat().st_mode & 0o777 == 0o600
+    assert [argv[-5:] for argv in recorder.calls] == [
+        ["up", "-d", "--force-recreate", "core", "hostapd"]
+    ]
+    again = runner.invoke(
+        cli.app,
+        ["wifi", "passphrase", "--dir", str(box_dir)],
+        input="my home wifi 2026!\nmy home wifi 2026!\n",
+    )
+    assert again.exit_code == 0 and "nothing to restart" in again.output
+    assert len(recorder.calls) == 1
+
+
+def test_wifi_passphrase_refuses_a_short_one_and_keeps_the_old(
+    wifi_box: tuple[Path, ComposeRecorder],
+) -> None:
+    box_dir, recorder = wifi_box
+    secret = box_dir / "secrets" / "wifi-passphrase"
+    before = secret.read_text(encoding="utf-8")
+    result = runner.invoke(
+        cli.app, ["wifi", "passphrase", "--dir", str(box_dir)], input="short\nshort\n"
+    )
+    assert result.exit_code == 1 and "8 to 63 characters" in result.output
+    assert secret.read_text(encoding="utf-8") == before and recorder.calls == []
+
+
+def test_wifi_passphrase_on_a_box_without_wifi(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code, output = init_home(tmp_path)
+    assert code == 0, output
+    (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "preflight", lambda: None)
+    result = runner.invoke(cli.app, ["wifi", "passphrase", "--dir", str(tmp_path)])
+    assert result.exit_code == 1 and "serves no Wi-Fi" in result.output

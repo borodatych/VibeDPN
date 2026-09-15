@@ -84,7 +84,7 @@ network:
     security: wpa2-wpa3
 ```
 
-Пароля сети в `config.yaml` нет: он лежит в `secrets/wifi-passphrase`, его создаёт `vibedpn init`, а показывает `sudo vibedpn wifi show`.
+Пароля сети в `config.yaml` нет: он лежит в `secrets/wifi-passphrase`, его создаёт `vibedpn init`, показывает `sudo vibedpn wifi show`, а заменяет на свой `sudo vibedpn wifi passphrase` (8–63 символа ASCII, точка доступа перезапускается).
 Точку доступа поднимает сервис `hostapd` (профиль Compose `wifi`); адрес на беспроводном интерфейсе, как и в любом gateway, назначает система.
 
 ### `routing` — политика LAN-трафика

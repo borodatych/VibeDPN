@@ -36,3 +36,10 @@ hostapd 2.11 в контейнере Alpine 3.24 с `--network host`, `NET_ADMIN
 Внутри блока он даёт `unknown network field 'sae_pwe'` и `failed to parse network block`.
 
 **Источники:** https://w1.fi/cgit/hostap/plain/hostapd/hostapd.conf (описание ключей; страница за защитой Anubis, ключи сверены с примером `/etc/hostapd/hostapd.conf` пакета Alpine и исполнением).
+
+## Пароль WPA-PSK: 8–63 символа ASCII
+
+**Факт:** `wpa_passphrase` — ASCII-пароль длиной от 8 до 63 символов; из него и SSID выводится PSK, поэтому смена SSID меняет и ключ.
+Альтернатива — `wpa_psk` из 64 шестнадцатеричных цифр.
+**Источник:** пример `/etc/hostapd/hostapd.conf` в образе `vibedpn-hostapd` (hostapd v2.11), раздел «WPA pre-shared keys for WPA-PSK»; оригинал — https://w1.fi/cgit/hostap/plain/hostapd/hostapd.conf (за защитой Anubis), прочитано из контейнера на коробке 2026-09-15.
+**Как применено:** `vibedpn wifi passphrase` принимает 8–63 печатных символа ASCII без пробелов по краям (края срезает чтение секрета).

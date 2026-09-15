@@ -15,6 +15,11 @@ from vibedpn.config import Config, NetworkMode, WifiBand, WifiSecurity
 
 CONF_FILE = "hostapd.conf"
 PASSPHRASE_FILE = "wifi-passphrase"
+# An ASCII passphrase of WPA-PSK is 8..63 characters (docs/knowledge/linux/hostapdConfigCheck.md).
+PASSPHRASE_MIN = 8
+PASSPHRASE_MAX = 63
+PRINTABLE_FIRST = 0x20
+PRINTABLE_LAST = 0x7E
 DIR_ENV = "VIBEDPN_HOSTAPD_CONF"
 DEFAULT_DIR = Path("/etc/vibedpn/hostapd")  # compose.yaml mounts ./data/hostapd there
 HW_MODES = {WifiBand.BAND_2_4: "g", WifiBand.BAND_5: "a"}
@@ -70,6 +75,31 @@ def read_passphrase(secrets_dir: Path) -> str:
     if not passphrase:
         raise HostapdError(f"{path} is empty")
     return passphrase
+
+
+def check_passphrase(value: str) -> str:
+    """A passphrase devices can type and hostapd accepts; raise ``HostapdError`` with the reason."""
+    if not PASSPHRASE_MIN <= len(value) <= PASSPHRASE_MAX:
+        raise HostapdError(
+            f"the Wi-Fi passphrase is {PASSPHRASE_MIN} to {PASSPHRASE_MAX} characters,"
+            f" not {len(value)}"
+        )
+    if any(not PRINTABLE_FIRST <= ord(char) <= PRINTABLE_LAST for char in value):
+        raise HostapdError(
+            "the Wi-Fi passphrase takes Latin letters, digits, spaces and punctuation only"
+        )
+    if value != value.strip():
+        raise HostapdError("the Wi-Fi passphrase cannot start or end with a space")
+    return value
+
+
+def write_passphrase(secrets_dir: Path, value: str) -> bool:
+    """Store the passphrase in secrets/ (mode 600); whether it changed."""
+    path = secrets_dir / PASSPHRASE_FILE
+    try:
+        return write_private(path, check_passphrase(value))
+    except OSError as exc:
+        raise HostapdError(f"cannot write {path}: {exc.strerror or exc}; run with sudo?") from exc
 
 
 def ensure_hostapd(config: Config, conf_dir: Path, secrets_dir: Path) -> bool | None:
