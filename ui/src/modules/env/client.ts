@@ -8,6 +8,12 @@ import '@point0/core/client-only'
 // anything reads SERVER_URL suffices. No SSR? Drop this and use the @point0/cors plugin instead.
 if (process.env.NODE_ENV !== 'production') {
   process.env.SERVER_URL = process.env.CLIENT_URL
+} else if (typeof window !== 'undefined') {
+  // A box panel is opened by its address or by its name (ui.host_name): the app server serves the client on either, so
+  // the browser talks to the origin it is on. An absolute SERVER_URL would send sign-in to the address while the page
+  // sits on the name, and the SameSite=strict session cookie would never reach the page.
+  process.env.SERVER_URL = window.location.origin
+  process.env.CLIENT_URL = window.location.origin
 }
 
 /**
