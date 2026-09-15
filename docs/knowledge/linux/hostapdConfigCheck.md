@@ -43,3 +43,16 @@ hostapd 2.11 в контейнере Alpine 3.24 с `--network host`, `NET_ADMIN
 Альтернатива — `wpa_psk` из 64 шестнадцатеричных цифр.
 **Источник:** пример `/etc/hostapd/hostapd.conf` в образе `vibedpn-hostapd` (hostapd v2.11), раздел «WPA pre-shared keys for WPA-PSK»; оригинал — https://w1.fi/cgit/hostap/plain/hostapd/hostapd.conf (за защитой Anubis), прочитано из контейнера на коробке 2026-09-15.
 **Как применено:** `vibedpn wifi passphrase` принимает 8–63 печатных символа ASCII без пробелов по краям (края срезает чтение секрета).
+
+## RTL8852BE (rtw89): телефон выкидывает каждые несколько секунд
+
+**Наблюдение** (N100, Debian 13, ядро 6.12.107, `rtw89_8852be`, hostapd v2.11, 2026-09-15): телефон подключается, проходит 4-way handshake и через 6–60 секунд получает `AP-STA-DISCONNECTED`; в `dmesg` за 1–2 секунды до каждого отключения — `rtw89_8852be: timed out to flush queues`.
+Точка была в режиме 802.11g без HT (`iw dev` — `no HT`), `hostapd.conf` без `ieee80211n`, `wmm_enabled` и `disassoc_low_ack`.
+
+**Что не помогло:** выключатели энергосбережения драйвера из `modinfo` — `rtw89_pci disable_aspm_l1=Y disable_aspm_l1ss=Y disable_clkreq=Y`, `rtw89_core disable_ps_mode=Y` (`/etc/modprobe.d/vibedpn-rtw89.conf`, модули перезагружены): ошибки и отключения остались. Файл на коробке оставлен, вреда не замечено.
+
+**Что улучшило, но не решило:** `ieee80211n=1`, `wmm_enabled=1`, `disassoc_low_ack=0` — вместо отключения каждые секунды телефон держал связь минуты (MCS 12, 78 Мбит/с, `tx failed: 0`), но в 10:22:39 UTC выпал снова через секунду после `timed out to flush queues` (05:22:37 по часам коробки); ещё одна такая ошибка — перед подключением в 10:18:31.
+Вывод: корень в драйвере `rtw89` в режиме точки доступа, конфиг hostapd только снижает частоту.
+**Смысл ключей** — пример `/etc/hostapd/hostapd.conf` в образе (hostapd v2.11): `disassoc_low_ack` — «Disassociate stations based on excessive transmission failures or other indications of connection loss»; `wmm_enabled` — очереди WMM (QoS); `ieee80211n` — режим 802.11n.
+**Как применено:** `engine/hostapd.py` пишет эти три строки в каждый `hostapd.conf`; устойчивость точки доступа на этом чипе остаётся открытой.
+

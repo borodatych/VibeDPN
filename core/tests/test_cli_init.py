@@ -3,6 +3,7 @@
 from ipaddress import IPv4Address
 from pathlib import Path
 
+import bcrypt
 import pytest
 from typer.testing import CliRunner
 
@@ -499,3 +500,43 @@ def test_wifi_passphrase_on_a_box_without_wifi(
     monkeypatch.setattr(cli, "preflight", lambda: None)
     result = runner.invoke(cli.app, ["wifi", "passphrase", "--dir", str(tmp_path)])
     assert result.exit_code == 1 and "serves no Wi-Fi" in result.output
+
+
+def test_password_replaces_the_panel_and_node_hashes_and_restarts_the_node(
+    wifi_box: tuple[Path, ComposeRecorder],
+) -> None:
+    box_dir, recorder = wifi_box
+    result = runner.invoke(
+        cli.app, ["password", "--dir", str(box_dir)], input="new-panel-pass\nnew-panel-pass\n"
+    )
+    assert result.exit_code == 0, result.output
+    assert "new-panel-pass" not in result.output
+    htpasswd = box_dir / "secrets" / "htpasswd"
+    user, hashed = htpasswd.read_text(encoding="utf-8").strip().split(":", 1)
+    assert user == "admin" and bcrypt.checkpw(b"new-panel-pass", hashed.encode("ascii"))
+    node = box_dir / "data" / "myst-provider" / "nodeui-pass"
+    assert bcrypt.checkpw(
+        b"new-panel-pass", node.read_text(encoding="utf-8").strip().encode("ascii")
+    )
+    assert htpasswd.stat().st_mode & 0o777 == 0o600 and node.stat().st_mode & 0o777 == 0o600
+    assert [argv[-4:] for argv in recorder.calls] == [
+        ["up", "-d", "--force-recreate", "myst-provider"]
+    ]
+
+
+def test_password_asks_again_until_it_fits_the_policy(
+    wifi_box: tuple[Path, ComposeRecorder],
+) -> None:
+    box_dir, _recorder = wifi_box
+    before = (box_dir / "secrets" / "htpasswd").read_text(encoding="utf-8")
+    result = runner.invoke(
+        cli.app,
+        ["password", "--dir", str(box_dir)],
+        input="short\nshort\nlong-enough-1\nlong-enough-1\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "at least" in result.output
+    after = (box_dir / "secrets" / "htpasswd").read_text(encoding="utf-8")
+    assert after != before and bcrypt.checkpw(
+        b"long-enough-1", after.strip().split(":", 1)[1].encode()
+    )

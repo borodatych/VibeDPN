@@ -45,6 +45,7 @@ from vibedpn.bootstrap import (
     ensure_country_secrets,
     ensure_replaceable,
     public_address,
+    set_panel_password,
     write_box,
 )
 from vibedpn.compose import (
@@ -690,6 +691,22 @@ def wifi_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     typer.echo(
         f"security: {wifi.security.value}, band {wifi.band.value} GHz, channel {wifi.channel}"
     )
+
+
+@app.command("password")
+def password(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Set the panel password (VibeDPN UI and the node's NodeUI): asked twice without echo."""
+    config = _prepare(box_dir, refresh=False)
+    try:
+        set_panel_password(box_dir, config, _ask_password())
+    except BootstrapError as exc:
+        raise _fail(str(exc)) from None
+    # the panel checks secrets/htpasswd on every sign-in; the node reads its hash only at start
+    if config.provider.enabled:
+        _compose(box_dir, "up", "-d", "--force-recreate", "myst-provider")
+        typer.echo("panel password changed: VibeDPN UI at once, NodeUI after the node restarted")
+    else:
+        typer.echo("panel password changed: the next sign-in uses it")
 
 
 @wifi_app.command("passphrase")

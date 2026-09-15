@@ -28,6 +28,10 @@ KEY_MGMT = {WifiSecurity.WPA2_WPA3: "WPA-PSK SAE", WifiSecurity.WPA3: "SAE"}
 FRAME_PROTECTION = {WifiSecurity.WPA2_WPA3: 1, WifiSecurity.WPA3: 2}
 # hash-to-element or hunting-and-pecking, whichever the device supports
 SAE_PWE_BOTH = 2
+# RTL8852BE (rtw89) on the N100 box kicked a phone every few seconds as a legacy 802.11g AP that
+# drops stations on low ack; 802.11n with WMM and no low-ack kick made that minutes, not seconds
+# (docs/knowledge/linux/hostapdConfigCheck.md).
+STABLE_AP_LINES = ("ieee80211n=1", "wmm_enabled=1", "disassoc_low_ack=0")
 
 
 class HostapdError(RuntimeError):
@@ -52,6 +56,7 @@ def hostapd_conf(config: Config, passphrase: str) -> str | None:
         f"country_code={wifi.country}",
         f"hw_mode={HW_MODES[wifi.band]}",
         f"channel={wifi.channel}",
+        *STABLE_AP_LINES,
         "wpa=2",
         f"wpa_key_mgmt={KEY_MGMT[wifi.security]}",
         "rsn_pairwise=CCMP",

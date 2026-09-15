@@ -388,6 +388,24 @@ def htpasswd_line(user: str, password: str) -> str:
     return f"{user}:{bcrypt_hash(password)}\n"
 
 
+def set_panel_password(box_dir: Path, config: Config, password: str) -> list[Path]:
+    """Replace the panel password: the ``admin`` line of secrets/htpasswd and, on a box with the
+    provider node, its NodeUI hash. Both are hashed before either file is touched."""
+    line = htpasswd_line(UI_USER, password)
+    node_pass = bcrypt_hash(password) + "\n" if config.provider.enabled else None
+    written = []
+    try:
+        written.append(write_file(box_dir / SECRETS_DIR / HTPASSWD_FILE, line, SECRET_FILE_MODE))
+        if node_pass is not None:
+            path = box_dir / DATA_DIR / MYST_PROVIDER_DATA / NODEUI_PASS_FILE
+            path.parent.mkdir(mode=DATA_DIR_MODE, parents=True, exist_ok=True)
+            written.append(write_file(path, node_pass, SECRET_FILE_MODE))
+    except OSError as exc:
+        target = exc.filename or box_dir
+        raise BootstrapError(f"cannot write {target}: {exc.strerror}; run with sudo?") from exc
+    return written
+
+
 def read_peer_config(path: Path) -> str:
     """The WireGuard peer file as text, or a ``BootstrapError`` saying what is wrong with it."""
     try:
