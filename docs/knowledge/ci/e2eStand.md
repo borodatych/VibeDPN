@@ -43,3 +43,21 @@ LAN, ни с Docker, ни с CGNAT, и не попадает в `EGRESS_BLOCKED_
 
 **Источники:** https://www.rfc-editor.org/rfc/rfc2544 (198.18.0.0/15),
 https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md .
+
+## [ci] Стенд Wi-Fi — в виртуальной машине Debian 13 под KVM (2026-09-15)
+
+**Грабля:** на `ubuntu-24.04` ядро раннера `6.17.0-1022-azure`, и даже после `apt-get install linux-modules-extra-$(uname -r)` команда `modinfo mac80211_hwsim` отвечает `Module mac80211_hwsim not found`.
+В поиске по содержимому пакетов Ubuntu `mac80211_hwsim.ko.zst` есть в `linux-modules-extra-*-generic`, `-oracle`, `-nvidia` и `-azure-fde`, но не в обычном `-azure`.
+Задача `e2e-wifi` падала на каждом push, а задача `images` ждёт все проверки — образы `:next` не публиковались.
+
+**Факты для обхода:**
+- на стандартных Linux-раннерах GitHub (2 vCPU) есть аппаратная виртуализация; `/dev/kvm` открывается правилом udev `KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"` с перезагрузкой правил;
+- облачный образ Debian 13 бывает `generic` (штатное ядро и cloud-init), `genericcloud` и `nocloud`; штатное ядро Debian несёт `mac80211_hwsim` в основном пакете ядра — проверено на коробке: `kernel/drivers/net/wireless/virtual/mac80211_hwsim.ko.xz` есть и в `6.12.107+deb13-amd64`, и в `7.1.8+deb13-amd64`.
+
+**Как устроено:** `tests/e2e/wifiVm.sh` поднимает `debian-13-generic-amd64.qcow2` в QEMU с KVM (seed cloud-init — ssh-ключ и sudo без пароля), копирует этот checkout, ставит коробку тем же `install.sh` (`VIBEDPN_REPO` — копия, ветка на её HEAD), собирает образы и запускает `tests/e2e/wifi.sh` без изменений.
+Облачный образ Debian приходит без `git`, а `install.sh` клонирует копию от root: скрипт ставит `git` заранее и разрешает чужого владельца репозитория (`safe.directory`).
+
+**Источники:** https://github.blog/changelog/2024-04-02-github-actions-hardware-accelerated-android-virtualization-now-available/ (KVM и правило udev),
+https://cloud.debian.org/images/cloud/trixie/latest/ (имена образов),
+https://packages.ubuntu.com/search?searchon=contents&keywords=mac80211_hwsim.ko.zst&mode=exactfilename&suite=noble-updates&arch=amd64 (пакеты с модулем).
+

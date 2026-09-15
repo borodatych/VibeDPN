@@ -121,7 +121,7 @@ colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && VIBEDPN_TA
 
 Стенд перезагружает модуль `mac80211_hwsim`: чужие виртуальные радио на хосте пропадут.
 Откат установки: `sudo apt-get remove -y linux-modules-extra-$(uname -r)`.
-В CI его гоняет задача `e2e-wifi`.
+В CI его гоняет задача `e2e-wifi` — внутри виртуальной машины Debian 13 под KVM (`tests/e2e/wifiVm.sh`): в ядре раннеров GitHub нет `mac80211_hwsim`, а в штатном ядре Debian он есть.
 
 ## Образы ОС
 
