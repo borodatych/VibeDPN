@@ -56,3 +56,7 @@ hostapd 2.11 в контейнере Alpine 3.24 с `--network host`, `NET_ADMIN
 **Смысл ключей** — пример `/etc/hostapd/hostapd.conf` в образе (hostapd v2.11): `disassoc_low_ack` — «Disassociate stations based on excessive transmission failures or other indications of connection loss»; `wmm_enabled` — очереди WMM (QoS); `ieee80211n` — режим 802.11n.
 **Как применено:** `engine/hostapd.py` пишет эти три строки в каждый `hostapd.conf`; устойчивость точки доступа на этом чипе остаётся открытой.
 
+**Ядро 7.1.8 и свежая прошивка (2026-09-15):** `linux-image-amd64` 7.1.8 из `trixie-backports` просит `rtw89/rtw8852b_fw-2.bin`, которой нет в `firmware-realtek` 20250410 (`failed to load rtw89/rtw8852b_fw-2.bin`, откат на `fw-1`); `firmware-realtek` 20260810 из backports её приносит (`loaded firmware rtw89/rtw8852b_fw-2.bin`).
+С ними за полтора часа наблюдения `timed out to flush queues` осталось, но редко: в 11:11:44 и 11:46:04 UTC — и ровно в эти секунды телефон получал `AP-STA-DISCONNECTED`; между ними он держался по 20–30 минут (`tx failed: 0`, MCS 12).
+Вывод: новое ядро и прошивка сократили обрывы с раза в несколько минут до раза в полчаса-час, но не устранили; корень — драйвер `rtw89` в режиме точки доступа.
+
