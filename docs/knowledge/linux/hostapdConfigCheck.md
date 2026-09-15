@@ -66,3 +66,11 @@ hostapd 2.11 в контейнере Alpine 3.24 с `--network host`, `NET_ADMIN
 - Найденные отчёты с этим сообщением — только режим клиента: RTL8852BE https://bbs.archlinux.org/viewtopic.php?pid=2257715 (помог откат `linux-firmware-realtek` или удаление `fw-1.bin`), https://github.com/lwfinger/rtw89/issues/259 (ASPM/CLKREQ не помогли); RTL8852AE https://www.spinics.net/lists/linux-wireless/msg222193.html ; RTL8852CE на 7.1.3 https://ratatoskr.run/linux-wireless/2026/07/17227566/t (сопровождающий Realtek ожидает патчи к 7.3, это про 8852C). Отчётов про AP/hostapd и исправления для 8852B не найдено.
 - Режим AP в rtw89 объявлен серией «rtw89: support AP mode» (2022): https://lkml.kernel.org/linux-wireless/20220207063900.43643-8-pkshih@realtek.com/ ; документированных ограничений AP для 8852BE не найдено.
 
+## Отладочный уровень точки доступа стирается перезапуском ядра (2026-09-15)
+
+`logger_stdout=-1` / `logger_stdout_level=0` в `/opt/vibedpn/data/hostapd/hostapd.conf` живут ровно до следующего `vibedpn restart`: ядро собирает этот файл из шаблона заново. Значит ручная отладка на коробке ставится **после** последнего перезапуска, иначе ожидание обрыва соберёт лог без подробностей.
+
+С включённым уровнем видно всю жизнь клиента: `SAE authentication` → `association OK` → четыре шага `4-Way Handshake` → `AP-STA-CONNECTED`, и отдельной строкой `interface state ENABLED->DISABLED`, когда точку гасят. Этого достаточно, чтобы отличить уход клиента от того, что интерфейс роняет драйвер.
+
+Замер частоты жалоб драйвера за одну загрузку (2 ч 51 мин работы): `timed out to flush queues` встречается 44 раза, всегда парами, с неравномерными промежутками — 07:20, 07:23, 07:24, затем пауза и 08:12. То есть это не ровный таймер, а реакция на что-то, и пары приходят к моменту разрыва, а не постоянно.
+
