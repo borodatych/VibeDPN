@@ -59,7 +59,7 @@ export const root = Point0.lets
       ...(loading ? { title: 'Loading...' } : {}),
       ...(error ? { title: error.message } : {}),
       titleTemplate: '%s | VibeDPN',
-      htmlAttrs: { lang: 'en' },
+      // <html lang> is the language of the panel: generalLayout sets it from the language query
     }
   })
   .loading(() => {
