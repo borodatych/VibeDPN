@@ -204,6 +204,8 @@ ui:
   host_name: {{ config.ui.host_name }}
   # full — N100 и мощнее; lite — Raspberry Pi: без фоновых задач и с маленьким Postgres (docs/uiVariants.md).
   variant: {{ config.ui.variant.value }}
+  # Язык панели по умолчанию: ru, en или код своего файла data/ui/locales/<код>.json; браузер может выбрать другой.
+  language: {{ config.ui.language }}
 {% endif %}
 
 # API ядра: слушает только 127.0.0.1, на LAN его отдаёт панель ui под /api/core/ только после входа.

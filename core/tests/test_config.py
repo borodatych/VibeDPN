@@ -302,6 +302,7 @@ def test_env_vars_are_derived_from_config(
         "VIBEDPN_UI_PORT": "80",
         "VIBEDPN_UI_HOST_NAME": "vibedpn.lan",
         "VIBEDPN_UI_VARIANT": "full",
+        "VIBEDPN_UI_LANGUAGE": "ru",
         "VIBEDPN_MYST_UDP_FROM": "56000",
         "VIBEDPN_MYST_UDP_TO": "56100",
         "VIBEDPN_MYST_TRAVERSAL": "manual,upnp,holepunching",
@@ -320,6 +321,7 @@ def test_env_vars_are_derived_from_config(
         "VIBEDPN_UI_PORT": "80",
         "VIBEDPN_UI_HOST_NAME": "vibedpn.lan",
         "VIBEDPN_UI_VARIANT": "full",
+        "VIBEDPN_UI_LANGUAGE": "ru",
     }
 
 

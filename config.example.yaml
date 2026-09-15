@@ -111,6 +111,8 @@ ui:
   host_name: vibedpn.lan
   # full — N100 и мощнее; lite — Raspberry Pi: без фоновых задач и с маленьким Postgres (docs/uiVariants.md).
   variant: full
+  # Язык панели по умолчанию: ru, en или код своего файла data/ui/locales/<код>.json; браузер может выбрать другой.
+  language: ru
 
 # API ядра: слушает только 127.0.0.1, на LAN его отдаёт панель ui под /api/core/ только после входа.
 api:

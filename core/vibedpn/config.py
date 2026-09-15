@@ -27,6 +27,9 @@ DOMAIN_PATTERN = re.compile(
     r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$"
 )
 DEFAULT_UI_HOST_NAME = "vibedpn.lan"
+# The panel language unless a browser chose another; a locales/<code>.json file of the box.
+DEFAULT_UI_LANGUAGE = "ru"
+LANGUAGE_PATTERN = re.compile(r"^[a-z]{2}$")
 # Postgres of the panel on a lite box (docs/uiVariants.md); a full box keeps the Postgres defaults.
 LITE_DB_SHARED_BUFFERS = "32MB"
 LITE_DB_MAX_CONNECTIONS = 20
@@ -548,11 +551,21 @@ class UiConfig(StrictModel):
     variant: UiVariant = UiVariant.FULL
     # The name devices open the panel by; AdGuard answers it with network.lan_address.
     host_name: str = DEFAULT_UI_HOST_NAME
+    # ISO 639-1 code of data/ui/locales/<code>.json; English is built into the panel.
+    language: str = DEFAULT_UI_LANGUAGE
 
     @field_validator("host_name")
     @classmethod
     def check_host_name(cls, value: str) -> str:
         return normalize_domain(value)
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def check_language(cls, value: object) -> str:
+        code = str(value).strip().lower()
+        if LANGUAGE_PATTERN.fullmatch(code) is None:
+            raise ValueError(f"{value!r} is not a two-letter ISO 639-1 language code")
+        return code
 
 
 class ApiConfig(StrictModel):
@@ -765,6 +778,7 @@ class Config(StrictModel):
             env["VIBEDPN_UI_PORT"] = str(self.ui.port)
             env["VIBEDPN_UI_HOST_NAME"] = self.ui.host_name
             env["VIBEDPN_UI_VARIANT"] = self.ui.variant.value
+            env["VIBEDPN_UI_LANGUAGE"] = self.ui.language
             if self.ui.variant is UiVariant.LITE:
                 env["VIBEDPN_UI_DB_SHARED_BUFFERS"] = LITE_DB_SHARED_BUFFERS
                 env["VIBEDPN_UI_DB_MAX_CONNECTIONS"] = str(LITE_DB_MAX_CONNECTIONS)

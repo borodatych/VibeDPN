@@ -85,12 +85,16 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      # Languages of the panel as files the owner sees and edits: the image seeds the ones it ships.
+      - ./data/ui/locales:/app/locales
     environment:
       UI_LISTEN_HOST: ${VIBEDPN_LAN_IP:-127.0.0.1}
       PORT: ${VIBEDPN_UI_PORT:-80}
       SERVER_URL: http://${VIBEDPN_LAN_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}
       CLIENT_URL: http://${VIBEDPN_LAN_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}
       UI_HOST_NAME: ${VIBEDPN_UI_HOST_NAME:-vibedpn.lan}
+      UI_LANGUAGE: ${VIBEDPN_UI_LANGUAGE:-ru}
+      LOCALES_DIR: /app/locales
       CORE_API_PORT: ${VIBEDPN_API_PORT:-4480}
       UI_DB_PORT: ${VIBEDPN_UI_DB_PORT:-5480}
     healthcheck:
