@@ -10,6 +10,7 @@
   пять GET TequilAPI для статистики и ответы свежей ноды, что известно о consumer в
   контейнере, открытый вопрос bridge vs host для provider; тип NAT ноды — `GET /nat/type`, оценка ноды, а не проверка проброса
 - [consumer.md](myst/consumer.md) — flow consumer в node 1.39.5: identity, регистрация, `PUT /connection`,
+- [sniBlocking.md](myst/sniBlocking.md) — провайдер режет TLS к `mysterium.network` по SNI: TCP открыт, рукопожатие виснет, с чужим SNI проходит; нода падает без hermes, нужен обход через свою VPS
   `kill_switch: true` выключает kill-switch, баланс не нужен при нулевой цене, образ мультиарх
 
 ## adguard
