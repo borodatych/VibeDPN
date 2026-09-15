@@ -1,3 +1,5 @@
+import type { T } from '@/modules/i18n/base'
+
 /** One domain rule of core's `GET /rules` (core/vibedpn/api/models.py: DomainRuleView). */
 export type DomainRule = {
   domain: string
@@ -90,18 +92,18 @@ export const withCdn = (rule: DomainRule, name: string): DomainRule =>
   rule.also.includes(bare(name)) ? rule : { ...rule, also: [...rule.also, bare(name)] }
 
 /** A human label of a channel: `smart_vps` → `VPS`, `smart_dpn_de` → `Mysterium DE`. */
-export const channelLabel = (channel: string): string => {
+export const channelLabel = (channel: string, t: T): string => {
   if (channel === DIRECT_CHANNEL) {
-    return 'direct'
+    return t('rules.channel.direct')
   }
   if (channel === 'smart_vps') {
-    return 'VPS'
+    return t('rules.channel.vps')
   }
   const dpn = /^smart_dpn_(\w+)$/.exec(channel)
   if (dpn) {
-    return dpn[1] === 'any' ? 'Mysterium' : `Mysterium ${dpn[1].toUpperCase()}`
+    return dpn[1] === 'any' ? t('rules.channel.dpn') : t('rules.channel.dpnCountry', { country: dpn[1].toUpperCase() })
   }
-  return channel === 'smart_direct' ? 'direct (rule)' : channel
+  return channel === 'smart_direct' ? t('rules.channel.ruleDirect') : channel
 }
 
 /** One ready list of `GET /lists` (core/vibedpn/api/models.py: DomainListView). */
@@ -122,9 +124,9 @@ export type DomainListView = {
  *
  * @tags rules
  */
-export const listCopyText = (item: DomainListView): string => {
+export const listCopyText = (item: DomainListView, t: T): string => {
   if (item.fetched_at === null) {
-    return item.error ? 'no copy yet' : 'fetching…'
+    return item.error ? t('lists.copy.none') : t('lists.copy.fetching')
   }
-  return `${item.domains} domains`
+  return t('lists.copy.domains', { count: item.domains })
 }

@@ -17,7 +17,6 @@ import { z } from 'zod'
  * @related createEnv, clientEnv, serverEnv
  */
 
-
 /** Variables that mean the same thing on both sides — URLs, public ids, modes. Never a secret. */
 export const sharedEnvShape = {
   HOST_ENV: z.enum(['local', 'dev', 'prod']),

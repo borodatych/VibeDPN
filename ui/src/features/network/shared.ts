@@ -1,3 +1,5 @@
+import type { T } from '@/modules/i18n/base'
+
 /** One interface of core's `GET /network` (core/vibedpn/api/models.py: HostInterface). */
 export type HostInterface = {
   name: string
@@ -25,15 +27,23 @@ export const SIDECAR = 'sidecar'
  *
  * @tags network
  */
-export const lanOptions = (view: NetworkView): { value: string; label: string }[] => {
+export const lanOptions = (view: NetworkView, t: T): { value: string; label: string }[] => {
   const wan = view.interfaces.find((item) => item.default_route)
   return [
-    { value: SIDECAR, label: `One port: in the home LAN on ${wan?.name ?? 'the default-route interface'}` },
+    {
+      value: SIDECAR,
+      label: t('network.option.sidecar', { interface: wan?.name ?? t('network.option.defaultRoute') }),
+    },
     ...view.interfaces
       .filter((item) => !item.default_route)
       .map((item) => ({
         value: item.name,
-        label: `Gateway: LAN ${item.name} ${item.address}/${item.prefixlen}, WAN ${wan?.name ?? '?'}`,
+        label: t('network.option.gateway', {
+          interface: item.name,
+          address: item.address,
+          prefix: item.prefixlen,
+          wan: wan?.name ?? '?',
+        }),
       })),
   ]
 }

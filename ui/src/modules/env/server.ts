@@ -29,7 +29,16 @@ export const serverEnv = createEnv('server', {
   // The LAN address the panel listens on. Required in production: Bun would listen on every interface otherwise.
   UI_LISTEN_HOST: isProdNodeEnv ? z.ipv4() : z.ipv4().optional(),
   // The box name (ui.host_name), a second allowed origin next to CLIENT_URL.
-  UI_HOST_NAME: z.string().regex(/^[a-z0-9.-]+$/).optional(),
+  UI_HOST_NAME: z
+    .string()
+    .regex(/^[a-z0-9.-]+$/)
+    .optional(),
+  // The box default language (ui.language) and the directory of its language files (data/ui/locales).
+  UI_LANGUAGE: z
+    .string()
+    .regex(/^[a-z]{2}$/)
+    .optional(),
+  LOCALES_DIR: z.string().optional(),
 
   // Telemetry is optional in every HOST_ENV: a box sends nothing anywhere unless its owner configures it.
   SENTRY_DSN_SERVER: z.string().optional(),

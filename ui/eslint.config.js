@@ -149,6 +149,18 @@ export default defineConfig([
     },
   },
 
+  {
+    // The panel speaks through the catalog (src/modules/i18n): no bare text in the markup of its screens.
+    files: ['src/pages/**/*.tsx', 'src/layouts/**/*.tsx', 'src/components/other/**/*.tsx', 'src/modules/auth/**/*.tsx'],
+    plugins: { react },
+    rules: {
+      'react/jsx-no-literals': [
+        'error',
+        { noStrings: true, ignoreProps: true, allowedStrings: ['VibeDPN', '×', '·', '—', ' '] },
+      ],
+    },
+  },
+
   prettier,
 
   {

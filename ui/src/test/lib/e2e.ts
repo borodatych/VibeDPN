@@ -3,9 +3,9 @@ import type { Page } from 'playwright'
 import { expect } from 'playwright/test'
 
 /**
- * Sign in as the box admin through the real form and wait for the session (the sign-out link in the header). The app runs
- * in a separate process, so the UI is the only honest way in. The password is the plain text behind `HTPASSWD_FILE` of
- * the test env (`E2E_BOX_PASSWORD`).
+ * Sign in as the box admin through the real form and wait for the session (the sign-out link in the header). The app
+ * runs in a separate process, so the UI is the only honest way in. The password is the plain text behind
+ * `HTPASSWD_FILE` of the test env (`E2E_BOX_PASSWORD`).
  *
  * @tags test, e2e
  */

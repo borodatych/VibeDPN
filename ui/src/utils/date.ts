@@ -1,4 +1,8 @@
-import { format, formatDistanceToNow, isWithinInterval, subHours } from 'date-fns'
+import { format, formatDistanceToNow, isWithinInterval, subHours, type Locale } from 'date-fns'
+import { ru } from 'date-fns/locale'
+
+// Date words of a panel language; a language without an entry formats dates in English.
+const DATE_LOCALES: Record<string, Locale> = { ru }
 
 export const isDateCanBeRealtive = (date: Date): boolean => {
   const now = new Date()
@@ -13,17 +17,20 @@ export type FormatDateVariant = 'date' | 'date-time' | 'relative' | 'date-nice' 
  * @tags rule, util, date
  * @related formatMoney
  */
-export const formatDate = (date: Date, variant: FormatDateVariant): string => {
+export const formatDate = (date: Date, variant: FormatDateVariant, language?: string): string => {
+  const locale = language ? DATE_LOCALES[language] : undefined
   switch (variant) {
     case 'date':
-      return format(date, 'PP')
+      return format(date, 'PP', { locale })
     case 'date-time':
-      return format(date, 'PP p')
+      return format(date, 'PP p', { locale })
     case 'relative':
-      return formatDistanceToNow(date, { addSuffix: true })
+      return formatDistanceToNow(date, { addSuffix: true, locale })
     case 'date-nice':
-      return isDateCanBeRealtive(date) ? formatDate(date, 'relative') : formatDate(date, 'date')
+      return isDateCanBeRealtive(date) ? formatDate(date, 'relative', language) : formatDate(date, 'date', language)
     case 'date-time-nice':
-      return isDateCanBeRealtive(date) ? formatDate(date, 'relative') : formatDate(date, 'date-time')
+      return isDateCanBeRealtive(date)
+        ? formatDate(date, 'relative', language)
+        : formatDate(date, 'date-time', language)
   }
 }

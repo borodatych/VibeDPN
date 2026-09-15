@@ -1,3 +1,4 @@
+import { useHead } from '@unhead/react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,24 +30,27 @@ import {
 } from '@/features/rules/shared'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
+import type { T } from '@/modules/i18n/base'
+import { useLanguage, useT } from '@/modules/i18n/use-t'
 import { formatDate } from '@/utils/date'
 import { useState } from 'react'
 
-const VIA_OPTIONS = [
-  { value: 'vps', label: 'Through the VPS' },
-  { value: 'dpn', label: 'Through Mysterium' },
-  { value: 'direct', label: 'Direct' },
+const viaOptions = (t: T) => [
+  { value: 'vps', label: t('rules.via.vps') },
+  { value: 'dpn', label: t('rules.via.dpn') },
+  { value: 'direct', label: t('rules.via.direct') },
 ]
 
 const SHOWN_QUERIES = 100
 
-const unixDate = (seconds: number) => formatDate(new Date(seconds * 1000), 'date-time')
+const unixDate = (seconds: number, language: string) => formatDate(new Date(seconds * 1000), 'date-time', language)
 
 /** One rule: the channel, the country of Mysterium, learning, pinned CDNs; every change applies at once. */
 const RuleRow = ({ rule }: { rule: DomainRule }) => {
   const setRule = ruleSetMutation.useMutation()
   const removeRule = ruleRemoveMutation.useMutation()
   const [country, setCountry] = useState(rule.country ?? '')
+  const t = useT()
   const busy = setRule.isPending || removeRule.isPending
   const error = setRule.error ?? removeRule.error
 
@@ -65,7 +69,7 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
       <TableCell className="font-mono text-sm">{rule.domain}</TableCell>
       <TableCell>
         <XSelect
-          options={VIA_OPTIONS}
+          options={viaOptions(t)}
           value={rule.via}
           disabled={busy}
           onValueChange={(value) => void save({ via: String(value) as RuleVia })}
@@ -74,11 +78,11 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
       <TableCell>
         <Input
           value={country}
-          placeholder="any"
+          placeholder={t('rules.anyCountry')}
           maxLength={2}
           className="w-16 uppercase"
           disabled={rule.via !== 'dpn' || busy}
-          aria-label={`Exit country of ${rule.domain}`}
+          aria-label={t('rules.exitCountryOf', { domain: rule.domain })}
           onChange={(event) => setCountry(event.target.value.toUpperCase())}
           onBlur={() => {
             const code = country.trim() || null
@@ -92,7 +96,7 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
         <XSwitch
           checked={rule.learn}
           disabled={busy}
-          aria-label={`Learn the CDNs of ${rule.domain}`}
+          aria-label={t('rules.learnOf', { domain: rule.domain })}
           onCheckedChange={(learn) => void save({ learn })}
         />
       </TableCell>
@@ -102,7 +106,7 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
             key={name}
             type="button"
             className="mr-1 mb-1 font-mono"
-            title="Unpin this CDN"
+            title={t('rules.unpin')}
             disabled={busy}
             onClick={() => void save({ also: rule.also.filter((item) => item !== name) })}
           >
@@ -115,10 +119,10 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
           variant="ghost"
           size="sm"
           loading={removeRule.isPending}
-          confirm={`Remove the rule of ${rule.domain}?`}
+          confirm={t('rules.confirmRemove', { domain: rule.domain })}
           onClick={() => void remove()}
         >
-          Remove
+          {t('common.remove')}
         </Button>
         {error && <p className="mt-1 text-xs text-destructive">{error.message}</p>}
       </TableCell>
@@ -129,6 +133,7 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
 const AddRule = () => {
   const setRule = ruleSetMutation.useMutation()
   const [domain, setDomain] = useState('')
+  const t = useT()
   const [via, setVia] = useState<RuleVia>('vps')
   const [country, setCountry] = useState('')
   const add = async () => {
@@ -149,32 +154,32 @@ const AddRule = () => {
         value={domain}
         placeholder="kinopoisk.ru"
         className="max-w-xs"
-        aria-label="Site"
+        aria-label={t('rules.site')}
         onChange={(event) => setDomain(event.target.value)}
       />
-      <XSelect options={VIA_OPTIONS} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
+      <XSelect options={viaOptions(t)} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
       {via === 'dpn' && (
         <Input
           value={country}
-          placeholder="any"
+          placeholder={t('rules.anyCountry')}
           maxLength={2}
           className="w-16 uppercase"
-          aria-label="Exit country"
+          aria-label={t('rules.exitCountry')}
           onChange={(event) => setCountry(event.target.value.toUpperCase())}
         />
       )}
       <Button disabled={!domain.trim()} loading={setRule.isPending} onClick={() => void add()}>
-        Add rule
+        {t('rules.add')}
       </Button>
       {setRule.isError && <p className="w-full text-sm text-destructive">{setRule.error.message}</p>}
     </div>
   )
 }
 
-const VIA_LABELS: Record<RuleVia, string> = { vps: 'VPS', dpn: 'Mysterium', direct: 'direct' }
-
 const DomainListRow = ({ item }: { item: DomainListView }) => {
   const remove = domainListRemoveMutation.useMutation()
+  const t = useT()
+  const language = useLanguage()
   const drop = async () => {
     await remove.mutateAsync({ url: item.url })
     await domainListsQuery.refetchQuery()
@@ -183,22 +188,23 @@ const DomainListRow = ({ item }: { item: DomainListView }) => {
     <TableRow>
       <TableCell className="font-mono text-xs break-all">{item.url}</TableCell>
       <TableCell className="text-sm">
-        {VIA_LABELS[item.via]}
-        {item.country ? ` ${item.country}` : ''}
+        {item.via === 'dpn' && item.country
+          ? t('rules.channel.dpnCountry', { country: item.country })
+          : t(`rules.channel.${item.via}`)}
       </TableCell>
-      <TableCell className="text-sm">{listCopyText(item)}</TableCell>
+      <TableCell className="text-sm">{listCopyText(item, t)}</TableCell>
       <TableCell className="text-xs whitespace-nowrap">
-        {item.fetched_at === null ? '—' : unixDate(item.fetched_at)}
+        {item.fetched_at === null ? t('common.none') : unixDate(item.fetched_at, language)}
       </TableCell>
       <TableCell>
         <Button
           variant="ghost"
           size="sm"
           loading={remove.isPending}
-          confirm={`Remove the list ${item.url}?`}
+          confirm={t('lists.confirmRemove', { url: item.url })}
           onClick={() => void drop()}
         >
-          Remove
+          {t('common.remove')}
         </Button>
         {item.error && <p className="mt-1 text-xs text-warning">{item.error}</p>}
         {remove.isError && <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>}
@@ -210,6 +216,7 @@ const DomainListRow = ({ item }: { item: DomainListView }) => {
 const AddDomainList = () => {
   const setList = domainListSetMutation.useMutation()
   const [url, setUrl] = useState('')
+  const t = useT()
   const [via, setVia] = useState<RuleVia>('vps')
   const [country, setCountry] = useState('')
   const add = async () => {
@@ -228,22 +235,22 @@ const AddDomainList = () => {
         value={url}
         placeholder="https://example.org/list.txt"
         className="max-w-md"
-        aria-label="List URL"
+        aria-label={t('lists.url')}
         onChange={(event) => setUrl(event.target.value)}
       />
-      <XSelect options={VIA_OPTIONS} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
+      <XSelect options={viaOptions(t)} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
       {via === 'dpn' && (
         <Input
           value={country}
-          placeholder="any"
+          placeholder={t('rules.anyCountry')}
           maxLength={2}
           className="w-16 uppercase"
-          aria-label="Exit country of the list"
+          aria-label={t('lists.exitCountry')}
           onChange={(event) => setCountry(event.target.value.toUpperCase())}
         />
       )}
       <Button disabled={!url.trim()} loading={setList.isPending} onClick={() => void add()}>
-        Add list
+        {t('lists.add')}
       </Button>
       {setList.isError && <p className="w-full text-sm text-destructive">{setList.error.message}</p>}
     </div>
@@ -252,6 +259,7 @@ const AddDomainList = () => {
 
 const DomainLists = () => {
   const data = domainListsQuery.useQuery().data
+  const t = useT()
   if (data?.reason) {
     return <p className="text-muted-foreground">{data.reason}</p>
   }
@@ -262,10 +270,10 @@ const DomainLists = () => {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>URL</TableHead>
-              <TableHead>Channel</TableHead>
-              <TableHead>Copy</TableHead>
-              <TableHead>Fetched</TableHead>
+              <TableHead>{t('lists.column.url')}</TableHead>
+              <TableHead>{t('lists.column.channel')}</TableHead>
+              <TableHead>{t('lists.column.copy')}</TableHead>
+              <TableHead>{t('lists.column.fetched')}</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
@@ -277,29 +285,29 @@ const DomainLists = () => {
         </Table>
       )}
       <AddDomainList />
-      <p className="mt-2 text-xs text-muted-foreground">
-        One domain per line, hosts-file lines or ||domain^; core refreshes a list daily and keeps its last copy. A site
-        rule wins over a list.
-      </p>
+      <p className="mt-2 text-xs text-muted-foreground">{t('lists.hint')}</p>
     </>
   )
 }
 
 const FollowButton = ({ name, rule }: { name: string; rule: DomainRule }) => {
   const setRule = ruleSetMutation.useMutation()
+  const t = useT()
   const follow = async () => {
     await setRule.mutateAsync(withCdn(rule, name))
     await ruleListQuery.refetchQuery()
   }
   return (
     <Button variant="outline-secondary" size="sm" loading={setRule.isPending} onClick={() => void follow()}>
-      Route like {rule.domain}
+      {t('sniffer.routeLike', { domain: rule.domain })}
     </Button>
   )
 }
 
 const Sniffer = ({ client, rules }: { client: string; rules: DomainRule[] }) => {
   const journal = journalQuery.useQuery({ client })
+  const t = useT()
+  const language = useLanguage()
   const entries: JournalEntry[] = journal.data?.entries ?? []
   const candidates = cdnCandidates(entries, rules)
   const newest = [...entries].sort((a, b) => b.time - a.time).slice(0, SHOWN_QUERIES)
@@ -307,9 +315,7 @@ const Sniffer = ({ client, rules }: { client: string; rules: DomainRule[] }) => 
     <>
       {candidates.length > 0 && (
         <div className="mb-4">
-          <h3 className="mb-2 font-accent text-sm text-muted-foreground">
-            CDN candidates: went direct right after a site with a rule
-          </h3>
+          <h3 className="mb-2 font-accent text-sm text-muted-foreground">{t('sniffer.candidates')}</h3>
           <ul className="space-y-2">
             {candidates.map((candidate) => (
               <li key={candidate.name} className="flex flex-wrap items-center gap-3">
@@ -324,22 +330,26 @@ const Sniffer = ({ client, rules }: { client: string; rules: DomainRule[] }) => 
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Time</TableHead>
-            <TableHead>Name</TableHead>
-            <TableHead>Channel</TableHead>
-            <TableHead>Addresses</TableHead>
+            <TableHead>{t('sniffer.column.time')}</TableHead>
+            <TableHead>{t('sniffer.column.name')}</TableHead>
+            <TableHead>{t('sniffer.column.channel')}</TableHead>
+            <TableHead>{t('sniffer.column.addresses')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {newest.map((entry) => (
             <TableRow key={`${entry.time}-${entry.name}-${entry.qtype}`}>
-              <TableCell className="text-xs whitespace-nowrap">{unixDate(entry.time)}</TableCell>
+              <TableCell className="text-xs whitespace-nowrap">{unixDate(entry.time, language)}</TableCell>
               <TableCell className="font-mono text-xs">
                 {entry.name} <span className="text-muted-foreground">{entry.qtype}</span>
-                {entry.learned_from && <span className="ml-2 text-success">learned after {entry.learned_from}</span>}
+                {entry.learned_from && (
+                  <span className="ml-2 text-success">{t('sniffer.learnedAfter', { site: entry.learned_from })}</span>
+                )}
               </TableCell>
-              <TableCell className="text-xs">{channelLabel(entry.channel)}</TableCell>
-              <TableCell className="font-mono text-xs break-all">{entry.addresses.join(', ') || '—'}</TableCell>
+              <TableCell className="text-xs">{channelLabel(entry.channel, t)}</TableCell>
+              <TableCell className="font-mono text-xs break-all">
+                {entry.addresses.join(', ') || t('common.none')}
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -362,6 +372,8 @@ const LearnedRow = ({
   last_seen: number
 }) => {
   const forget = learnedForgetMutation.useMutation()
+  const t = useT()
+  const language = useLanguage()
   const drop = async () => {
     await forget.mutateAsync({ name })
     await learnedListQuery.refetchQuery()
@@ -370,12 +382,12 @@ const LearnedRow = ({
     <TableRow>
       <TableCell className="font-mono text-xs">{name}</TableCell>
       <TableCell className="font-mono text-xs">{parent}</TableCell>
-      <TableCell className="text-xs">{source === 'cname' ? 'CNAME' : 'asked after the site'}</TableCell>
+      <TableCell className="text-xs">{source === 'cname' ? t('learned.how.cname') : t('learned.how.time')}</TableCell>
       <TableCell className="text-xs">{hits}</TableCell>
-      <TableCell className="text-xs whitespace-nowrap">{unixDate(last_seen)}</TableCell>
+      <TableCell className="text-xs whitespace-nowrap">{unixDate(last_seen, language)}</TableCell>
       <TableCell>
         <Button variant="ghost" size="sm" loading={forget.isPending} onClick={() => void drop()}>
-          Forget
+          {t('learned.forget')}
         </Button>
         {forget.isError && <p className="mt-1 text-xs text-destructive">{forget.error.message}</p>}
       </TableCell>
@@ -385,20 +397,21 @@ const LearnedRow = ({
 
 export const rulesPage = generalLayout.lets
   .page('/rules')
-  .head('Rules')
   .use(redirectUnauthorizedPlugin)
   .with(ruleListQuery)
   .page(({ data: { rules, reason } }) => {
     const devices = journalDevicesQuery.useQuery().data
     const learned = learnedListQuery.useQuery().data
     const [client, setClient] = useState<string | null>(null)
+    const t = useT()
+    useHead({ title: t('nav.rules') })
     const deviceOptions = (devices?.devices ?? []).map((device) => ({
       value: device.client,
-      label: `${device.client} · ${device.queries} queries`,
+      label: t('sniffer.deviceOption', { client: device.client, queries: device.queries }),
     }))
     return (
       <Sections gap="lg">
-        <Section h1="Rules" description="Each site's channel in smart mode; subdomains and the CDNs it calls follow it">
+        <Section h1={t('rules.title')} description={t('rules.description')}>
           {reason ? (
             <p className="text-muted-foreground">{reason}</p>
           ) : (
@@ -407,11 +420,11 @@ export const rulesPage = generalLayout.lets
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Site</TableHead>
-                      <TableHead>Channel</TableHead>
-                      <TableHead>Country</TableHead>
-                      <TableHead>Learn CDNs</TableHead>
-                      <TableHead>Pinned CDNs</TableHead>
+                      <TableHead>{t('rules.column.site')}</TableHead>
+                      <TableHead>{t('rules.column.channel')}</TableHead>
+                      <TableHead>{t('rules.column.country')}</TableHead>
+                      <TableHead>{t('rules.column.learn')}</TableHead>
+                      <TableHead>{t('rules.column.pinned')}</TableHead>
                       <TableHead />
                     </TableRow>
                   </TableHeader>
@@ -423,54 +436,44 @@ export const rulesPage = generalLayout.lets
                 </Table>
               )}
               <AddRule />
-              <p className="mt-2 text-xs text-muted-foreground">
-                A new Mysterium country starts working after `vibedpn restart`.
-              </p>
+              <p className="mt-2 text-xs text-muted-foreground">{t('rules.countryRestart')}</p>
             </>
           )}
         </Section>
-        <Section
-          h2="Domain lists"
-          size="lg"
-          description="Ready lists of sites by URL: every domain takes the list's channel"
-        >
+        <Section h2={t('lists.title')} size="lg" description={t('lists.description')}>
           <DomainLists />
         </Section>
-        <Section h2="Sniffer" size="lg" description="What a device asks, live, and which channel each name took">
+        <Section h2={t('sniffer.title')} size="lg" description={t('sniffer.description')}>
           {devices?.reason ? (
             <p className="text-muted-foreground">{devices.reason}</p>
           ) : deviceOptions.length === 0 ? (
-            <p className="text-muted-foreground">No DNS queries yet: a device appears once it asks the box a name.</p>
+            <p className="text-muted-foreground">{t('sniffer.empty')}</p>
           ) : (
             <>
               <XSelect
                 options={deviceOptions}
                 value={client ?? ''}
-                placeholder="Choose a device"
+                placeholder={t('sniffer.chooseDevice')}
                 onValueChange={(value) => setClient(String(value))}
               />
               <div className="mt-4">{client && <Sniffer client={client} rules={rules} />}</div>
             </>
           )}
         </Section>
-        <Section
-          h2="Learned CDNs"
-          size="lg"
-          description="Names that follow their site; forget one and it goes direct again"
-        >
+        <Section h2={t('learned.title')} size="lg" description={t('learned.description')}>
           {learned?.reason ? (
             <p className="text-muted-foreground">{learned.reason}</p>
           ) : (learned?.learned.length ?? 0) === 0 ? (
-            <p className="text-muted-foreground">Nothing learned yet.</p>
+            <p className="text-muted-foreground">{t('learned.empty')}</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Site</TableHead>
-                  <TableHead>How</TableHead>
-                  <TableHead>Hits</TableHead>
-                  <TableHead>Last seen</TableHead>
+                  <TableHead>{t('learned.column.name')}</TableHead>
+                  <TableHead>{t('learned.column.site')}</TableHead>
+                  <TableHead>{t('learned.column.how')}</TableHead>
+                  <TableHead>{t('learned.column.hits')}</TableHead>
+                  <TableHead>{t('learned.column.lastSeen')}</TableHead>
                   <TableHead />
                 </TableRow>
               </TableHeader>

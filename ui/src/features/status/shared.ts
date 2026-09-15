@@ -1,3 +1,6 @@
+import type { MessageKey } from '@/modules/i18n/base'
+import type { Params } from '@/modules/i18n/shared'
+
 /** The answer of core's `GET /status` (core/vibedpn/api/models.py: BoxStatus). */
 export type UplinkStatus = {
   /** vps, dpn, or dpn-<country> for the consumer of a rule country */
@@ -52,30 +55,28 @@ export type RoutingView = {
 
 export type StatusTone = 'ok' | 'warning' | 'danger'
 
+/** A phrase of the catalog with its values: the screen translates it. */
+export type Phrase = { key: MessageKey; params?: Params }
+
 /**
- * One line the owner reads first. Pure: the screen renders it, the unit test pins it.
+ * One line the owner reads first. Pure: it names the phrase and its tone, the screen says it in the current language.
  *
  * @tags status
  */
-export const summarizeStatus = (status: BoxStatus): { tone: StatusTone; headline: string } => {
+export const summarizeStatus = (status: BoxStatus): { tone: StatusTone; headline: Phrase } => {
+  const uplink = status.default_upstream
   if (status.lan_without_exit) {
-    return {
-      tone: 'danger',
-      headline: `No internet for the LAN: the ${status.default_upstream} uplink does not answer and the kill switch holds traffic`,
-    }
+    return { tone: 'danger', headline: { key: 'status.headline.noExit', params: { uplink } } }
   }
-  const modeUplink = status.uplinks.find((uplink) => uplink.name === status.default_upstream)
+  const modeUplink = status.uplinks.find((item) => item.name === status.default_upstream)
   if (status.mode === 'full' && modeUplink?.gateway_alive === false) {
-    return {
-      tone: 'warning',
-      headline: `The ${status.default_upstream} uplink does not answer: the LAN goes out directly (failopen)`,
-    }
+    return { tone: 'warning', headline: { key: 'status.headline.failopen', params: { uplink } } }
   }
   if (status.rules_current === false) {
-    return { tone: 'warning', headline: 'The router rules differ from config.yaml: restart the box' }
+    return { tone: 'warning', headline: { key: 'status.headline.rulesDiffer' } }
   }
   if (status.mode === 'off') {
-    return { tone: 'ok', headline: 'The LAN goes out directly; devices with their own policy keep it' }
+    return { tone: 'ok', headline: { key: 'status.headline.direct' } }
   }
-  return { tone: 'ok', headline: `The LAN goes out through ${status.default_upstream}` }
+  return { tone: 'ok', headline: { key: 'status.headline.through', params: { uplink } } }
 }

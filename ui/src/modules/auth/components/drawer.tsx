@@ -2,6 +2,7 @@ import { useBreakpoint } from '@/components/hooks/use-breakpoint'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerTitle } from '@/components/ui/drawer'
 import { SignInForm } from '@/modules/auth/components/sign-in'
+import { useT } from '@/modules/i18n/use-t'
 import { X } from 'lucide-react'
 import { useCallback } from 'react'
 import { create } from 'zustand/react'
@@ -37,6 +38,7 @@ export const closeAuthDrawer: AuthDrawerState['close'] = (...args) => useAuthDra
 
 export const AuthDrawer = () => {
   const { onSuccess, isOpen, setIsOpen, close, description } = useAuthDrawer()
+  const t = useT()
 
   const handleSuccess = useCallback(() => {
     close()
@@ -52,11 +54,11 @@ export const AuthDrawer = () => {
         <div className="flex min-h-full flex-col overflow-y-auto p-7 *:last:mb-4 max-md:px-6 max-md:py-4">
           {!isSmOrLess && (
             <DrawerClose asChild className="fixed top-7 right-7 max-md:top-4 max-md:right-4">
-              <Button variant="secondary" size="icon-lg" aria-label="Close auth drawer" icon={X} />
+              <Button variant="secondary" size="icon-lg" aria-label={t('auth.closeDrawer')} icon={X} />
             </DrawerClose>
           )}
           <header className="mb-8 pr-14">
-            <DrawerTitle className="font-title text-4xl leading-[1.1] font-semibold">Sign In</DrawerTitle>
+            <DrawerTitle className="font-title text-4xl leading-[1.1] font-semibold">{t('auth.signIn')}</DrawerTitle>
             {description ? (
               <DrawerDescription className="mt-3 max-w-72 font-accent text-base leading-snug">
                 {description}

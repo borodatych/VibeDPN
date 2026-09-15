@@ -1,3 +1,4 @@
+import { useHead } from '@unhead/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Section } from '@/components/ui/section'
@@ -15,6 +16,7 @@ import {
 import { boxStatusQuery } from '@/features/status/api'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
+import { useLanguage, useT } from '@/modules/i18n/use-t'
 import { formatDate } from '@/utils/date'
 import { useState } from 'react'
 
@@ -22,6 +24,8 @@ const DeviceRow = ({ device, enabled }: { device: Device; enabled: { vps: boolea
   const setPolicy = devicePolicySetMutation.useMutation()
   const unsetPolicy = devicePolicyUnsetMutation.useMutation()
   const [pendingBlock, setPendingBlock] = useState(false)
+  const t = useT()
+  const language = useLanguage()
   const [name, setName] = useState(device.name ?? '')
   const ident = deviceIdent(device)
   const busy = setPolicy.isPending || unsetPolicy.isPending
@@ -49,18 +53,18 @@ const DeviceRow = ({ device, enabled }: { device: Device; enabled: { vps: boolea
       <TableCell>
         <Input
           value={name}
-          placeholder={device.hostname ?? deviceLabel(device)}
+          placeholder={device.hostname ?? deviceLabel(device, t)}
           disabled={device.policy === null || busy}
-          title={device.policy === null ? 'Give the device a policy first: the name is kept next to it' : undefined}
+          title={device.policy === null ? t('devices.nameNeedsPolicy') : undefined}
           onChange={(event) => setName(event.target.value)}
           onBlur={() => void rename()}
-          aria-label={`Name of ${deviceLabel(device)}`}
+          aria-label={t('devices.nameOf', { device: deviceLabel(device, t) })}
         />
       </TableCell>
-      <TableCell className="font-mono text-xs">{device.mac ?? '—'}</TableCell>
-      <TableCell className="font-mono text-xs">{device.ip ?? '—'}</TableCell>
+      <TableCell className="font-mono text-xs">{device.mac ?? t('common.none')}</TableCell>
+      <TableCell className="font-mono text-xs">{device.ip ?? t('common.none')}</TableCell>
       <TableCell className="text-sm">
-        {device.last_seen ? formatDate(new Date(device.last_seen), 'date-time-nice') : 'never seen'}
+        {device.last_seen ? formatDate(new Date(device.last_seen), 'date-time-nice', language) : t('devices.neverSeen')}
       </TableCell>
       <TableCell>
         {pendingBlock ? (
@@ -74,15 +78,15 @@ const DeviceRow = ({ device, enabled }: { device: Device; enabled: { vps: boolea
                 void apply('block')
               }}
             >
-              Cut off
+              {t('devices.cutOff')}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setPendingBlock(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
           </div>
         ) : (
           <XSelect
-            options={policyOptions(enabled)}
+            options={policyOptions(enabled, t)}
             value={device.policy ?? 'mode'}
             disabled={busy}
             onValueChange={(value) => {
@@ -103,11 +107,12 @@ const DeviceRow = ({ device, enabled }: { device: Device; enabled: { vps: boolea
 
 export const devicesPage = generalLayout.lets
   .page('/devices')
-  .head('Devices')
   .use(redirectUnauthorizedPlugin)
   .with(deviceListQuery)
   .page(({ data: { devices } }) => {
     const [search, setSearch] = useState('')
+    const t = useT()
+    useHead({ title: t('nav.devices') })
     // Which uplinks are enabled: until the status arrives, policies through an uplink stay unavailable.
     const uplinks = boxStatusQuery.useQuery().data?.status.uplinks ?? []
     const enabled = {
@@ -116,26 +121,24 @@ export const devicesPage = generalLayout.lets
     }
     const shown = devices.filter((device) => matchesSearch(device, search))
     return (
-      <Section h1="Devices" description="LAN devices the box has seen, and the ones config.yaml names">
+      <Section h1={t('devices.title')} description={t('devices.description')}>
         <Input
           value={search}
-          placeholder="Search by name, MAC or address"
+          placeholder={t('devices.search')}
           onChange={(event) => setSearch(event.target.value)}
           className="mb-4 max-w-sm"
         />
         {devices.length === 0 ? (
-          <p className="text-muted-foreground">
-            No LAN devices yet: a device appears once it uses the box as its gateway or DNS.
-          </p>
+          <p className="text-muted-foreground">{t('devices.empty')}</p>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>MAC</TableHead>
-                <TableHead>Address</TableHead>
-                <TableHead>Last seen</TableHead>
-                <TableHead>Policy</TableHead>
+                <TableHead>{t('devices.column.name')}</TableHead>
+                <TableHead>{t('devices.column.mac')}</TableHead>
+                <TableHead>{t('devices.column.address')}</TableHead>
+                <TableHead>{t('devices.column.lastSeen')}</TableHead>
+                <TableHead>{t('devices.column.policy')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

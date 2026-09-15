@@ -3,8 +3,8 @@ import '@point0/core/server-only'
 
 /**
  * What better-auth stores as the password of the box admin. The real secret is never in the database: it is the bcrypt
- * line `vibedpn init` wrote to `secrets/htpasswd`, the same password as the core API and the node panel, and changing it
- * with `init` takes effect on the next sign-in without touching the database.
+ * line `vibedpn init` wrote to `secrets/htpasswd`, the same password as the core API and the node panel, and changing
+ * it with `init` takes effect on the next sign-in without touching the database.
  *
  * @tags rule, auth
  * @related verifyBoxPassword, createInitialAdmin
@@ -34,8 +34,8 @@ const readAdminHash = async (): Promise<string | null> => {
 }
 
 /**
- * Accepts only an account whose stored hash is the marker (an account created any other way never signs in) and only the
- * password whose bcrypt is the `admin` line of `htpasswd`, read on every attempt.
+ * Accepts only an account whose stored hash is the marker (an account created any other way never signs in) and only
+ * the password whose bcrypt is the `admin` line of `htpasswd`, read on every attempt.
  */
 export const verifyBoxPassword = async ({ hash, password }: { hash: string; password: string }) => {
   if (hash !== BOX_PASSWORD_MARKER) {

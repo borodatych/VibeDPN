@@ -13,8 +13,8 @@ export const CORE_API_HOST = '127.0.0.1'
 const DROPPED_REQUEST_HEADERS = ['host', 'cookie', 'connection', 'keep-alive', 'transfer-encoding', 'upgrade']
 
 /**
- * Forwards `/api/core/*` to the core API on loopback, only for a signed-in session. Core listens on 127.0.0.1 and has no
- * authentication of its own: this middleware is its only door from the LAN.
+ * Forwards `/api/core/*` to the core API on loopback, only for a signed-in session. Core listens on 127.0.0.1 and has
+ * no authentication of its own: this middleware is its only door from the LAN.
  *
  * @tags rule, auth, core
  */

@@ -1,4 +1,5 @@
 import { deviceIdent, deviceLabel, matchesSearch, policyOptions, type Device } from '@/features/devices/shared'
+import { baseT } from '@/modules/i18n/translator'
 import { describe, expect, test } from 'bun:test'
 
 const phone: Device = {
@@ -21,12 +22,12 @@ describe('devices', () => {
   })
 
   test('the own name wins over the PTR name', () => {
-    expect(deviceLabel(phone)).toBe('phone.lan')
-    expect(deviceLabel({ ...phone, name: 'Anna phone' })).toBe('Anna phone')
+    expect(deviceLabel(phone, baseT)).toBe('phone.lan')
+    expect(deviceLabel({ ...phone, name: 'Anna phone' }, baseT)).toBe('Anna phone')
   })
 
   test('a policy through a disabled uplink cannot be chosen', () => {
-    const options = policyOptions({ vps: true, dpn: false })
+    const options = policyOptions({ vps: true, dpn: false }, baseT)
     expect(options.find((option) => option.value === 'dpn')?.disabled).toBe(true)
     expect(options.find((option) => option.value === 'vps')?.disabled).toBe(false)
     expect(options.map((option) => option.value)).toEqual(['mode', 'vps', 'dpn', 'bypass', 'block'])

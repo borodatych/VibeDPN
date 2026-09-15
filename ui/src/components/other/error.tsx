@@ -5,17 +5,19 @@ import { Section } from '@/components/ui/section'
 import { routes } from '@/generated/point0/routes'
 import { AppError } from '@/lib/error'
 import { Link } from '@/lib/navigation'
+import type { T } from '@/modules/i18n/base'
+import { useT } from '@/modules/i18n/use-t'
 import { cn } from '@/utils'
 import { ClientOnly, env } from '@point0/core'
 import React, { useMemo } from 'react'
 
-export const useError = (error: unknown, overrides?: ErrorComponetProps): ErrorComponetProps => {
+export const useError = (error: unknown, t: T, overrides?: ErrorComponetProps): ErrorComponetProps => {
   const error0 = useMemo(() => (!error ? undefined : AppError.from(error)), [error])
 
   if (!error0) {
     return {
-      title: 'Something went wrong',
-      description: 'An unknown error occurred',
+      title: t('error.unknown.title'),
+      description: t('error.unknown.description'),
       ...overrides,
     }
   }
@@ -24,11 +26,11 @@ export const useError = (error: unknown, overrides?: ErrorComponetProps): ErrorC
       title: error0.message,
       description: (
         <>
-          Please{' '}
+          {t('error.signIn.before')}{' '}
           <Link route="signIn" className="text-blue-500 hover:text-blue-600">
-            sign in
+            {t('error.signIn.link')}
           </Link>{' '}
-          to continue
+          {t('error.signIn.after')}
         </>
       ),
       stack: error0.stack,
@@ -46,7 +48,7 @@ export const useError = (error: unknown, overrides?: ErrorComponetProps): ErrorC
   }
   if (error0.status === 404) {
     return {
-      title: 'Not Found',
+      title: t('error.notFound'),
       description: error0.message,
       stack: error0.stack,
       destructive: true,
@@ -54,7 +56,7 @@ export const useError = (error: unknown, overrides?: ErrorComponetProps): ErrorC
     }
   }
   return {
-    title: 'Something went wrong',
+    title: t('error.unknown.title'),
     description: error0.message,
     stack: error0.stack,
     destructive: true,
@@ -70,12 +72,17 @@ export type ErrorComponetProps = {
   destructive?: boolean
 }
 
-export const ErrorComponent = ({
+/**
+ * The error alert with an explicit translator: the root error boundary renders it outside the app providers, where the
+ * language query is not available, and passes the English base.
+ */
+export const ErrorView = ({
   error,
   className,
+  t,
   ...overrides
-}: ErrorComponetProps & { error?: unknown; className?: string }) => {
-  const { title, description, stack, destructive, content } = useError(error, overrides)
+}: ErrorComponetProps & { error?: unknown; className?: string; t: T }) => {
+  const { title, description, stack, destructive, content } = useError(error, t, overrides)
   return (
     <Alert className={cn('', className, destructive ? 'border-destructive' : 'border-border')}>
       <AlertTitle className={cn('text-xl', destructive ? 'text-destructive' : undefined)}>{title}</AlertTitle>
@@ -94,13 +101,19 @@ export const ErrorComponent = ({
   )
 }
 
+export const ErrorComponent = (props: ErrorComponetProps & { error?: unknown; className?: string }) => {
+  const t = useT()
+  return <ErrorView {...props} t={t} />
+}
+
 export const ErrorPageComponent = ({
   error,
   size = 'lg',
   className,
   ...overrides
 }: ErrorComponetProps & { error?: unknown; size?: 'lg' | 'sm'; className?: string }) => {
-  const { title, description, stack, destructive, content } = useError(error, overrides)
+  const t = useT()
+  const { title, description, stack, destructive, content } = useError(error, t, overrides)
   return (
     <div
       className={cn(
@@ -127,7 +140,7 @@ export const ErrorPageComponent = ({
         )}
         <div className="not-first:mt-6 [&:where([data-layout-content]_*)]:hidden">
           <Button to={routes.home()} size="xl" variant="outline">
-            Go to home
+            {t('error.goHome')}
           </Button>
         </div>
       </Section>

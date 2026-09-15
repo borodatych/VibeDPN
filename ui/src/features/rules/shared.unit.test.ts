@@ -7,6 +7,7 @@ import {
   type DomainRule,
   type JournalEntry,
 } from '@/features/rules/shared'
+import { baseT } from '@/modules/i18n/translator'
 import { describe, expect, test } from 'bun:test'
 
 const kinopoisk: DomainRule = {
@@ -71,10 +72,10 @@ describe('rules', () => {
   })
 
   test('channels read as the owner names them', () => {
-    expect(channelLabel('smart_vps')).toBe('VPS')
-    expect(channelLabel('smart_dpn_de')).toBe('Mysterium DE')
-    expect(channelLabel('smart_dpn_any')).toBe('Mysterium')
-    expect(channelLabel('direct')).toBe('direct')
+    expect(channelLabel('smart_vps', baseT)).toBe('VPS')
+    expect(channelLabel('smart_dpn_de', baseT)).toBe('Mysterium DE')
+    expect(channelLabel('smart_dpn_any', baseT)).toBe('Mysterium')
+    expect(channelLabel('direct', baseT)).toBe('direct')
   })
 
   test('the copy of a list reads as core has it', () => {
@@ -86,8 +87,8 @@ describe('rules', () => {
       fetched_at: null,
       error: '',
     }
-    expect(listCopyText(list)).toBe('fetching…')
-    expect(listCopyText({ ...list, error: 'HTTP 503' })).toBe('no copy yet')
-    expect(listCopyText({ ...list, domains: 12, fetched_at: 1_700_000_000 })).toBe('12 domains')
+    expect(listCopyText(list, baseT)).toBe('fetching…')
+    expect(listCopyText({ ...list, error: 'HTTP 503' }, baseT)).toBe('no copy yet')
+    expect(listCopyText({ ...list, domains: 12, fetched_at: 1_700_000_000 }, baseT)).toBe('12 domains')
   })
 })

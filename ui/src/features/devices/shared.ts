@@ -1,3 +1,5 @@
+import type { T } from '@/modules/i18n/base'
+
 /** One entry of core's `GET /devices` (core/vibedpn/api/models.py: DeviceView). */
 export type Device = {
   mac: string | null
@@ -20,20 +22,21 @@ export const DEVICE_POLICIES = ['vps', 'dpn', 'bypass', 'block'] as const
 /** What core addresses a device by: the MAC when known, the address otherwise. */
 export const deviceIdent = (device: Device): string => device.mac ?? device.ip ?? ''
 
-export const deviceLabel = (device: Device): string =>
-  device.name ?? device.hostname ?? device.mac ?? device.ip ?? 'Unknown device'
+export const deviceLabel = (device: Device, t: T): string =>
+  device.name ?? device.hostname ?? device.mac ?? device.ip ?? t('devices.unknown')
 
 /**
- * The policy list of a device row; a policy through an uplink that is not enabled cannot be chosen (core would refuse it).
+ * The policy list of a device row; a policy through an uplink that is not enabled cannot be chosen (core would refuse
+ * it).
  *
  * @tags devices
  */
-export const policyOptions = (enabled: { vps: boolean; dpn: boolean }) => [
-  { value: 'mode', label: 'Follows the mode' },
-  { value: 'vps', label: 'Through the VPS', disabled: !enabled.vps },
-  { value: 'dpn', label: 'Through Mysterium', disabled: !enabled.dpn },
-  { value: 'bypass', label: 'Direct (bypass)' },
-  { value: 'block', label: 'No internet (block)' },
+export const policyOptions = (enabled: { vps: boolean; dpn: boolean }, t: T) => [
+  { value: 'mode', label: t('devices.policy.mode') },
+  { value: 'vps', label: t('devices.policy.vps'), disabled: !enabled.vps },
+  { value: 'dpn', label: t('devices.policy.dpn'), disabled: !enabled.dpn },
+  { value: 'bypass', label: t('devices.policy.bypass') },
+  { value: 'block', label: t('devices.policy.block') },
 ]
 
 /** Case-insensitive search over what the owner can read in the row. */

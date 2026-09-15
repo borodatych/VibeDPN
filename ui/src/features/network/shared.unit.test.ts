@@ -1,4 +1,5 @@
 import { currentChoice, lanOptions, SIDECAR, type NetworkView } from '@/features/network/shared'
+import { baseT } from '@/modules/i18n/translator'
 import { describe, expect, test } from 'bun:test'
 
 const view = (patch: Partial<NetworkView> = {}): NetworkView => ({
@@ -16,8 +17,8 @@ const view = (patch: Partial<NetworkView> = {}): NetworkView => ({
 
 describe('lanOptions', () => {
   test('offers one port on the default-route interface and every other one as a gateway LAN', () => {
-    expect(lanOptions(view()).map((option) => option.value)).toEqual([SIDECAR, 'wlan0'])
-    expect(lanOptions(view())[1]?.label).toBe('Gateway: LAN wlan0 192.168.50.1/24, WAN eth0')
+    expect(lanOptions(view(), baseT).map((option) => option.value)).toEqual([SIDECAR, 'wlan0'])
+    expect(lanOptions(view(), baseT)[1]?.label).toBe('Gateway: LAN wlan0 192.168.50.1/24, WAN eth0')
   })
 
   test('shows the saved choice', () => {

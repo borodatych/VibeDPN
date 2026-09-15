@@ -1,4 +1,5 @@
 import { summarizeStatus, type BoxStatus } from '@/features/status/shared'
+import { baseT } from '@/modules/i18n/translator'
 import { describe, expect, test } from 'bun:test'
 
 const base: BoxStatus = {
@@ -31,7 +32,9 @@ const withGateway = (alive: boolean | null): BoxStatus => ({
 
 describe('summarizeStatus', () => {
   test('full through an answering gateway is fine', () => {
-    expect(summarizeStatus(base)).toEqual({ tone: 'ok', headline: 'The LAN goes out through vps' })
+    const summary = summarizeStatus(base)
+    expect(summary.tone).toBe('ok')
+    expect(baseT(summary.headline.key, summary.headline.params)).toBe('The LAN goes out through vps')
   })
 
   test('the kill switch holding the LAN is the first thing said', () => {
@@ -41,7 +44,7 @@ describe('summarizeStatus', () => {
   test('a silent gateway with failopen warns that traffic goes direct', () => {
     const summary = summarizeStatus({ ...withGateway(false), failopen: true })
     expect(summary.tone).toBe('warning')
-    expect(summary.headline).toContain('directly')
+    expect(summary.headline.key).toBe('status.headline.failopen')
   })
 
   test('a gateway not probed yet is not called silent', () => {
@@ -53,6 +56,6 @@ describe('summarizeStatus', () => {
   })
 
   test('mode off says the LAN goes direct', () => {
-    expect(summarizeStatus({ ...base, mode: 'off' }).headline).toContain('directly')
+    expect(summarizeStatus({ ...base, mode: 'off' }).headline.key).toBe('status.headline.direct')
   })
 })

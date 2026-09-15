@@ -37,7 +37,9 @@ export const vpsLanAccessMutation = root.lets
   .use(authorizedOnlyPlugin)
   .input(z.object({ allowed: z.boolean() }))
   .loader(async ({ input }) => {
-    return { access: await coreRequest<{ allowed: boolean }>('/uplinks/vps/lan-access', { method: 'PUT', body: input }) }
+    return {
+      access: await coreRequest<{ allowed: boolean }>('/uplinks/vps/lan-access', { method: 'PUT', body: input }),
+    }
   })
   .mutation()
 

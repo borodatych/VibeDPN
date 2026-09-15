@@ -1,7 +1,8 @@
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
-import { ErrorComponent } from '@/components/other/error'
+import { ErrorView } from '@/components/other/error'
+import { baseT } from '@/modules/i18n/translator'
 import { logger } from '@/lib/logger'
 import { cn } from '@/utils'
 
@@ -112,8 +113,9 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 
     return (
       <div className={cn('flex min-h-screen w-full items-center justify-center bg-background p-7', className)}>
-        <ErrorComponent
+        <ErrorView
           error={error}
+          t={baseT}
           className="max-w-3xl"
           content={
             <div className="flex gap-buttons-gap-sm">
@@ -124,7 +126,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
                   this.reset()
                 }}
               >
-                Try again
+                {baseT('error.tryAgain')}
               </Button>
               <Button
                 size="sm"
@@ -133,7 +135,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
                   window.location.reload()
                 }}
               >
-                Reload
+                {baseT('error.reload')}
               </Button>
             </div>
           }

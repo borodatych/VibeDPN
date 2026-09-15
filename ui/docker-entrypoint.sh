@@ -21,4 +21,14 @@ DATABASE_URL="postgresql://$DB_USER:$db_password@127.0.0.1:$UI_DB_PORT/$DB_NAME?
 BETTER_AUTH_SECRET="$(cat "$SECRETS_DIR/ui-auth-secret")"
 export DATABASE_URL BETTER_AUTH_SECRET
 
+# Seed the shipped languages into the folder the owner sees; a file already there is the owner's and is never replaced.
+if [ -n "${LOCALES_DIR:-}" ] && [ -d /app/locales-seed ]; then
+    mkdir -p "$LOCALES_DIR"
+    for seed in /app/locales-seed/*.json; do
+        [ -e "$seed" ] || continue
+        target="$LOCALES_DIR/$(basename "$seed")"
+        [ -e "$target" ] || cp "$seed" "$target"
+    done
+fi
+
 exec "$@"

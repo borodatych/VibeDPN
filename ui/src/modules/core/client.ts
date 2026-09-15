@@ -43,8 +43,8 @@ export const coreFetch = async <T>(path: string, init?: CoreInit): Promise<CoreA
 }
 
 /**
- * A JSON request to the core API from a server loader of the panel. Core answers errors with `{ detail }`; they come back
- * as `AppError` with core's status, so a refused mode change shows core's own reason.
+ * A JSON request to the core API from a server loader of the panel. Core answers errors with `{ detail }`; they come
+ * back as `AppError` with core's status, so a refused mode change shows core's own reason.
  *
  * @tags core
  * @related coreFetch, coreApiProxy

@@ -32,6 +32,8 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/modules/prisma/schema.prisma ./src/modules/prisma/schema.prisma
 COPY --from=build /app/src/modules/prisma/migrations ./src/modules/prisma/migrations
 COPY --from=build /app/prisma.config.ts ./prisma.config.ts
+# Languages the image ships; the entrypoint seeds them into the box's locales folder (docs/manuals/languageFileSpec.md).
+COPY --from=build /app/locales ./locales-seed
 COPY docker-entrypoint.sh /usr/local/bin/vibedpn-ui-entrypoint
 RUN chmod 0755 /usr/local/bin/vibedpn-ui-entrypoint
 ENTRYPOINT ["/usr/local/bin/vibedpn-ui-entrypoint"]
