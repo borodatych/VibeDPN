@@ -517,6 +517,34 @@ jobs:
           VIBEDPN_E2E_PYTHON: /tmp/e2e-venv/bin/python
         run: tests/e2e/router.sh
 
+  e2e-tor:
+    name: e2e · uplink tor — a LAN device through the real Tor network, kill switch, network and domain rules
+    runs-on: ubuntu-24.04
+    # Snowflake bootstraps in a minute or two; the stand waits up to ten
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Load the WireGuard module of the runner kernel
+        run: sudo modprobe wireguard
+      - name: Build the images the box runs
+        run: |
+          docker build -q -t ghcr.io/borodatych/vibedpn-core:e2e core
+          docker build -q -t ghcr.io/borodatych/vibedpn-wg:e2e images/wg
+          docker build -q -t ghcr.io/borodatych/vibedpn-tor:e2e images/tor
+      - name: The CLI in a venv
+        run: |
+          uv venv /tmp/e2e-venv --python 3.12
+          uv pip install --python /tmp/e2e-venv/bin/python --require-hashes -r core/requirements.txt
+          uv pip install --python /tmp/e2e-venv/bin/python --no-deps ./core
+      - name: Run the stand
+        env:
+          VIBEDPN_TAG: e2e
+          VIBEDPN_E2E_PYTHON: /tmp/e2e-venv/bin/python
+        run: tests/e2e/tor.sh
+
   e2e-home:
     name: e2e · home box — every service of the role, the node's traffic direct past the uplinks
     runs-on: ubuntu-24.04
