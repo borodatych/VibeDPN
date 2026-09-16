@@ -141,6 +141,51 @@ export const channelLabel = (channel: string, t: T): string => {
   return channel === 'smart_direct' ? t('rules.channel.ruleDirect') : channel
 }
 
+/** One network rule of `GET /networks` (core/vibedpn/api/models.py: NetworkRuleView). */
+export type NetworkRuleView = { network: string; via: RuleVia; country: string | null; uplink: string | null }
+
+/**
+ * The IPv4 networks Telegram publishes for its apps (https://core.telegram.org/resources/cidr.txt, taken 2026-09-17);
+ * the app connects to these addresses without asking for names, so only network rules catch it.
+ */
+export const TELEGRAM_NETWORKS = [
+  '91.108.56.0/22',
+  '91.108.4.0/22',
+  '91.108.8.0/22',
+  '91.108.16.0/22',
+  '91.108.12.0/22',
+  '149.154.160.0/20',
+  '91.105.192.0/23',
+  '91.108.20.0/22',
+  '185.76.151.0/24',
+] as const
+
+const IPV4_NETWORK = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/
+const OCTET_MAX = 255
+const PREFIX_MAX = 32
+const OCTET_BITS = 8
+
+/**
+ * Why a text is not an IPv4 network core takes (`a.b.c.d/nn`, host bits zero), or null when it is. Only a hint before
+ * sending: core checks the network itself.
+ *
+ * @tags rules
+ */
+export const networkProblem = (text: string): 'format' | 'hostBits' | null => {
+  const match = IPV4_NETWORK.exec(text.trim())
+  if (!match) {
+    return 'format'
+  }
+  const octets = match.slice(1, 5).map(Number)
+  const prefix = Number(match[5])
+  if (octets.some((octet) => octet > OCTET_MAX) || prefix > PREFIX_MAX) {
+    return 'format'
+  }
+  const address = octets.reduce((value, octet) => value * 2 ** OCTET_BITS + octet, 0)
+  const hostSize = 2 ** (PREFIX_MAX - prefix)
+  return address % hostSize === 0 ? null : 'hostBits'
+}
+
 /** One ready list of `GET /lists` (core/vibedpn/api/models.py: DomainListView). */
 export type DomainListView = {
   url: string

@@ -307,6 +307,19 @@ const table = {
   'rules.via.tor': "Through Tor",
   'rules.channel.tor': "Tor",
   'devices.policy.tor': "Through Tor",
+  'networks.title': "Networks",
+  'networks.description': "Addresses of apps that connect without asking for names, Telegram first: a network takes its channel in smart mode",
+  'networks.column.network': "Network",
+  'networks.column.channel': "Channel",
+  'networks.confirmRemove': "Remove the rule of the network {network}?",
+  'networks.network': "Network a.b.c.d/nn",
+  'networks.exitCountry': "Exit country of the network",
+  'networks.add': "Add network",
+  'networks.telegram': "Add the networks of Telegram",
+  'networks.telegramDone': "Telegram networks: {count} added",
+  'networks.problem.format': "Write a network as a.b.c.d/nn, for example 149.154.160.0/20.",
+  'networks.problem.hostBits': "This is an address inside a network, not the network itself: the host bits must be zero.",
+  'networks.hint': "A network kept direct wins over a network sent through an exit. The Telegram networks come from core.telegram.org/resources/cidr.txt.",
 } as const
 
 export type MessageKey = keyof typeof table

@@ -3,7 +3,9 @@ import {
   channelLabel,
   channelText,
   listCopyText,
+  networkProblem,
   ruleOf,
+  TELEGRAM_NETWORKS,
   wgExitNames,
   withCdn,
   type DomainRule,
@@ -106,5 +108,21 @@ describe('rules', () => {
     expect(channelText({ via: 'dpn', country: 'DE', uplink: null }, baseT)).toBe('Mysterium DE')
     // core spells '-' as '_' in the set name; the label gives the name back as the owner wrote it
     expect(channelLabel('smart_wg_my_vps', baseT)).toBe('WireGuard my-vps')
+  })
+
+  test('a network is a.b.c.d/nn with host bits zero', () => {
+    expect(networkProblem('149.154.160.0/20')).toBeNull()
+    expect(networkProblem(' 91.108.4.0/22 ')).toBeNull()
+    expect(networkProblem('0.0.0.0/0')).toBeNull()
+    expect(networkProblem('149.154.167.51/20')).toBe('hostBits')
+    expect(networkProblem('149.154.167.51/32')).toBeNull()
+    expect(networkProblem('149.154.160.0')).toBe('format')
+    expect(networkProblem('300.1.1.0/24')).toBe('format')
+    expect(networkProblem('10.0.0.0/33')).toBe('format')
+    expect(networkProblem('2001:b28:f23d::/48')).toBe('format')
+  })
+
+  test('the Telegram networks are all valid networks', () => {
+    expect(TELEGRAM_NETWORKS.filter((item) => networkProblem(item) !== null)).toEqual([])
   })
 })

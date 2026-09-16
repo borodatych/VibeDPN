@@ -5,6 +5,7 @@ import { AppError } from '@/lib/error'
 import {
   RULE_VIAS,
   type DomainListView,
+  type NetworkRuleView,
   type DomainRule,
   type JournalDevice,
   type JournalEntry,
@@ -110,6 +111,47 @@ export const learnedForgetMutation = root.lets
   .input(z.object({ name: z.string().min(1) }))
   .loader(async ({ input }) => {
     await coreRequest(`/learned/${encodeURIComponent(input.name)}`, { method: 'DELETE' })
+    return { ok: true }
+  })
+  .mutation()
+
+export const networkRulesQuery = root.lets
+  .query()
+  .use(authorizedOnlyPlugin)
+  .loader(async () => {
+    const answer = await coreFetch<NetworkRuleView[]>('/networks')
+    if (answer.ok) {
+      return { networks: answer.body, reason: null }
+    }
+    if (answer.status === NOT_HERE) {
+      return { networks: [], reason: answer.detail }
+    }
+    throw new AppError(answer.detail, { status: answer.status })
+  })
+  .query()
+
+export const networkRuleSetMutation = root.lets
+  .mutation()
+  .use(authorizedOnlyPlugin)
+  .input(
+    z.object({
+      network: z.string().trim().min(9),
+      via: z.enum(RULE_VIAS),
+      country: z.string().length(2).nullable(),
+      uplink: z.string().min(1).nullable(),
+    }),
+  )
+  .loader(async ({ input }) => {
+    return { network: await coreRequest<NetworkRuleView>('/networks', { method: 'PUT', body: input }) }
+  })
+  .mutation()
+
+export const networkRuleRemoveMutation = root.lets
+  .mutation()
+  .use(authorizedOnlyPlugin)
+  .input(z.object({ network: z.string().min(1) }))
+  .loader(async ({ input }) => {
+    await coreRequest(`/networks?network=${encodeURIComponent(input.network)}`, { method: 'DELETE' })
     return { ok: true }
   })
   .mutation()

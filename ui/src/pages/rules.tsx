@@ -14,6 +14,9 @@ import {
   journalQuery,
   learnedForgetMutation,
   learnedListQuery,
+  networkRuleRemoveMutation,
+  networkRuleSetMutation,
+  networkRulesQuery,
   ruleListQuery,
   ruleRemoveMutation,
   ruleSetMutation,
@@ -23,11 +26,14 @@ import {
   channelLabel,
   channelText,
   listCopyText,
+  networkProblem,
+  TELEGRAM_NETWORKS,
   wgExitNames,
   withCdn,
   type DomainListView,
   type DomainRule,
   type JournalEntry,
+  type NetworkRuleView,
   type RuleVia,
 } from '@/features/rules/shared'
 import { boxStatusQuery } from '@/features/status/api'
@@ -192,7 +198,11 @@ const AddRule = () => {
         aria-label={t('rules.site')}
         onChange={(event) => setDomain(event.target.value)}
       />
-      <XSelect options={viaOptions(t, exits, torEnabled)} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
+      <XSelect
+        options={viaOptions(t, exits, torEnabled)}
+        value={via}
+        onValueChange={(value) => setVia(String(value) as RuleVia)}
+      />
       {via === 'wg' && (
         <XSelect
           options={exitOptions(exits)}
@@ -280,7 +290,11 @@ const AddDomainList = () => {
         aria-label={t('lists.url')}
         onChange={(event) => setUrl(event.target.value)}
       />
-      <XSelect options={viaOptions(t, exits, torEnabled)} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
+      <XSelect
+        options={viaOptions(t, exits, torEnabled)}
+        value={via}
+        onValueChange={(value) => setVia(String(value) as RuleVia)}
+      />
       {via === 'wg' && (
         <XSelect
           options={exitOptions(exits)}
@@ -335,6 +349,146 @@ const DomainLists = () => {
       )}
       <AddDomainList />
       <p className="mt-2 text-xs text-muted-foreground">{t('lists.hint')}</p>
+    </>
+  )
+}
+
+const NetworkRow = ({ item }: { item: NetworkRuleView }) => {
+  const remove = networkRuleRemoveMutation.useMutation()
+  const t = useT()
+  const drop = async () => {
+    await remove.mutateAsync({ network: item.network })
+    await networkRulesQuery.refetchQuery()
+  }
+  return (
+    <TableRow>
+      <TableCell className="font-mono text-xs">{item.network}</TableCell>
+      <TableCell className="text-sm">{channelText(item, t)}</TableCell>
+      <TableCell>
+        <Button
+          variant="ghost"
+          size="sm"
+          loading={remove.isPending}
+          confirm={t('networks.confirmRemove', { network: item.network })}
+          onClick={() => void drop()}
+        >
+          {t('common.remove')}
+        </Button>
+        {remove.isError && <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>}
+      </TableCell>
+    </TableRow>
+  )
+}
+
+const AddNetwork = ({ existing }: { existing: string[] }) => {
+  const setNetwork = networkRuleSetMutation.useMutation()
+  const t = useT()
+  const exits = useWgExits()
+  const torEnabled = useTorEnabled()
+  const [network, setNetworkText] = useState('')
+  const [via, setVia] = useState<RuleVia>(torEnabled ? 'tor' : 'vps')
+  const [country, setCountry] = useState('')
+  const [uplink, setUplink] = useState('')
+  const [added, setAdded] = useState<number | null>(null)
+  const problem = network.trim() ? networkProblem(network) : null
+  const channel = () => ({
+    via,
+    country: via === 'dpn' && country.trim().length === 2 ? country.trim() : null,
+    uplink: via === 'wg' ? uplink || exits[0] || null : null,
+  })
+  const add = async () => {
+    await setNetwork.mutateAsync({ network: network.trim(), ...channel() })
+    setNetworkText('')
+    await networkRulesQuery.refetchQuery()
+  }
+  // One network after another: core applies each change to the router, and a refusal stops the rest.
+  const addTelegram = async () => {
+    const missing = TELEGRAM_NETWORKS.filter((item) => !existing.includes(item))
+    for (const item of missing) {
+      await setNetwork.mutateAsync({ network: item, ...channel() })
+    }
+    setAdded(missing.length)
+    await networkRulesQuery.refetchQuery()
+  }
+  return (
+    <div className="mt-4 space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={network}
+          placeholder="149.154.160.0/20"
+          className="max-w-xs font-mono"
+          aria-label={t('networks.network')}
+          onChange={(event) => setNetworkText(event.target.value)}
+        />
+        <XSelect
+          options={viaOptions(t, exits, torEnabled)}
+          value={via}
+          onValueChange={(value) => setVia(String(value) as RuleVia)}
+        />
+        {via === 'wg' && (
+          <XSelect
+            options={exitOptions(exits)}
+            value={uplink || exits[0] || ''}
+            onValueChange={(value) => setUplink(String(value))}
+          />
+        )}
+        {via === 'dpn' && (
+          <Input
+            value={country}
+            placeholder={t('rules.anyCountry')}
+            maxLength={2}
+            className="w-16 uppercase"
+            aria-label={t('networks.exitCountry')}
+            onChange={(event) => setCountry(event.target.value.toUpperCase())}
+          />
+        )}
+        <Button
+          disabled={!network.trim() || problem !== null}
+          loading={setNetwork.isPending}
+          onClick={() => void add()}
+        >
+          {t('networks.add')}
+        </Button>
+        <Button variant="outline-secondary" loading={setNetwork.isPending} onClick={() => void addTelegram()}>
+          {t('networks.telegram')}
+        </Button>
+      </div>
+      {problem && <p className="text-sm text-warning">{t(`networks.problem.${problem}`)}</p>}
+      {added !== null && (
+        <p className="text-sm text-muted-foreground">{t('networks.telegramDone', { count: added })}</p>
+      )}
+      {setNetwork.isError && <p className="text-sm text-destructive">{setNetwork.error.message}</p>}
+    </div>
+  )
+}
+
+const NetworkRules = () => {
+  const data = networkRulesQuery.useQuery().data
+  const t = useT()
+  if (data?.reason) {
+    return <p className="text-muted-foreground">{data.reason}</p>
+  }
+  const networks = data?.networks ?? []
+  return (
+    <>
+      {networks.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('networks.column.network')}</TableHead>
+              <TableHead>{t('networks.column.channel')}</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {networks.map((item) => (
+              <NetworkRow key={item.network} item={item} />
+            ))}
+          </TableBody>
+        </Table>
+      )}
+      <AddNetwork existing={networks.map((item) => item.network)} />
+      <p className="mt-2 text-xs text-muted-foreground">{t('networks.hint')}</p>
     </>
   )
 }
@@ -491,6 +645,9 @@ export const rulesPage = generalLayout.lets
         </Section>
         <Section h2={t('lists.title')} size="lg" description={t('lists.description')}>
           <DomainLists />
+        </Section>
+        <Section h2={t('networks.title')} size="lg" description={t('networks.description')}>
+          <NetworkRules />
         </Section>
         <Section h2={t('sniffer.title')} size="lg" description={t('sniffer.description')}>
           {devices?.reason ? (
