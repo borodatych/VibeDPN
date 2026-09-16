@@ -37,7 +37,7 @@ from vibedpn.engine.wifi import (
     parse_event,
     parse_station,
 )
-from vibedpn.event_view import client_line, duration_text, event_line, event_text
+from vibedpn.event_view import client_line, duration_text, event_line
 
 from .conftest import home_config, vps_config
 from .test_wifi import wifi_box
@@ -365,13 +365,31 @@ def test_the_journal_and_the_clients_through_the_api(tmp_path: Path) -> None:
         create_app(config, events=store, device_store=devices, wifi_stations=stations)
     )
     listed = [EventView.model_validate(item) for item in client.get("/events").json()]
-    assert [item.action for item in listed] == ["gateway_answers", "client_connected"]
+    assert [(item.action, item.name) for item in listed] == [
+        ("gateway_answers", None),  # an uplink is no device
+        ("client_connected", "phone"),  # the name the device gave itself
+    ]
     wifi_only = client.get("/events", params={"kind": "wifi", "since": 50}).json()
     assert [item["subject"] for item in wifi_only] == [PHONE]
     assert client.get("/events", params={"kind": "tor"}).status_code == 422
 
     (phone,) = [WifiClientView.model_validate(item) for item in client.get("/wifi/clients").json()]
     assert (phone.name, phone.connected_seconds, phone.signal_dbm) == ("phone", 7432, -56)
+
+    # the owner's name in config.yaml wins over the one the device gave itself
+    raw = wifi_box()
+    raw["devices"] = [{"name": "my phone", "mac": PHONE, "policy": "bypass"}]
+    owned = TestClient(
+        create_app(
+            Config.model_validate(raw), events=store, device_store=devices, wifi_stations=stations
+        )
+    )
+    assert owned.get("/events", params={"kind": "wifi"}).json()[0]["name"] == "my phone"
+    assert owned.get("/wifi/clients").json()[0]["name"] == "my phone"
+
+    # a device that never told its name has none: the reader shows it as unknown, with its MAC
+    nameless = TestClient(create_app(config, events=store, wifi_stations=stations))
+    assert nameless.get("/wifi/clients").json()[0]["name"] is None
 
 
 def test_the_api_says_why_there_is_nothing_to_show(tmp_path: Path) -> None:
@@ -409,20 +427,24 @@ def test_the_cli_builds_its_own_phrases_from_codes() -> None:
         time=0.0,
         kind="wifi",
         subject=PHONE,
+        name="realme",
         action="client_disconnected",
         detail={"session_seconds": 600},
     )
-    assert event_text(left) == f"{PHONE} left Wi-Fi after 10 min"
-    silent = EventView(time=0.0, kind="uplink", subject="dpn", action="gateway_silent", detail={})
-    assert event_text(silent) == "uplink dpn: the gateway does not answer"
-    assert event_line(silent).endswith("uplink dpn: the gateway does not answer")
+    assert event_line(left).endswith(f"wifi   realme ({PHONE})  left Wi-Fi after 10 min connected")
+    nameless = left.model_copy(update={"name": None, "detail": {}})
+    assert event_line(nameless).endswith(f"unknown ({PHONE})  left Wi-Fi")
+    silent = EventView(
+        time=0.0, kind="uplink", subject="dpn", name=None, action="gateway_silent", detail={}
+    )
+    assert event_line(silent).endswith("uplink dpn  the gateway does not answer")
     phone = WifiClientView(
         mac=PHONE,
-        name="phone",
+        name=None,
         connected_seconds=54572,
         signal_dbm=-56,
         inactive_ms=None,
         rx_bytes=None,
         tx_bytes=None,
     )
-    assert client_line(phone) == f"phone ({PHONE})  connected 15 h 9 min, -56 dBm"
+    assert client_line(phone) == f"unknown ({PHONE})  connected 15 h 9 min, -56 dBm"

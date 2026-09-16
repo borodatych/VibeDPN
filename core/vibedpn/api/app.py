@@ -216,6 +216,21 @@ def read_stations(interface: str) -> list[Station]:
         return control.stations()
 
 
+def device_names(box: Config | None, device_store: DeviceStore | None) -> dict[str, str]:
+    """A name for each MAC the box knows: the owner's name in config.yaml first, then the name the
+    device gave itself (DHCP or reverse DNS). A device that gave none has no entry: the reader shows
+    it as unknown, next to its MAC."""
+    names: dict[str, str] = {}
+    if device_store is not None:
+        try:
+            names = {seen.mac: seen.hostname for seen in device_store.devices() if seen.hostname}
+        except DeviceError:
+            names = {}
+    if box is not None:
+        names.update({device.mac: device.name for device in box.devices if device.mac})
+    return names
+
+
 def _add_event_routes(
     application: FastAPI,
     current: Callable[[], Config | None],
@@ -242,11 +257,13 @@ def _add_event_routes(
             )
         except EventError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        names = device_names(current(), device_store)
         return [
             EventView(
                 time=item.time,
                 kind=item.kind.value,
                 subject=item.subject,
+                name=names.get(item.subject) if item.kind is EventKind.WIFI else None,
                 action=item.action.value,
                 detail=item.detail,
             )
@@ -262,12 +279,7 @@ def _add_event_routes(
             stations = wifi_stations(box.network.lan_interface)
         except WifiError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        names: dict[str, str | None] = {}
-        if device_store is not None:
-            try:
-                names = {seen.mac: seen.hostname for seen in device_store.devices()}
-            except DeviceError:
-                names = {}
+        names = device_names(box, device_store)
         return [
             WifiClientView(
                 mac=station.mac,

@@ -1,6 +1,8 @@
 """The event journal and the Wi-Fi clients as lines of the terminal (the CLI speaks English).
 
 Pure: core hands over codes and numbers, the phrase is built here, as the panel builds its own.
+A device is always shown with its MAC, and by name when the box knows one: some devices never
+tell their name.
 """
 
 from __future__ import annotations
@@ -12,6 +14,8 @@ from vibedpn.api.models import EventView, WifiClientView
 MINUTE = 60
 HOUR = 60 * MINUTE
 DAY = 24 * HOUR
+UNKNOWN_DEVICE = "unknown"
+CLIENT_ACTIONS = frozenset({"client_connected", "client_disconnected"})
 
 
 def duration_text(seconds: float) -> str:
@@ -26,30 +30,42 @@ def duration_text(seconds: float) -> str:
     return f"{whole} s"
 
 
+def device_label(name: str | None, mac: str) -> str:
+    return f"{name or UNKNOWN_DEVICE} ({mac})"
+
+
+def event_subject(event: EventView) -> str:
+    """Who or what the event is about: a device by name and MAC, the access point, an uplink."""
+    if event.action in CLIENT_ACTIONS:
+        return device_label(event.name, event.subject)
+    if event.kind == "uplink":
+        return f"uplink {event.subject}"
+    return f"access point {event.subject}"
+
+
 def event_text(event: EventView) -> str:
-    subject = event.subject
     session = event.detail.get("session_seconds")
     phrases = {
-        "client_connected": f"{subject} joined Wi-Fi",
+        "client_connected": "joined Wi-Fi",
         "client_disconnected": (
-            f"{subject} left Wi-Fi after {duration_text(float(session))}"
+            f"left Wi-Fi after {duration_text(float(session))} connected"
             if session is not None
-            else f"{subject} left Wi-Fi"
+            else "left Wi-Fi"
         ),
-        "ap_enabled": f"access point on {subject} is up",
-        "ap_disabled": f"access point on {subject} is down",
-        "gateway_answers": f"uplink {subject}: the gateway answers",
-        "gateway_silent": f"uplink {subject}: the gateway does not answer",
+        "ap_enabled": "is up",
+        "ap_disabled": "is down",
+        "gateway_answers": "the gateway answers",
+        "gateway_silent": "the gateway does not answer",
     }
-    return phrases.get(event.action, f"{event.kind} {subject}: {event.action}")
+    return phrases.get(event.action, event.action)
 
 
 def event_line(event: EventView) -> str:
     stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(event.time))
-    return f"{stamp}  {event.kind:<6} {event_text(event)}"
+    return f"{stamp}  {event.kind:<6} {event_subject(event)}  {event_text(event)}"
 
 
 def client_line(client: WifiClientView) -> str:
-    label = f"{client.name} ({client.mac})" if client.name else client.mac
     signal = f"{client.signal_dbm} dBm" if client.signal_dbm is not None else "signal unknown"
+    label = device_label(client.name, client.mac)
     return f"{label}  connected {duration_text(client.connected_seconds)}, {signal}"

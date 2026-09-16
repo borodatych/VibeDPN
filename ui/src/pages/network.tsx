@@ -3,7 +3,7 @@ import { Section, Sections } from '@/components/ui/section'
 import { XSelect } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { eventListQuery, wifiClientsQuery } from '@/features/events/api'
-import { DROPS_WINDOW_HOURS, durationText, wifiDrops } from '@/features/events/shared'
+import { deviceName, DROPS_WINDOW_HOURS, durationText, wifiDrops } from '@/features/events/shared'
 import { networkQuery, networkUpdateMutation } from '@/features/network/api'
 import { currentChoice, lanOptions, SIDECAR } from '@/features/network/shared'
 import { generalLayout } from '@/layouts/general'
@@ -37,8 +37,8 @@ const WifiSection = () => {
             {wifi.clients.map((client) => (
               <TableRow key={client.mac}>
                 <TableCell>
-                  <div>{client.name ?? client.mac}</div>
-                  {client.name && <div className="font-mono text-xs text-muted-foreground">{client.mac}</div>}
+                  <div>{deviceName(client.name, t)}</div>
+                  <div className="font-mono text-xs text-muted-foreground">{client.mac}</div>
                 </TableCell>
                 <TableCell>{durationText(client.connected_seconds, t)}</TableCell>
                 <TableCell>

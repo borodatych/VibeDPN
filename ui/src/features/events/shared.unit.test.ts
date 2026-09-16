@@ -1,15 +1,16 @@
 import { baseStrings, type T } from '@/modules/i18n/base'
 import { translate } from '@/modules/i18n/shared'
-import { deviceNames, durationText, eventText, eventTone, wifiDrops, type BoxEvent } from '@/features/events/shared'
+import { durationText, eventSubject, eventText, eventTone, wifiDrops, type BoxEvent } from '@/features/events/shared'
 import { describe, expect, test } from 'bun:test'
 
 const t: T = (key, params) => translate(baseStrings, key, params)
 const PHONE = '92:da:e8:fa:f8:63'
 
-const event = (action: BoxEvent['action'], detail: BoxEvent['detail'] = {}): BoxEvent => ({
+const event = (action: BoxEvent['action'], detail: BoxEvent['detail'] = {}, name: string | null = null): BoxEvent => ({
   time: 0,
   kind: action.startsWith('gateway') ? 'uplink' : 'wifi',
-  subject: action.startsWith('gateway') ? 'dpn' : PHONE,
+  subject: action.startsWith('gateway') ? 'dpn' : action.startsWith('ap') ? 'wlp2s0' : PHONE,
+  name,
   action,
   detail,
 })
@@ -22,23 +23,19 @@ describe('events', () => {
     expect(durationText(3 * 86_400 + 4 * 3600 + 59, t)).toBe('3 d 4 h')
   })
 
-  test('a client is named when the box knows it, by its MAC otherwise', () => {
-    const names = deviceNames([
-      { mac: PHONE, name: null, hostname: 'phone' },
-      { mac: 'aa:bb:cc:dd:ee:01', name: 'Laptop', hostname: 'laptop-7' },
-      { mac: null, name: 'By address', hostname: null },
-    ])
-    expect(names).toEqual({ [PHONE]: 'phone', 'aa:bb:cc:dd:ee:01': 'Laptop' })
-    expect(eventText(event('client_connected'), t, names)).toBe('phone — joined Wi-Fi')
-    expect(eventText(event('client_connected'), t, {})).toBe(`${PHONE} — joined Wi-Fi`)
+  test('a device is shown by name with its MAC, and as unknown when it never told its name', () => {
+    expect(eventSubject(event('client_connected', {}, 'realme'), t)).toEqual({ title: 'realme', detail: PHONE })
+    expect(eventSubject(event('client_connected'), t)).toEqual({ title: 'Unknown', detail: PHONE })
+    expect(eventSubject(event('gateway_silent'), t)).toEqual({ title: 'Uplink dpn', detail: null })
+    expect(eventSubject(event('ap_enabled'), t)).toEqual({ title: 'Access point', detail: 'wlp2s0' })
   })
 
   test('a drop carries the length of the session when core measured it', () => {
-    expect(eventText(event('client_disconnected', { session_seconds: 600 }), t, {})).toBe(
-      `${PHONE} — left Wi-Fi after 10 min connected`,
+    expect(eventText(event('client_disconnected', { session_seconds: 600 }), t)).toBe(
+      'Left Wi-Fi after 10 min connected',
     )
-    expect(eventText(event('client_disconnected'), t, {})).toBe(`${PHONE} — left Wi-Fi`)
-    expect(eventText(event('gateway_silent'), t, {})).toBe('Uplink dpn: the gateway does not answer')
+    expect(eventText(event('client_disconnected'), t)).toBe('Left Wi-Fi')
+    expect(eventText(event('gateway_silent'), t)).toBe('The gateway does not answer')
   })
 
   test('losses stand out and only client drops are counted', () => {

@@ -244,6 +244,7 @@ class EventView(BaseModel):
     time: float  # unix seconds
     kind: str  # wifi | uplink
     subject: str  # a client MAC or the interface for wifi, an uplink key for uplink
+    name: str | None  # the device name of a client MAC; None when the box knows none
     action: str  # engine/events.py: EventAction
     detail: dict[str, int | float | str]
 

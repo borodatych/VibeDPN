@@ -12,6 +12,8 @@ export type BoxEvent = {
   kind: EventKind
   /** a client MAC or the interface for wifi, an uplink key for uplink */
   subject: string
+  /** the device name of a client MAC; null when the box knows none */
+  name: string | null
   action: EventAction
   detail: Partial<Record<string, number | string>>
 }
@@ -29,8 +31,8 @@ export type WifiClient = {
 
 export type EventTone = 'ok' | 'warning'
 
-/** A device name by MAC: what the journal shows instead of a bare address when the box knows one. */
-export type DeviceNames = Partial<Record<string, string>>
+/** What an event is about, in two lines: a device by name with its MAC under it, the access point, an uplink. */
+export type EventSubject = { title: string; detail: string | null }
 
 const MINUTE_SECONDS = 60
 export const HOUR_SECONDS = 60 * MINUTE_SECONDS
@@ -70,30 +72,47 @@ export const durationText = (seconds: number, t: T): string => {
   return t('duration.seconds', { seconds: whole })
 }
 
+/** A device name, or "unknown" for one that never told it; the MAC is always shown next to it. */
+export const deviceName = (name: string | null, t: T): string => name ?? t('device.unknown')
+
 /**
- * The phrase of an event. Core stores codes and numbers; the sentence is built here, in the current language.
+ * Who or what an event is about.
  *
  * @tags events
  */
-export const eventText = (event: BoxEvent, t: T, names: DeviceNames): string => {
-  const who = names[event.subject] ?? event.subject
+export const eventSubject = (event: BoxEvent, t: T): EventSubject => {
+  if (event.action === 'client_connected' || event.action === 'client_disconnected') {
+    return { title: deviceName(event.name, t), detail: event.subject }
+  }
+  if (event.kind === 'uplink') {
+    return { title: t('journal.subject.uplink', { uplink: event.subject }), detail: null }
+  }
+  return { title: t('journal.subject.accessPoint'), detail: event.subject }
+}
+
+/**
+ * What happened. Core stores codes and numbers; the sentence is built here, in the current language.
+ *
+ * @tags events
+ */
+export const eventText = (event: BoxEvent, t: T): string => {
   switch (event.action) {
     case 'client_connected':
-      return t('events.wifi.joined', { who })
+      return t('events.wifi.joined')
     case 'client_disconnected': {
       const session = event.detail.session_seconds
       return typeof session === 'number'
-        ? t('events.wifi.leftAfter', { who, duration: durationText(session, t) })
-        : t('events.wifi.left', { who })
+        ? t('events.wifi.leftAfter', { duration: durationText(session, t) })
+        : t('events.wifi.left')
     }
     case 'ap_enabled':
-      return t('events.ap.up', { interface: event.subject })
+      return t('events.ap.up')
     case 'ap_disabled':
-      return t('events.ap.down', { interface: event.subject })
+      return t('events.ap.down')
     case 'gateway_answers':
-      return t('events.uplink.answers', { uplink: event.subject })
+      return t('events.uplink.answers')
     case 'gateway_silent':
-      return t('events.uplink.silent', { uplink: event.subject })
+      return t('events.uplink.silent')
   }
 }
 
@@ -106,15 +125,3 @@ export const eventTone = (event: BoxEvent): EventTone =>
 /** Clients that lost the access point among these events. */
 export const wifiDrops = (events: BoxEvent[]): number =>
   events.filter((event) => event.kind === 'wifi' && event.action === 'client_disconnected').length
-
-/** Names of the devices the box knows, by MAC: the owner's name first, then the host name. */
-export const deviceNames = (devices: { mac: string | null; name: string | null; hostname: string | null }[]) => {
-  const names: DeviceNames = {}
-  for (const device of devices) {
-    const label = device.name ?? device.hostname
-    if (device.mac && label) {
-      names[device.mac] = label
-    }
-  }
-  return names
-}

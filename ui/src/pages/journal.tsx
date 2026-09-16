@@ -3,14 +3,14 @@ import { Badge } from '@/components/ui/badge'
 import { Section } from '@/components/ui/section'
 import { XSelect } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { deviceListQuery } from '@/features/devices/api'
 import { eventListQuery } from '@/features/events/api'
 import {
-  deviceNames,
   EVENT_KINDS,
+  eventSubject,
   eventText,
   eventTone,
   JOURNAL_PERIODS,
+  type BoxEvent,
   type EventKind,
 } from '@/features/events/shared'
 import { generalLayout } from '@/layouts/general'
@@ -31,17 +31,36 @@ const kindOptions = (t: T) => [
 const periodOptions = (t: T) =>
   JOURNAL_PERIODS.map((period) => ({ value: String(period.hours), label: t(period.label) }))
 
+const EventRow = ({ event }: { event: BoxEvent }) => {
+  const t = useT()
+  const language = useLanguage()
+  const subject = eventSubject(event, t)
+  return (
+    <TableRow>
+      <TableCell className="text-sm whitespace-nowrap">
+        {formatDate(new Date(event.time * 1000), 'date-time', language)}
+      </TableCell>
+      <TableCell>
+        <Badge variant={TONE_BADGE[eventTone(event)]}>{t(`journal.kind.${event.kind}`)}</Badge>
+      </TableCell>
+      <TableCell>
+        <div>{subject.title}</div>
+        {subject.detail && <div className="font-mono text-xs text-muted-foreground">{subject.detail}</div>}
+      </TableCell>
+      <TableCell>{eventText(event, t)}</TableCell>
+    </TableRow>
+  )
+}
+
 export const journalPage = generalLayout.lets
   .page('/journal')
   .use(redirectUnauthorizedPlugin)
   .page(() => {
     const t = useT()
-    const language = useLanguage()
     useHead({ title: t('nav.journal') })
     const [kind, setKind] = useState<EventKind | null>(null)
     const [hours, setHours] = useState<number>(JOURNAL_PERIODS[0].hours)
     const journal = eventListQuery.useQuery({ kind, hours }).data
-    const names = deviceNames(deviceListQuery.useQuery().data?.devices ?? [])
     const events = journal?.events ?? []
 
     return (
@@ -66,20 +85,13 @@ export const journalPage = generalLayout.lets
               <TableRow>
                 <TableHead>{t('journal.column.time')}</TableHead>
                 <TableHead>{t('journal.column.kind')}</TableHead>
+                <TableHead>{t('journal.column.subject')}</TableHead>
                 <TableHead>{t('journal.column.event')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {events.map((event) => (
-                <TableRow key={`${event.time}-${event.subject}-${event.action}`}>
-                  <TableCell className="text-sm whitespace-nowrap">
-                    {formatDate(new Date(event.time * 1000), 'date-time', language)}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={TONE_BADGE[eventTone(event)]}>{t(`journal.kind.${event.kind}`)}</Badge>
-                  </TableCell>
-                  <TableCell>{eventText(event, t, names)}</TableCell>
-                </TableRow>
+                <EventRow key={`${event.time}-${event.subject}-${event.action}`} event={event} />
               ))}
             </TableBody>
           </Table>
