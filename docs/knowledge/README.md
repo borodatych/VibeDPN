@@ -56,6 +56,12 @@
   соединение — один включённый выход), формат файла, замер на коробке: инициации уходят, ответа нет,
   адреса пингуются и TCP 443 открыт — Ростелеком режет WireGuard к Proton; чего доктор не видит
 
+## tor
+
+- [snowflake.md](tor/snowflake.md) — как Ростелеком режет цели (rutracker и lostfilm по имени с замерзанием после ~20 КБ,
+  Telegram и rutor по адресу, ответы Mysterium через ретранслятор замирают на 16 КБ), obfs4-мосты Tor Browser не проходят,
+  Snowflake проходит (~145 КБ/с), пакеты trixie без lyrebird/webtunnel, прозрачный шлюз в Tor в netns контейнера
+
 ## platform
 
 - [debianPi.md](platform/debianPi.md) — ядра Debian 12/13 и Raspberry Pi с `CONFIG_WIREGUARD=m`,
@@ -121,5 +127,7 @@
 
 - [vibeSeed.md](process/vibeSeed.md) — откуда взят `.vibe/` (канон VibeBrains через сабмодуль
   VibeIDE), что из набора не сеется и почему
+- [deeperPanel.md](process/deeperPanel.md) — панель Deeper Connect изнутри: 144 пути API, режимы smart/full/direct,
+  туннель = страна, белый и чёрный списки доменов, сутки: потреблено 27 ГБ при 45 МБ розданных — доступ не завязан на раздачу
 - [licensing.md](process/licensing.md) — MIT у обвязки, GPL у контейнеров: почему это агрегат,
   а не производная работа, и чего из чужих репозиториев нельзя копировать

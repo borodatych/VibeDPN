@@ -6,7 +6,9 @@ FROM debian:trixie-slim
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         tor obfs4proxy snowflake-client nftables ca-certificates wget \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # the exit check of `vibedpn doctor` runs `wget -T 8` here: GNU wget would retry 20 times
+    && echo "tries = 1" >>/etc/wgetrc
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["run"]

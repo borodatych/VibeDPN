@@ -102,6 +102,10 @@ table ip $NFT_TABLE {
   chain output {
     type filter hook output priority filter; policy drop;
     oifname "lo" accept
+    # a redirect in output_nat reroutes the packet to lo, but this hook still sees the device it
+    # was first routed to: the redirected connection is let through by where it now goes
+    ip daddr 127.0.0.1 tcp dport $TRANS_PORT accept
+    ip daddr 127.0.0.1 udp dport $DNS_PORT accept
     meta skuid "$TOR_USER" accept
     ct state established,related accept
     ip daddr $DOCKER_DNS accept
