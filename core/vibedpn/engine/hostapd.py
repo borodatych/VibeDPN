@@ -12,6 +12,7 @@ from pathlib import Path
 
 from vibedpn.atomic import write_private
 from vibedpn.config import Config, NetworkMode, WifiBand, WifiSecurity
+from vibedpn.engine.wifi import DEFAULT_CTRL_DIR
 
 CONF_FILE = "hostapd.conf"
 PASSPHRASE_FILE = "wifi-passphrase"
@@ -32,9 +33,11 @@ SAE_PWE_BOTH = 2
 # drops stations on low ack; 802.11n with WMM and no low-ack kick made that minutes, not seconds
 # (docs/knowledge/linux/hostapdConfigCheck.md).
 STABLE_AP_LINES = ("ieee80211n=1", "wmm_enabled=1", "disassoc_low_ack=0")
-# The control socket core reads events and clients from (engine/wifi.py). The directory is the one
-# of the example hostapd.conf of the package; compose.yaml shares it with core. Group 0: root only.
-CTRL_INTERFACE_LINES = ("ctrl_interface=/var/run/hostapd", "ctrl_interface_group=0")
+# The control socket core reads events and clients from (engine/wifi.py). hostapd answers a datagram
+# to the path the client bound, as a string: the directory must have the same path in both
+# containers, so it is core's ctrl_dir here too, not the package default /var/run/hostapd.
+# Group 0: root only.
+CTRL_INTERFACE_LINES = (f"ctrl_interface={DEFAULT_CTRL_DIR}", "ctrl_interface_group=0")
 
 
 class HostapdError(RuntimeError):

@@ -16,7 +16,7 @@ from vibedpn.api.app import create_app
 from vibedpn.api.models import EventView, WifiClientView
 from vibedpn.api.uplink import watch_uplink
 from vibedpn.api.wifi import to_event, watch_wifi
-from vibedpn.config import Config, Upstream
+from vibedpn.config import Config, Upstream, parse_yaml
 from vibedpn.engine import events as events_module
 from vibedpn.engine.devices import DeviceStore, Neighbour
 from vibedpn.engine.events import (
@@ -29,6 +29,7 @@ from vibedpn.engine.events import (
 from vibedpn.engine.hostapd import hostapd_conf
 from vibedpn.engine.router import UPLINKS, Uplink
 from vibedpn.engine.wifi import (
+    DEFAULT_CTRL_DIR,
     ApEvent,
     HostapdControl,
     Station,
@@ -41,6 +42,7 @@ from vibedpn.event_view import client_line, duration_text, event_line, event_tex
 from .conftest import home_config, vps_config
 from .test_wifi import wifi_box
 
+REPO_ROOT = Path(__file__).resolve().parents[2]  # tests/ -> core/ -> repository root
 PHONE = "92:da:e8:fa:f8:63"
 LAPTOP = "aa:bb:cc:dd:ee:01"
 # `hostapd_cli all_sta` of hostapd 2.11 answers STA-FIRST with the MAC, then key=value lines
@@ -330,8 +332,18 @@ def test_the_uplink_watcher_journals_changes_only() -> None:
 def test_hostapd_is_configured_with_the_control_socket_core_reads() -> None:
     conf = hostapd_conf(Config.model_validate(wifi_box()), "passphrase-12")
     assert conf is not None
-    assert "ctrl_interface=/var/run/hostapd\n" in conf
+    assert "ctrl_interface=/run/vibedpn/hostapd\n" in conf
     assert "ctrl_interface_group=0\n" in conf
+
+
+def test_the_socket_directory_has_the_same_path_in_both_containers() -> None:
+    """hostapd answers a datagram to the path the client bound, as a string: a directory mounted
+    under another name in one of the containers loses every reply (found on the box, 2026-09-16)."""
+    compose = parse_yaml((REPO_ROOT / "compose.yaml").read_text(encoding="utf-8"))
+    assert isinstance(compose, dict)
+    shared = f"{DEFAULT_CTRL_DIR}:{DEFAULT_CTRL_DIR}"
+    for service in ("core", "hostapd"):
+        assert shared in compose["services"][service]["volumes"], service
 
 
 # --- the API ------------------------------------------------------------------------------------

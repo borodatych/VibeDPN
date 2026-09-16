@@ -369,8 +369,9 @@ services:
         condition: service_healthy
     volumes:
       - ./data/hostapd:/var/lib/vibedpn-hostapd:ro
-      # ctrl_interface of hostapd.conf; core attaches to the socket from the other side.
-      - /run/vibedpn/hostapd:/var/run/hostapd
+      # ctrl_interface of hostapd.conf. The same path as in core: hostapd answers a datagram to the
+      # path the client bound, so a directory mounted under another name loses every reply.
+      - /run/vibedpn/hostapd:/run/vibedpn/hostapd
 
   # DHCP of gateway mode (network.mode gateway only: the profile dhcp never runs next to the DHCP
   # server of an ISP router). Host network on the LAN interface; the config comes from core.
