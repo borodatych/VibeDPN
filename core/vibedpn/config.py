@@ -461,6 +461,27 @@ class DomainList(DomainChannel):
         return self.url
 
 
+class NetworkRule(DomainChannel):
+    """A network of addresses in routing.mode smart (docs/decisions.md, 28): for a service an app
+    reaches by address rather than by name — the data centers of Telegram. Matched by destination
+    address, so nothing is resolved and nothing is learned."""
+
+    network: IPv4Network
+
+    @field_validator("network", mode="before")
+    @classmethod
+    def check_network(cls, value: object) -> IPv4Network:
+        try:
+            return IPv4Network(str(value).strip())
+        except ValueError:
+            raise ValueError(
+                f"routing.networks: {value!r} is not an IPv4 network (a.b.c.d/nn, host bits zero)"
+            ) from None
+
+    def subject(self) -> str:
+        return str(self.network)
+
+
 class RoutingConfig(StrictModel):
     """LAN traffic policy: everything direct, everything via an uplink, or by domain rules."""
 
@@ -471,10 +492,22 @@ class RoutingConfig(StrictModel):
     failopen: bool = False
     domains: list[DomainRule] = Field(default_factory=list)
     lists: list[DomainList] = Field(default_factory=list)
+    networks: list[NetworkRule] = Field(default_factory=list)
 
     def channels(self) -> list[DomainChannel]:
-        """Every channel the rules and the lists name: what sets, marks and uplinks follow."""
-        return [*self.domains, *self.lists]
+        """Every channel the rules, the lists and the networks name: what sets, marks and uplinks
+        follow."""
+        return [*self.domains, *self.lists, *self.networks]
+
+    @field_validator("networks")
+    @classmethod
+    def check_unique_networks(cls, value: list[NetworkRule]) -> list[NetworkRule]:
+        seen: set[IPv4Network] = set()
+        for rule in value:
+            if rule.network in seen:
+                raise ValueError(f"routing.networks: {rule.network} is listed twice")
+            seen.add(rule.network)
+        return value
 
     @field_validator("default_upstream")
     @classmethod

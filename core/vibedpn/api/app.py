@@ -32,6 +32,8 @@ from vibedpn.api.models import (
     JournalDeviceView,
     JournalEntryView,
     LearnedView,
+    NetworkRuleUpdate,
+    NetworkRuleView,
     NetworkUpdate,
     NetworkView,
     PeerCreate,
@@ -59,6 +61,7 @@ from vibedpn.config import (
     DomainList,
     DomainRule,
     NetworkMode,
+    NetworkRule,
     RoutingMode,
     Upstream,
 )
@@ -67,16 +70,19 @@ from vibedpn.config_edit import (
     DeviceIdent,
     DeviceNotFoundError,
     ListNotFoundError,
+    NetworkRuleNotFoundError,
     RuleNotFoundError,
     WgUplinkNotFoundError,
     remove_domain_list,
     remove_domain_rule,
+    remove_network_rule,
     remove_wg_uplink,
     set_device,
     set_domain_list,
     set_domain_rule,
     set_dpn_country,
     set_network,
+    set_network_rule,
     set_routing,
     set_vps_lan_access,
     set_wg_uplink,
@@ -637,6 +643,7 @@ def _add_lan_routes(
     _add_network_routes(application, state, interfaces_source)
     _add_rule_routes(application, state)
     _add_list_routes(application, state, lists)
+    _add_network_rule_routes(application, state)
     _add_smart_routes(application, smart)
 
 
@@ -710,7 +717,12 @@ def _run_edit(box_state: BoxState, change: Callable[[Path], tuple[Config, bool]]
     """A rule or list edit of config.yaml applied live; core's refusals become HTTP answers."""
     try:
         return box_state.edit(change)
-    except (RuleNotFoundError, ListNotFoundError, WgUplinkNotFoundError) as exc:
+    except (
+        RuleNotFoundError,
+        ListNotFoundError,
+        NetworkRuleNotFoundError,
+        WgUplinkNotFoundError,
+    ) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ConfigEditError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -756,6 +768,36 @@ def _add_list_routes(
     @application.delete("/lists", status_code=204)
     def delete_list(url: str) -> Response:
         _run_edit(_lan_state(state), lambda path: remove_domain_list(path, url))
+        return Response(status_code=204)
+
+
+def _network_rule_view(rule: NetworkRule) -> NetworkRuleView:
+    return NetworkRuleView(
+        network=str(rule.network), via=rule.via.value, country=rule.country, uplink=rule.uplink
+    )
+
+
+def _add_network_rule_routes(application: FastAPI, state: BoxState | None) -> None:
+    """``/networks``: address networks of smart mode, edited in config.yaml, applied live."""
+
+    @application.get("/networks", response_model=list[NetworkRuleView])
+    def network_rules() -> list[NetworkRuleView]:
+        routing = _lan_state(state).config.routing
+        return [_network_rule_view(rule) for rule in routing.networks] if routing else []
+
+    @application.put("/networks", response_model=NetworkRuleView)
+    def put_network_rule(request: NetworkRuleUpdate) -> NetworkRuleView:
+        box_state = _lan_state(state)
+        try:
+            rule = NetworkRule.model_validate(request.model_dump())
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()[0]["msg"]) from exc
+        _run_edit(box_state, lambda path: set_network_rule(path, rule))
+        return _network_rule_view(rule)
+
+    @application.delete("/networks", status_code=204)
+    def delete_network_rule(network: str) -> Response:
+        _run_edit(_lan_state(state), lambda path: remove_network_rule(path, network))
         return Response(status_code=204)
 
 

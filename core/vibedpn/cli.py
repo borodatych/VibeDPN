@@ -31,6 +31,7 @@ from vibedpn.api.models import (
     DomainListView,
     DomainRuleUpdate,
     JournalEntryView,
+    NetworkRuleUpdate,
     PeerFile,
 )
 from vibedpn.atomic import write_private
@@ -1381,6 +1382,56 @@ def lists_rm(
     config = _lan_box(box_dir)
     _core_call(lambda: core_api.remove_domain_list(config.api.port, url))
     typer.echo(f"{url}: list removed")
+
+
+net_app = typer.Typer(
+    help="Address networks of routing.mode smart, for apps that connect by address (Telegram).",
+    no_args_is_help=True,
+)
+app.add_typer(net_app, name="net")
+
+
+@net_app.command("list")
+def net_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """The network rules of routing.mode smart: each network with its channel."""
+    config = _lan_box(box_dir)
+    rules = _core_call(lambda: core_api.list_network_rules(config.api.port))
+    if not rules:
+        typer.echo("no network rules (vibedpn net add <a.b.c.d/nn> vps|dpn|tor|direct)")
+    for rule in rules:
+        extra = f" {rule.country or rule.uplink}" if rule.country or rule.uplink else ""
+        typer.echo(f"{rule.network}  via {rule.via}{extra}")
+
+
+@net_app.command("add")
+def net_add(
+    network: Annotated[str, typer.Argument(help="An IPv4 network, a.b.c.d/nn.")],
+    via: Annotated[DomainVia, typer.Argument(help="vps | dpn | wg | tor | direct.")],
+    country: Annotated[
+        str | None, typer.Option("--country", help="Exit country of via dpn (ISO code).")
+    ] = None,
+    uplink: Annotated[
+        str | None, typer.Option("--uplink", help="The exit of via wg: a name of upstreams.wg.")
+    ] = None,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Give a network its channel in routing.mode smart; a rule for the same network is replaced."""
+    config = _lan_box(box_dir)
+    update = NetworkRuleUpdate(network=network, via=via.value, country=country, uplink=uplink)
+    rule = _core_call(lambda: core_api.set_network_rule(config.api.port, update))
+    extra = f" {rule.country or rule.uplink}" if rule.country or rule.uplink else ""
+    typer.echo(f"{rule.network}: via {rule.via}{extra}, applied")
+
+
+@net_app.command("rm")
+def net_rm(
+    network: Annotated[str, typer.Argument(help="The network whose rule goes.")],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Remove the rule of a network: in routing.mode smart its addresses go direct again."""
+    config = _lan_box(box_dir)
+    _core_call(lambda: core_api.remove_network_rule(config.api.port, network))
+    typer.echo(f"{network}: rule removed, goes direct in smart")
 
 
 @rule_app.command("list")

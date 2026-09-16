@@ -25,6 +25,8 @@ from vibedpn.api.models import (
     EventView,
     JournalEntryView,
     LearnedView,
+    NetworkRuleUpdate,
+    NetworkRuleView,
     PeerCreate,
     PeerFile,
     PeerView,
@@ -371,6 +373,53 @@ def list_domain_lists(
         raise RuleRequestError(
             f"core answered something that is not domain lists ({VERSION_HINT})"
         ) from exc
+
+
+def list_network_rules(
+    port: int, transport: httpx.BaseTransport | None = None
+) -> list[NetworkRuleView]:
+    response = _peer_request(
+        port, "GET", "/networks", httpx.codes.OK, transport=transport, error=RuleRequestError
+    )
+    try:
+        return [NetworkRuleView.model_validate(item) for item in response.json()]
+    except (ValueError, ValidationError, TypeError) as exc:
+        raise RuleRequestError(
+            f"core answered something that is not network rules ({VERSION_HINT})"
+        ) from exc
+
+
+def set_network_rule(
+    port: int, update: NetworkRuleUpdate, transport: httpx.BaseTransport | None = None
+) -> NetworkRuleView:
+    response = _peer_request(
+        port,
+        "PUT",
+        "/networks",
+        httpx.codes.OK,
+        body=update.model_dump(mode="json"),
+        transport=transport,
+        error=RuleRequestError,
+    )
+    try:
+        return NetworkRuleView.model_validate(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise RuleRequestError(
+            f"core answered something that is not a network rule ({VERSION_HINT})"
+        ) from exc
+
+
+def remove_network_rule(
+    port: int, network: str, transport: httpx.BaseTransport | None = None
+) -> None:
+    _peer_request(
+        port,
+        "DELETE",
+        f"/networks?network={quote(network, safe='')}",
+        httpx.codes.NO_CONTENT,
+        transport=transport,
+        error=RuleRequestError,
+    )
 
 
 def set_domain_list(

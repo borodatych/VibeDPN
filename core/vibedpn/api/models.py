@@ -197,6 +197,22 @@ class DomainRuleView(BaseModel):
     also: list[str]
 
 
+class NetworkRuleUpdate(BaseModel):
+    """A network of addresses and its channel in routing.mode smart."""
+
+    network: str
+    via: Literal["vps", "dpn", "wg", "tor", "direct"]
+    country: str | None = None
+    uplink: str | None = None
+
+
+class NetworkRuleView(BaseModel):
+    network: str
+    via: str
+    country: str | None
+    uplink: str | None
+
+
 class DomainListUpdate(BaseModel):
     """A ready domain list by URL and the channel of all its domains."""
 

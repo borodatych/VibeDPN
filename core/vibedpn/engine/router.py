@@ -23,6 +23,7 @@ from vibedpn.config import (
     WG_KEY_PREFIX,
     Config,
     DevicePolicy,
+    DomainChannel,
     DomainVia,
     Role,
     RoutingMode,
@@ -475,6 +476,17 @@ class UplinkPolicy:
     mark: str
 
 
+def _channel_mark(item: DomainChannel, table: dict[str, Uplink]) -> str | None:
+    """The mark of a channel's uplink; ``None`` for direct. A country takes its own consumer's."""
+    if item.via is DomainVia.DPN and item.country:
+        return hex(table[country_key(item.country)].mark)
+    if item.via is DomainVia.WG and item.uplink:
+        return hex(table[wg_key(item.uplink)].mark)
+    if item.via in RULE_UPLINKS:
+        return hex(UPLINKS[RULE_UPLINKS[item.via]].mark)
+    return None
+
+
 def smart_marks(config: Config) -> list[UplinkPolicy]:
     """routing.mode smart: the channel sets that carry an uplink mark; a set of a country takes the
     mark of that country's own consumer."""
@@ -483,13 +495,38 @@ def smart_marks(config: Config) -> list[UplinkPolicy]:
     table = uplink_table(config)
     marks = {}
     for item in config.routing.channels():
-        if item.via is DomainVia.DPN and item.country:
-            marks[channel_set(item)] = hex(table[country_key(item.country)].mark)
-        elif item.via is DomainVia.WG and item.uplink:
-            marks[channel_set(item)] = hex(table[wg_key(item.uplink)].mark)
-        elif item.via in RULE_UPLINKS:
-            marks[channel_set(item)] = hex(UPLINKS[RULE_UPLINKS[item.via]].mark)
+        mark = _channel_mark(item, table)
+        if mark is not None:
+            marks[channel_set(item)] = mark
     return [UplinkPolicy(name, mark) for name, mark in sorted(marks.items())]
+
+
+NETWORK_SET_SUFFIX = "_net"
+
+
+@dataclass(frozen=True)
+class NetworkSet:
+    name: str
+    mark: str  # "" for direct: the addresses return before any other smart mark
+    elements: list[str]
+
+
+def smart_networks(config: Config) -> list[NetworkSet]:
+    """routing.mode smart: one interval set per channel of routing.networks, direct ones first, so a
+    network the owner keeps direct is never caught by a wider one sent through an uplink."""
+    if config.routing is None or config.routing.mode is not RoutingMode.SMART:
+        return []
+    table = uplink_table(config)
+    elements: dict[str, list[str]] = {}
+    marks: dict[str, str] = {}
+    for item in config.routing.networks:
+        name = f"{channel_set(item)}{NETWORK_SET_SUFFIX}"
+        elements.setdefault(name, []).append(str(item.network))
+        marks[name] = _channel_mark(item, table) or ""
+    return sorted(
+        (NetworkSet(name, marks[name], sorted(values)) for name, values in elements.items()),
+        key=lambda item: (item.mark != "", item.name),
+    )
 
 
 def router_ruleset(config: Config) -> str | None:
@@ -510,6 +547,8 @@ def router_ruleset(config: Config) -> str | None:
             smart_sets=smart_set_names(config),
             # tunnel channels first: an address two rules share (one CDN) leaves through the tunnel
             smart_marks=smart_marks(config),
+            # networks of routing.networks: static interval sets, matched before the domain sets
+            smart_networks=smart_networks(config),
             block_mark=hex(BLOCK_MARK),
             uplink_policies=[
                 UplinkPolicy(policy.value, hex(UPLINKS[upstream].mark))

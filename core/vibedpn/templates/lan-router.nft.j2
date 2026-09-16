@@ -23,6 +23,14 @@ table inet vibedpn_router {
     flags timeout
   }
 {% endfor %}
+{% for net in smart_networks %}
+  set {{ net.name }} {
+    type ipv4_addr
+    flags interval
+    auto-merge
+    elements = { {{ net.elements | join(", ") }} }
+  }
+{% endfor %}
   chain prerouting {
     type filter hook prerouting priority mangle; policy accept;
     iifname != "{{ lan_interface }}" return
@@ -37,6 +45,13 @@ table inet vibedpn_router {
 {% for policy in uplink_policies %}
     ether saddr @devices_{{ policy.name }}_mac meta mark set {{ policy.mark }} return comment "policy {{ policy.name }}: through uplink {{ policy.name }}"
     ip saddr @devices_{{ policy.name }}_ip meta mark set {{ policy.mark }} return comment "policy {{ policy.name }}: through uplink {{ policy.name }}"
+{% endfor %}
+{% for net in smart_networks %}
+{% if net.mark %}
+    ip daddr @{{ net.name }} meta mark set {{ net.mark }} return comment "routing.mode smart: a network rule through its uplink"
+{% else %}
+    ip daddr @{{ net.name }} return comment "routing.mode smart: a network rule kept direct"
+{% endif %}
 {% endfor %}
 {% for mark in smart_marks %}
     ip daddr @{{ mark.name }} meta mark set {{ mark.mark }} return comment "routing.mode smart: a domain rule through its uplink"

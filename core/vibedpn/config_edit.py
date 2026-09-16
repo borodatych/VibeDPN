@@ -26,6 +26,7 @@ from vibedpn.config import (
     DomainList,
     DomainRule,
     NetworkConfig,
+    NetworkRule,
     RoutingMode,
     normalize_domain,
     normalize_mac,
@@ -361,6 +362,57 @@ def remove_domain_rule(path: Path, domain: str) -> tuple[Config, bool]:
                 del rules[index]
                 return
         raise RuleNotFoundError(f"config.yaml has no rule for {wanted}")
+
+    return _edit(path, mutate)
+
+
+class NetworkRuleNotFoundError(ConfigEditError):
+    """``config.yaml`` has no network rule for this network."""
+
+
+def _network_rules(data: CommentedMap, path: Path) -> CommentedSeq:
+    routing = data.get("routing")
+    if not isinstance(routing, CommentedMap):
+        raise ConfigEditError(f"{path} has no routing section: a box of this role routes no LAN")
+    networks = routing.get("networks")
+    if networks is None:
+        networks = CommentedSeq()
+        routing["networks"] = networks
+    if not isinstance(networks, CommentedSeq):
+        raise ConfigEditError("config.yaml: routing.networks must be a list")
+    networks.fa.set_block_style()
+    return networks
+
+
+def set_network_rule(path: Path, rule: NetworkRule) -> tuple[Config, bool]:
+    """Add the rule of a network, or replace the one config.yaml has for the same network."""
+
+    def mutate(data: CommentedMap) -> None:
+        networks = _network_rules(data, path)
+        entry = CommentedMap([("network", str(rule.network)), ("via", rule.via.value)])
+        if rule.country is not None:
+            entry["country"] = rule.country
+        if rule.uplink is not None:
+            entry["uplink"] = rule.uplink
+        for index, item in enumerate(networks):
+            if isinstance(item, dict) and str(item.get("network", "")) == str(rule.network):
+                networks[index] = entry
+                return
+        networks.append(entry)
+
+    return _edit(path, mutate)
+
+
+def remove_network_rule(path: Path, network: str) -> tuple[Config, bool]:
+    """Remove the rule of a network: its addresses go direct in smart again."""
+
+    def mutate(data: CommentedMap) -> None:
+        networks = _network_rules(data, path)
+        for index, item in enumerate(networks):
+            if isinstance(item, dict) and str(item.get("network", "")) == network:
+                del networks[index]
+                return
+        raise NetworkRuleNotFoundError(f"config.yaml has no network rule for {network}")
 
     return _edit(path, mutate)
 
