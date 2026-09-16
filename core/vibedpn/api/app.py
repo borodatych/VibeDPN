@@ -300,7 +300,7 @@ def _add_wg_uplink_routes(
 
     def view() -> WgUplinksView:
         box, _state, secrets, data = box_paths()
-        progress = apply_state(data)
+        progress = apply_state(data, time.time())
         last = progress.last
         return WgUplinksView(
             uplinks=[

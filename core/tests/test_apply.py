@@ -1,6 +1,8 @@
 """WireGuard exits added in the panel and applied by the host: API, request and systemd units."""
 
 import stat
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ from vibedpn.api.state import BoxState
 from vibedpn.bootstrap import render_config
 from vibedpn.config import Config, load_config
 from vibedpn.engine.apply import (
+    APPLY_TIMEOUT_SECONDS,
     BOX_DATA_DIR,
     ApplyResult,
     apply_state,
@@ -51,15 +54,36 @@ def box(tmp_path: Path, raw: dict[str, Any] | None = None) -> tuple[TestClient, 
 
 
 def test_a_request_is_pending_until_a_result_covers_it(tmp_path: Path) -> None:
-    assert apply_state(tmp_path).pending is False and read_request(tmp_path) is None
+    assert apply_state(tmp_path, 0.0).pending is False and read_request(tmp_path) is None
     request_apply(tmp_path, 100.0, "exit added")
     assert read_request(tmp_path) == 100.0
-    assert apply_state(tmp_path).pending is True
+    assert apply_state(tmp_path, 110.0).pending is True
     write_result(tmp_path, ApplyResult(100.0, 130.0, True, "applied"))
-    state = apply_state(tmp_path)
+    state = apply_state(tmp_path, 140.0)
     assert state.pending is False and state.last == ApplyResult(100.0, 130.0, True, "applied")
     request_apply(tmp_path, 200.0, "exit removed")  # a later change waits again
-    assert apply_state(tmp_path).pending is True
+    assert apply_state(tmp_path, 210.0).pending is True
+
+
+def test_a_request_the_host_never_answers_is_reported_not_left_applying(tmp_path: Path) -> None:
+    """Found on the box: the unit failed before writing a result, and the panel said "applying"
+    for good. After the timeout the panel says the host did not apply it, and where to look."""
+    request_apply(tmp_path, 100.0, "exit added")
+    assert apply_state(tmp_path, 100.0 + APPLY_TIMEOUT_SECONDS - 1).pending is True
+    state = apply_state(tmp_path, 100.0 + APPLY_TIMEOUT_SECONDS + 1)
+    assert state.pending is False
+    assert state.last is not None and not state.last.ok
+    assert "journalctl -u vibedpn-apply" in state.last.message
+
+
+def test_the_cli_runs_as_python_m_vibedpn() -> None:
+    """The units and `vibedpn update` start the CLI as `python -m vibedpn`: found on the box that
+    the package had no __main__ and every such start failed."""
+    result = subprocess.run(
+        [sys.executable, "-m", "vibedpn", "--version"], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("vibedpn ")
 
 
 def test_the_units_watch_the_request_and_run_apply_for_the_box(tmp_path: Path) -> None:

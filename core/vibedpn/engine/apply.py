@@ -22,6 +22,10 @@ RESULT_FILE = "apply-result.json"
 APPLY_UNIT = "vibedpn-apply"
 # compose.yaml mounts ./data/core of the box directory as core's data directory
 BOX_DATA_DIR = Path("data/core")
+# `up` recreates a few containers in well under this; a request with no result after it means the
+# host did not run the unit at all (no systemd, a broken unit) — said, not left "applying" forever.
+APPLY_TIMEOUT_SECONDS = 300.0
+NO_ANSWER = "the host did not apply the change: journalctl -u vibedpn-apply, or sudo vibedpn up"
 
 
 class ApplyError(RuntimeError):
@@ -80,11 +84,13 @@ def read_result(data_dir: Path) -> ApplyResult | None:
         return None
 
 
-def apply_state(data_dir: Path) -> ApplyState:
+def apply_state(data_dir: Path, now: float) -> ApplyState:
     requested = read_request(data_dir)
     last = read_result(data_dir)
-    pending = requested is not None and (last is None or last.requested_at < requested)
-    return ApplyState(pending=pending, last=last)
+    waiting = requested is not None and (last is None or last.requested_at < requested)
+    if requested is not None and waiting and now - requested > APPLY_TIMEOUT_SECONDS:
+        return ApplyState(pending=False, last=ApplyResult(requested, now, False, NO_ANSWER))
+    return ApplyState(pending=waiting, last=last)
 
 
 def render_units(box_dir: Path, python: str) -> dict[str, str]:
