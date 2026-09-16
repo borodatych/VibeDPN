@@ -96,6 +96,11 @@ upstreams:
   # wg:
   #   proton:
   #     enabled: true
+  # Бесплатный выход через Tor по мостам Snowflake: без регистрации и оплаты, только TCP.
+  # Включается командой `vibedpn tor enable` (docs/manuals/torUplink.md). Список мостов по умолчанию —
+  # встроенные мосты Snowflake из Tor Browser; свои строки мостов — в bridges.
+  tor:
+    enabled: false
 
 # Нода Mysterium (provider): раздаём канал, получаем MYST.
 # udp_ports: UDP-диапазон ноды, пробросить на роутере; traversal: порядок обхода NAT.

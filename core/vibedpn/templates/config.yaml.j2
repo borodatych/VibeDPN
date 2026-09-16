@@ -180,6 +180,17 @@ upstreams:
   #   proton:
   #     enabled: true
 {% endif %}
+  # Бесплатный выход через Tor по мостам Snowflake: без регистрации и оплаты, только TCP.
+  # Включается командой `vibedpn tor enable` (docs/manuals/torUplink.md). Список мостов по умолчанию —
+  # встроенные мосты Snowflake из Tor Browser; свои строки мостов — в bridges.
+  tor:
+    enabled: {{ config.upstreams.tor.enabled | tojson }}
+{% if config.upstreams.tor.has_custom_bridges() %}
+    bridges:
+{% for line in config.upstreams.tor.bridges %}
+      - {{ line | tojson }}
+{% endfor %}
+{% endif %}
 {% endif %}
 
 # Нода Mysterium (provider): раздаём канал, получаем MYST.

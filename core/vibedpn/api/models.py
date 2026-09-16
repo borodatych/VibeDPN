@@ -181,7 +181,7 @@ class NetworkUpdate(BaseModel):
 class DomainRuleUpdate(BaseModel):
     """The channel of a site in routing.mode smart; the domain comes from the path."""
 
-    via: Literal["vps", "dpn", "wg", "direct"]
+    via: Literal["vps", "dpn", "wg", "tor", "direct"]
     country: str | None = None
     uplink: str | None = None  # via wg: the name of the exit in upstreams.wg
     learn: bool = True
@@ -201,7 +201,7 @@ class DomainListUpdate(BaseModel):
     """A ready domain list by URL and the channel of all its domains."""
 
     url: str
-    via: Literal["vps", "dpn", "wg", "direct"]
+    via: Literal["vps", "dpn", "wg", "tor", "direct"]
     country: str | None = None
     uplink: str | None = None  # via wg: the name of the exit in upstreams.wg
 

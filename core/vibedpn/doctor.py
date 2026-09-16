@@ -1008,11 +1008,7 @@ def _exits(box_dir: Path, config: Config, services: list[ServiceStatus]) -> list
         return None
     url = os.environ.get(EXIT_IP_URL_ENV, EXIT_IP_URL)
     running = {item.service for item in services if item.state == RUNNING_STATE}
-    names = [
-        upstream.value
-        for upstream in (Upstream.VPS, Upstream.DPN)
-        if config.upstreams.is_enabled(upstream)
-    ]
+    names = [upstream.value for upstream in Upstream if config.upstreams.is_enabled(upstream)]
     names.extend(
         f"{WG_KEY_PREFIX}{name}"
         for name, uplink in sorted(config.upstreams.wg.items())

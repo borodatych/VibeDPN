@@ -33,6 +33,10 @@ COMPOSE_FILE = "compose.yaml"
 COUNTRIES_FILE = "compose.countries.yaml"
 WG_UPLINKS_FILE = "compose.wg.yaml"
 OVERRIDE_FILE = "compose.override.yaml"
+# The bridges of uplink tor for its gateway: a directory is mounted, not the file, so that rewriting
+# the file never meets EBUSY of a file bind-mount (knowledge docker/bindMountRename.md).
+TOR_CONFIG_DIR = "data/tor/config"
+TOR_BRIDGES_FILE = "bridges"
 DEFAULT_LOG_TAIL = 100
 # Before 28.0.0 ports published on 127.0.0.1 were reachable from L2 neighbours (Docker release
 # notes 28.0.0), and nat-unprotected did not exist; the box relies on both.
@@ -220,6 +224,24 @@ def refresh_wg_uplinks(box_dir: Path, config: Config) -> Path:
     try:
         write_file(path, render_wg_uplinks(config), PUBLIC_FILE_MODE)
         give_to_invoker(path)
+    except OSError as exc:
+        raise ComposeError(f"cannot write {path}: {exc.strerror}; run with sudo?") from exc
+    return path
+
+
+def render_tor_bridges(config: Config) -> str:
+    """The bridge lines of upstreams.tor, one per line, as images/tor/entrypoint.sh reads them."""
+    header = "# Written by vibedpn from upstreams.tor.bridges of config.yaml; edit that instead.\n"
+    return header + "".join(f"{line}\n" for line in config.upstreams.tor.bridges)
+
+
+def refresh_tor_bridges(box_dir: Path, config: Config) -> Path:
+    """Write data/tor/config/bridges; on every box, so enabling uplink tor needs no second step."""
+    directory = box_dir / TOR_CONFIG_DIR
+    path = directory / TOR_BRIDGES_FILE
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        write_file(path, render_tor_bridges(config), PUBLIC_FILE_MODE)
     except OSError as exc:
         raise ComposeError(f"cannot write {path}: {exc.strerror}; run with sudo?") from exc
     return path

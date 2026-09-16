@@ -614,6 +614,9 @@ jobs:
           - name: hostapd
             repository: hostapd
             context: images/hostapd
+          - name: tor
+            repository: tor
+            context: images/tor
           - name: ui-full
             repository: ui
             context: ui

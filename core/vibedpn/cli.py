@@ -64,6 +64,7 @@ from vibedpn.compose import (
     preflight,
     refresh_countries,
     refresh_env,
+    refresh_tor_bridges,
     refresh_wg_uplinks,
     run,
     stale_services,
@@ -77,6 +78,7 @@ from vibedpn.config import (
     Role,
     RoutingMode,
     UiVariant,
+    Upstream,
     WifiConfig,
     check_endpoint,
     recreated_services,
@@ -86,6 +88,7 @@ from vibedpn.config_edit import (
     WgUplinkNotFoundError,
     remove_wg_uplink,
     set_routing,
+    set_tor_uplink,
     set_wg_uplink,
 )
 from vibedpn.detect import DetectError, HostProbe, find_tool
@@ -415,6 +418,7 @@ def _prepare(box_dir: Path, *, refresh: bool) -> Config:
             refresh_env(box_dir, config)
             refresh_countries(box_dir, config)
             refresh_wg_uplinks(box_dir, config)
+            refresh_tor_bridges(box_dir, config)
     except ComposeError as exc:
         raise _fail(str(exc)) from None
     return config
@@ -696,7 +700,7 @@ def mode(
 def upstream(
     value: Annotated[
         str,
-        typer.Argument(help="The uplink of routing.mode full: vps, dpn, or wg-<name>."),
+        typer.Argument(help="The uplink of routing.mode full: vps, dpn, tor, or wg-<name>."),
     ],
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
@@ -855,6 +859,52 @@ def uplink_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
         typer.echo(f"wg-{name}  {state}  ({file_state})")
 
 
+tor_app = typer.Typer(
+    help="Uplink tor: a free exit through Tor bridges, TCP only (docs/manuals/torUplink.md).",
+    no_args_is_help=True,
+)
+app.add_typer(tor_app, name="tor")
+
+
+def _set_tor(box_dir: Path, enabled: bool) -> Config:
+    try:
+        config, _changed = set_tor_uplink(box_dir / CONFIG_FILE, enabled)
+    except ConfigEditError as exc:
+        raise _fail(str(exc)) from None
+    return config
+
+
+@tor_app.command("enable")
+def tor_enable(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Turn uplink tor on; `vibedpn up` starts its gateway, which bootstraps in a minute or two."""
+    config = _set_tor(box_dir, True)
+    count = len(config.upstreams.tor.bridges)
+    typer.echo(
+        f"uplink tor enabled with {count} bridges; `vibedpn up`, then send sites through it:"
+    )
+    typer.echo(
+        "  vibedpn rule add <domain> tor   (smart mode), or vibedpn upstream tor (full mode)"
+    )
+
+
+@tor_app.command("disable")
+def tor_disable(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Turn uplink tor off; rules and devices that still name it keep the config from validating."""
+    _set_tor(box_dir, False)
+    typer.echo("uplink tor disabled; `vibedpn up` stops its gateway")
+
+
+@tor_app.command("show")
+def tor_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Whether uplink tor is on and which bridges it uses."""
+    config = check_box(box_dir)
+    tor = config.upstreams.tor
+    typer.echo(f"tor  {'enabled' if tor.enabled else 'disabled'}  {len(tor.bridges)} bridges")
+    for line in tor.bridges:
+        words = line.split()
+        typer.echo(f"  {words[0]} {words[1]}")
+
+
 dpn_app = typer.Typer(
     help="Uplink dpn: the exit through the Mysterium network.", no_args_is_help=True
 )
@@ -962,7 +1012,8 @@ def status(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     typer.echo(f"role: {config.role.value}")
     if config.routing is not None:
         typer.echo(_routing_line(config))
-    keys = ["vps", "dpn", *(f"wg-{name}" for name in sorted(config.upstreams.wg))]
+    wg_keys = (f"wg-{name}" for name in sorted(config.upstreams.wg))
+    keys = [*(upstream.value for upstream in Upstream), *wg_keys]
     uplinks = [key for key in keys if config.upstreams.is_key_enabled(key)]
     typer.echo(f"uplinks: {', '.join(uplinks) or '-'}")
     for line in _router_lines(config):
@@ -1296,7 +1347,7 @@ def lists_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     config = _lan_box(box_dir)
     items = _core_call(lambda: core_api.list_domain_lists(config.api.port))
     if not items:
-        typer.echo("no domain lists (vibedpn lists add <url> vps|dpn|direct)")
+        typer.echo("no domain lists (vibedpn lists add <url> vps|dpn|tor|direct)")
     for item in items:
         typer.echo(render_domain_list(item))
 
@@ -1304,7 +1355,7 @@ def lists_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
 @lists_app.command("add")
 def lists_add(
     url: Annotated[str, typer.Argument(help="An http(s) URL of a text list of domains.")],
-    via: Annotated[DomainVia, typer.Argument(help="vps | dpn | wg | direct.")],
+    via: Annotated[DomainVia, typer.Argument(help="vps | dpn | wg | tor | direct.")],
     country: Annotated[
         str | None, typer.Option("--country", help="Exit country of via dpn (ISO code).")
     ] = None,
@@ -1338,7 +1389,7 @@ def rule_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     config = _lan_box(box_dir)
     rules = _core_call(lambda: core_api.list_rules(config.api.port))
     if not rules:
-        typer.echo("no domain rules (vibedpn rule add <domain> vps|dpn|direct)")
+        typer.echo("no domain rules (vibedpn rule add <domain> vps|dpn|tor|direct)")
     for rule in rules:
         country = f" {rule.country}" if rule.country else ""
         extras = []
@@ -1353,7 +1404,7 @@ def rule_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
 @rule_app.command("add")
 def rule_add(
     domain: Annotated[str, typer.Argument(help="The site; its subdomains follow it.")],
-    via: Annotated[DomainVia, typer.Argument(help="vps | dpn | wg | direct.")],
+    via: Annotated[DomainVia, typer.Argument(help="vps | dpn | wg | tor | direct.")],
     country: Annotated[
         str | None, typer.Option("--country", help="Exit country of via dpn (ISO code).")
     ] = None,
@@ -1401,7 +1452,7 @@ def device_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
 @device_app.command("set")
 def device_set(
     ident: DeviceId,
-    policy: Annotated[DevicePolicy, typer.Argument(help="vps | dpn | bypass | block.")],
+    policy: Annotated[DevicePolicy, typer.Argument(help="vps | dpn | tor | bypass | block.")],
     name: Annotated[str | None, typer.Option("--name", help="A name for config.yaml.")] = None,
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:

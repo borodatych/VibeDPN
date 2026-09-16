@@ -295,6 +295,8 @@ class Uplink:
 UPLINKS: dict[Upstream, Uplink] = {
     Upstream.VPS: Uplink(mark=0x10, table=7710, gateway="10.77.0.10"),
     Upstream.DPN: Uplink(mark=0x20, table=7720, gateway="10.77.0.20"),
+    # 0x30 is BLOCK_MARK; countries take 0x40+i, named WireGuard exits 0x50+i.
+    Upstream.TOR: Uplink(mark=0x60, table=7760, gateway="10.77.0.60"),
 }
 # Countries of routing.domains and routing.lists get their own consumer (docs/decisions.md, 20):
 # the i-th country in sorted order has mark 0x40+i, table 7740+i and gateway 10.77.0.40+i.
@@ -378,18 +380,27 @@ def uplink_service(key: str) -> str:
         return f"myst-consumer-{key.removeprefix(COUNTRY_KEY_PREFIX)}"
     if key.startswith(WG_KEY_PREFIX):
         return key  # the generated service is named after the key: wg-<name>
-    return {Upstream.VPS.value: "wg-client", Upstream.DPN.value: "myst-consumer"}[key]
+    return {
+        Upstream.VPS.value: "wg-client",
+        Upstream.DPN.value: "myst-consumer",
+        Upstream.TOR.value: "tor",
+    }[key]
 
 
 # Device policies that send a device through an uplink.
 POLICY_UPLINKS: dict[DevicePolicy, Upstream] = {
     DevicePolicy.VPS: Upstream.VPS,
     DevicePolicy.DPN: Upstream.DPN,
+    DevicePolicy.TOR: Upstream.TOR,
 }
 # policy block: no ip rule knows this mark, and the forward chain drops it.
 BLOCK_MARK = 0x30
 # Domain rules of routing.mode smart that leave through an uplink; `direct` needs no mark.
-RULE_UPLINKS: dict[DomainVia, Upstream] = {DomainVia.VPS: Upstream.VPS, DomainVia.DPN: Upstream.DPN}
+RULE_UPLINKS: dict[DomainVia, Upstream] = {
+    DomainVia.VPS: Upstream.VPS,
+    DomainVia.DPN: Upstream.DPN,
+    DomainVia.TOR: Upstream.TOR,
+}
 # AdGuard Home runs as this user (compose.yaml `user:`), so its own DoH traffic can be told from
 # the host's and steered into the uplink of routing.mode full (docs/decisions.md, decision 14).
 ADGUARD_UID = 7753

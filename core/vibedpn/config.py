@@ -108,6 +108,7 @@ class Profile(StrEnum):
     WG_SERVER = "wg-server"
     WG_CLIENT = "wg-client"
     WG_UPLINK = "wg-uplink"  # the named uplinks of upstreams.wg, generated from compose.yaml
+    TOR = "tor"  # uplink tor: a gateway into Tor through bridges (decision 27)
     ROUTER = "router"
     DHCP = "dhcp"  # dnsmasq: gateway mode only, never next to the DHCP of an ISP router
     WIFI = "wifi"  # hostapd: gateway mode with network.wifi, the LAN interface is the radio
@@ -129,11 +130,13 @@ class RoutingMode(StrEnum):
 class Upstream(StrEnum):
     VPS = "vps"
     DPN = "dpn"
+    TOR = "tor"
 
 
 class DevicePolicy(StrEnum):
     VPS = "vps"
     DPN = "dpn"
+    TOR = "tor"
     BYPASS = "bypass"
     BLOCK = "block"
 
@@ -219,6 +222,28 @@ WIFI_CHANNELS = {
     WifiBand.BAND_5: range(36, 166),
 }
 SSID_MAX_BYTES = 32
+# The Snowflake bridges of Tor Browser, taken 2026-09-17 from tor-browser-build,
+# projects/tor-expert-bundle/pt_config.json (https://gitlab.torproject.org/tpo/applications/
+# tor-browser-build/-/raw/main/projects/tor-expert-bundle/pt_config.json). They change with Tor
+# Browser releases; the owner overrides upstreams.tor.bridges.
+_SNOWFLAKE_ICE = (
+    "ice=stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,"
+    "stun:stun.mixvoip.com:3478,stun:stun.telnyx.com:3478,stun:stun.hot-chilli.net:3478,"
+    "stun:stun.fitauto.ru:3478,stun:stun.m-online.net:3478"
+)
+_SNOWFLAKE_TAIL = (
+    "url=https://1098762253.rsc.cdn77.org/ fronts=app.datapacket.com,www.datapacket.com "
+    f"{_SNOWFLAKE_ICE} utls-imitate=hellorandomizedalpn"
+)
+DEFAULT_TOR_BRIDGES = (
+    "snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72"
+    f" fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 {_SNOWFLAKE_TAIL}",
+    "snowflake 192.0.2.4:80 8838024498816A039FCBBAB14E6F40A0843051FA"
+    f" fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA {_SNOWFLAKE_TAIL}",
+)
+# Transports images/tor has a client for: snowflake-client, and obfs4proxy for obfs4 and meek_lite.
+TOR_TRANSPORTS = frozenset({"snowflake", "obfs4", "meek_lite"})
+MIN_BRIDGE_WORDS = 2  # the transport and the address; the rest are transport arguments
 MAX_RULE_COUNTRIES = 8  # engine/router.py MAX_COUNTRIES: one consumer per country
 
 
@@ -353,6 +378,7 @@ class DomainVia(StrEnum):
     VPS = "vps"
     DPN = "dpn"
     WG = "wg"  # a named WireGuard exit of upstreams.wg, named by `uplink`
+    TOR = "tor"
     DIRECT = "direct"
 
 
@@ -553,9 +579,43 @@ class WgUplink(StrictModel):
     enabled: bool = True
 
 
+class TorUplink(StrictModel):
+    """An exit through Tor: free, no account, no registration, TCP only (decision 27).
+
+    A network that blocks Tor is reached through bridges, one line of a bridge per entry, exactly as
+    Tor writes them after ``Bridge``. The default is the Snowflake bridges Tor Browser ships: from a
+    Russian ISP Snowflake reached Tor where the built-in obfs4 bridges did not (knowledge
+    tor/snowflake.md). Core writes the lines to ``data/tor/bridges`` for the gateway container.
+    """
+
+    enabled: bool = False
+    bridges: list[str] = Field(default_factory=lambda: list(DEFAULT_TOR_BRIDGES))
+
+    @field_validator("bridges")
+    @classmethod
+    def check_bridges(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("upstreams.tor.bridges needs at least one bridge line")
+        lines = [raw.strip() for raw in value]
+        for line in lines:
+            words = line.split()
+            if "\n" in line or len(words) < MIN_BRIDGE_WORDS or words[0] not in TOR_TRANSPORTS:
+                raise ValueError(
+                    f"upstreams.tor.bridges: {line[:60]!r} is not a bridge line"
+                    f" ('<transport> <address:port> ...', transport one of"
+                    f" {', '.join(sorted(TOR_TRANSPORTS))})"
+                )
+        return lines
+
+    def has_custom_bridges(self) -> bool:
+        """Whether the owner set bridges of their own; the default list is not written back."""
+        return self.bridges != list(DEFAULT_TOR_BRIDGES)
+
+
 class UpstreamsConfig(StrictModel):
     vps: VpsUplink = Field(default_factory=VpsUplink)
     dpn: DpnUplink = Field(default_factory=DpnUplink)
+    tor: TorUplink = Field(default_factory=TorUplink)
     # name -> its uplink; the name reaches a file name, a Compose service and a routing key
     wg: dict[str, WgUplink] = Field(default_factory=dict)
 
@@ -571,7 +631,11 @@ class UpstreamsConfig(StrictModel):
         return value
 
     def is_enabled(self, upstream: Upstream) -> bool:
-        return self.vps.enabled if upstream is Upstream.VPS else self.dpn.enabled
+        return {
+            Upstream.VPS: self.vps.enabled,
+            Upstream.DPN: self.dpn.enabled,
+            Upstream.TOR: self.tor.enabled,
+        }[upstream]
 
     def is_key_enabled(self, key: str) -> bool:
         """Whether the uplink of a routing key is enabled: ``vps``, ``dpn``, ``dpn-<cc>`` (the
@@ -579,7 +643,9 @@ class UpstreamsConfig(StrictModel):
         if key.startswith(WG_KEY_PREFIX):
             uplink = self.wg.get(key.removeprefix(WG_KEY_PREFIX))
             return uplink is not None and uplink.enabled
-        return self.is_enabled(Upstream.DPN if key.startswith("dpn") else Upstream.VPS)
+        if key.startswith(Upstream.DPN.value):
+            return self.is_enabled(Upstream.DPN)
+        return self.is_enabled(Upstream(key))
 
 
 class ProviderConfig(StrictModel):
@@ -813,7 +879,11 @@ class Config(StrictModel):
     def _domain_errors(self) -> list[str]:
         if self.routing is None:
             return []
-        uplinks = {DomainVia.VPS: Upstream.VPS, DomainVia.DPN: Upstream.DPN}
+        uplinks = {
+            DomainVia.VPS: Upstream.VPS,
+            DomainVia.DPN: Upstream.DPN,
+            DomainVia.TOR: Upstream.TOR,
+        }
         channels = self.routing.channels()
         errors = [
             f"routing: {item.subject()} goes via {item.via} but that uplink is not enabled"
@@ -844,9 +914,11 @@ class Config(StrictModel):
         seen_macs: set[str] = set()
         seen_ips: set[IPv4Address] = set()
         for device in self.devices:
-            policy_uplink = {DevicePolicy.VPS: Upstream.VPS, DevicePolicy.DPN: Upstream.DPN}.get(
-                device.policy
-            )
+            policy_uplink = {
+                DevicePolicy.VPS: Upstream.VPS,
+                DevicePolicy.DPN: Upstream.DPN,
+                DevicePolicy.TOR: Upstream.TOR,
+            }.get(device.policy)
             if policy_uplink is not None and not self.upstreams.is_enabled(policy_uplink):
                 errors.append(
                     f"devices: {device.name!r} uses policy '{device.policy}' but that uplink"
@@ -873,6 +945,7 @@ class Config(StrictModel):
             # The generated services carry this profile and the inherited wg-client one, so they
             # start here while the base service, whose file this box has not got, does not.
             Profile.WG_UPLINK: bool(self.upstreams.wg),
+            Profile.TOR: self.upstreams.tor.enabled,
             Profile.ROUTER: True,
             Profile.DHCP: self.network is not None and self.network.mode is NetworkMode.GATEWAY,
             Profile.WIFI: self.network is not None and self.network.wifi is not None,

@@ -356,6 +356,36 @@ services:
       retries: 3
       start_period: 10s
 
+  # Uplink `tor`: a gateway container at 10.77.0.60 that carries the TCP of the LAN into Tor through
+  # bridges (docs/decisions.md, 27). No routing inside: TCP from the bridge is redirected to the
+  # TransPort of tor, DNS to its DNSPort, everything else dropped (images/tor/entrypoint.sh).
+  tor:
+    image: ghcr.io/borodatych/vibedpn-tor:${VIBEDPN_TAG:-latest}
+    build:
+      context: ./images/tor
+    profiles:
+      - tor
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    networks:
+      upstreams:
+        ipv4_address: 10.77.0.60
+    volumes:
+      # core writes the bridge lines of upstreams.tor here on every `vibedpn up`
+      - ./data/tor/config:/etc/vibedpn-tor:ro
+      # guard and descriptor state: a restart does not bootstrap from nothing
+      - ./data/tor/state:/var/lib/tor
+    command:
+      - run
+    healthcheck:
+      # Healthy once tor has bootstrapped; through Snowflake that takes a minute or two.
+      test: ["CMD", "/usr/local/bin/entrypoint.sh", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+
   # AdGuard Home on port 53 of the LAN address. Host network (needed for DHCP later and for real
   # client IPs); core renders AdGuardHome.yaml into ./data/adguard/conf so the setup wizard on
   # port 3000 never appears (Stage 4).

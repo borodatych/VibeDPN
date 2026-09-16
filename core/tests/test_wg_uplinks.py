@@ -72,4 +72,6 @@ def test_routing_refuses_an_uplink_the_box_does_not_run() -> None:
     with pytest.raises(ValidationError, match="not an enabled uplink"):
         wg_config("proton", default_upstream="wg-mullvad")
     with pytest.raises(ValidationError, match="is not an uplink"):
-        wg_config("proton", default_upstream="tor")
+        wg_config("proton", default_upstream="warp")
+    with pytest.raises(ValidationError, match="not an enabled uplink"):
+        wg_config("proton", default_upstream="tor")  # an uplink kind, but this box has it off

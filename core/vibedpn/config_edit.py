@@ -141,6 +141,26 @@ def set_dpn_country(path: Path, country: str | None) -> tuple[Config, bool]:
     return _edit(path, mutate)
 
 
+def set_tor_uplink(path: Path, enabled: bool) -> tuple[Config, bool]:
+    """Turn uplink tor on or off (``upstreams.tor.enabled``); the bridge lines stay as they are."""
+
+    def mutate(data: CommentedMap) -> None:
+        upstreams = data.get("upstreams")
+        if not isinstance(upstreams, CommentedMap):
+            raise ConfigEditError(
+                f"{path} has no upstreams section: a box of this role has no uplink"
+            )
+        tor = upstreams.get("tor")
+        if tor is None:
+            tor = CommentedMap()
+            upstreams["tor"] = tor
+        if not isinstance(tor, CommentedMap):
+            raise ConfigEditError(f"{path}: upstreams.tor must be a mapping")
+        tor["enabled"] = enabled
+
+    return _edit(path, mutate)
+
+
 class WgUplinkNotFoundError(ConfigEditError):
     """``config.yaml`` has no named WireGuard exit by this name."""
 
