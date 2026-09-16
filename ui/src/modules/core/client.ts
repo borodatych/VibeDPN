@@ -8,7 +8,7 @@ const CORE_TIMEOUT_MS = 10_000
 /** What core answered: its body, or its status with the `detail` it gives for an error. */
 export type CoreAnswer<T> = { ok: true; body: T } | { ok: false; status: number; detail: string }
 
-type CoreInit = { method: 'PUT'; body: unknown } | { method: 'DELETE' }
+type CoreInit = { method: 'PUT' | 'POST'; body: unknown } | { method: 'DELETE' }
 
 /**
  * A JSON request to the core API from a server loader, without throwing on core's own refusals: a loader that has a

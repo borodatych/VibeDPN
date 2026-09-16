@@ -1,0 +1,215 @@
+import { useHead } from '@unhead/react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Section, Sections } from '@/components/ui/section'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
+import { wgExitAddMutation, wgExitRemoveMutation, wgExitsQuery } from '@/features/uplinks/api'
+import {
+  exitKey,
+  MAX_WG_FILE_BYTES,
+  missingWgParts,
+  PROTON_ACCOUNT_URL,
+  PROTON_GUIDE_URL,
+  suggestExitName,
+  WG_EXIT_NAME,
+  type ApplyView,
+  type WgExit,
+} from '@/features/uplinks/shared'
+import { generalLayout } from '@/layouts/general'
+import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
+import { useLanguage, useT } from '@/modules/i18n/use-t'
+import { formatDate } from '@/utils/date'
+import { useState, type ChangeEvent } from 'react'
+
+const ApplyLine = ({ apply }: { apply: ApplyView }) => {
+  const t = useT()
+  const language = useLanguage()
+  if (apply.pending) {
+    return <p className="text-sm text-warning">{t('uplinks.apply.pending')}</p>
+  }
+  if (apply.ok === false) {
+    return <p className="text-sm text-destructive">{t('uplinks.apply.failed', { message: apply.message })}</p>
+  }
+  if (apply.ok && apply.finished_at !== null) {
+    const time = formatDate(new Date(apply.finished_at * 1000), 'date-time-nice', language)
+    return <p className="text-sm text-muted-foreground">{t('uplinks.apply.ok', { time })}</p>
+  }
+  return null
+}
+
+const ExitRow = ({ exit }: { exit: WgExit }) => {
+  const remove = wgExitRemoveMutation.useMutation()
+  const t = useT()
+  const drop = async () => {
+    await remove.mutateAsync({ name: exit.name })
+    await wgExitsQuery.refetchQuery()
+  }
+  return (
+    <TableRow>
+      <TableCell>
+        <div>{exit.name}</div>
+        <div className="font-mono text-xs text-muted-foreground">{exitKey(exit.name)}</div>
+      </TableCell>
+      <TableCell>
+        <Badge variant={exit.has_file ? 'success' : 'destructive'}>
+          {exit.has_file ? t('uplinks.file.present') : t('uplinks.file.missing')}
+        </Badge>
+      </TableCell>
+      <TableCell>
+        <Button
+          variant="ghost"
+          size="sm"
+          loading={remove.isPending}
+          confirm={t('uplinks.confirmRemove', { name: exit.name })}
+          onClick={() => void drop()}
+        >
+          {t('common.remove')}
+        </Button>
+        {remove.isError && <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>}
+      </TableCell>
+    </TableRow>
+  )
+}
+
+const ProtonGuide = () => {
+  const t = useT()
+  return (
+    <div className="space-y-2 text-sm">
+      <p>{t('uplinks.guide.intro')}</p>
+      <ol className="list-decimal space-y-1 pl-5">
+        <li>{t('uplinks.guide.step1')}</li>
+        <li>{t('uplinks.guide.step2')}</li>
+        <li>{t('uplinks.guide.step3')}</li>
+        <li>{t('uplinks.guide.step4')}</li>
+      </ol>
+      <div className="flex flex-wrap gap-3">
+        <a className="underline" href={PROTON_ACCOUNT_URL} target="_blank" rel="noreferrer">
+          {t('uplinks.guide.openProton')}
+        </a>
+        <a className="underline" href={PROTON_GUIDE_URL} target="_blank" rel="noreferrer">
+          {t('uplinks.guide.help')}
+        </a>
+      </div>
+      <p className="text-muted-foreground">{t('uplinks.guide.other')}</p>
+    </div>
+  )
+}
+
+const AddExit = () => {
+  const add = wgExitAddMutation.useMutation()
+  const t = useT()
+  const [name, setName] = useState('')
+  const [text, setText] = useState('')
+  const [tooLarge, setTooLarge] = useState(false)
+  const missing = text ? missingWgParts(text) : []
+
+  const chooseFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) {
+      return
+    }
+    setTooLarge(file.size > MAX_WG_FILE_BYTES)
+    if (file.size > MAX_WG_FILE_BYTES) {
+      return
+    }
+    setText(await file.text())
+    setName((current) => current || suggestExitName(file.name))
+  }
+
+  const submit = async () => {
+    await add.mutateAsync({ name, config: text })
+    setText('')
+    setName('')
+    await wgExitsQuery.refetchQuery()
+  }
+
+  return (
+    <Section h2={t('uplinks.add.title')}>
+      <ProtonGuide />
+      <div className="mt-4 space-y-3">
+        <label className="block space-y-1 text-sm">
+          <span>{t('uplinks.add.file')}</span>
+          <Input type="file" accept=".conf,text/plain" onChange={(event) => void chooseFile(event)} />
+        </label>
+        {tooLarge && <p className="text-sm text-destructive">{t('uplinks.add.tooLarge')}</p>}
+        <label className="block space-y-1 text-sm">
+          <span>{t('uplinks.add.paste')}</span>
+          <Textarea
+            value={text}
+            rows={6}
+            spellCheck={false}
+            className="font-mono text-xs"
+            onChange={(event) => setText(event.target.value)}
+          />
+        </label>
+        {missing.length > 0 && (
+          <p className="text-sm text-warning">{t('uplinks.add.missing', { parts: missing.join(', ') })}</p>
+        )}
+        <label className="block space-y-1 text-sm">
+          <span>{t('uplinks.add.name')}</span>
+          <Input
+            value={name}
+            maxLength={24}
+            className="max-w-xs"
+            onChange={(event) => setName(event.target.value.trim().toLowerCase())}
+          />
+          <span className="block text-xs text-muted-foreground">{t('uplinks.add.nameHint')}</span>
+        </label>
+        <p className="text-xs text-muted-foreground">{t('uplinks.add.private')}</p>
+        <Button
+          disabled={!WG_EXIT_NAME.test(name) || !text || missing.length > 0}
+          loading={add.isPending}
+          onClick={() => void submit()}
+        >
+          {t('uplinks.add.submit')}
+        </Button>
+        {add.isError && <p className="text-sm text-destructive">{add.error.message}</p>}
+      </div>
+    </Section>
+  )
+}
+
+export const uplinksPage = generalLayout.lets
+  .page('/uplinks')
+  .use(redirectUnauthorizedPlugin)
+  .page(() => {
+    const t = useT()
+    useHead({ title: t('nav.uplinks') })
+    const data = wgExitsQuery.useQuery().data
+    const exits = data?.exits
+
+    return (
+      <Sections gap="lg">
+        <Section h1={t('uplinks.title')} description={t('uplinks.description')}>
+          {data && !exits && <p className="text-sm text-muted-foreground">{data.reason}</p>}
+          {exits && (
+            <div className="space-y-3">
+              <ApplyLine apply={exits.apply} />
+              {exits.uplinks.length === 0 ? (
+                <p className="text-sm text-muted-foreground">{t('uplinks.empty')}</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('uplinks.column.name')}</TableHead>
+                      <TableHead>{t('uplinks.column.file')}</TableHead>
+                      <TableHead />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {exits.uplinks.map((exit) => (
+                      <ExitRow key={exit.name} exit={exit} />
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+              <p className="text-sm text-muted-foreground">{t('uplinks.use')}</p>
+            </div>
+          )}
+        </Section>
+        {exits && <AddExit />}
+      </Sections>
+    )
+  })
