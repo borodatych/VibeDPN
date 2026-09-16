@@ -6,6 +6,12 @@ export type ApplyView = { pending: boolean; ok: boolean | null; message: string;
 
 export type WgExits = { uplinks: WgExit[]; apply: ApplyView }
 
+/** Uplink tor of `GET /uplinks/tor` (core/vibedpn/api/models.py: TorUplinkView); a bridge is its transport and address. */
+export type TorExit = { enabled: boolean; bridges: string[]; apply: ApplyView }
+
+/** The routing key of the exit through Tor, as core names it in `routing.default_upstream` and in `GET /status`. */
+export const TOR_KEY = 'tor'
+
 /** The routing key of an exit, as core names it in `routing.default_upstream` and in `GET /status`. */
 export const exitKey = (name: string): string => `wg-${name}`
 

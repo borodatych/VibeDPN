@@ -76,6 +76,7 @@ describe('rules', () => {
 
   test('channels read as the owner names them', () => {
     expect(channelLabel('smart_vps', baseT)).toBe('VPS')
+    expect(channelLabel('smart_tor', baseT)).toBe('Tor')
     expect(channelLabel('smart_dpn_de', baseT)).toBe('Mysterium DE')
     expect(channelLabel('smart_dpn_any', baseT)).toBe('Mysterium')
     expect(channelLabel('direct', baseT)).toBe('direct')

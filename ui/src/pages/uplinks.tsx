@@ -5,7 +5,13 @@ import { Input } from '@/components/ui/input'
 import { Section, Sections } from '@/components/ui/section'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { wgExitAddMutation, wgExitRemoveMutation, wgExitsQuery } from '@/features/uplinks/api'
+import {
+  torExitMutation,
+  torExitQuery,
+  wgExitAddMutation,
+  wgExitRemoveMutation,
+  wgExitsQuery,
+} from '@/features/uplinks/api'
 import {
   exitKey,
   MAX_WG_FILE_BYTES,
@@ -14,7 +20,9 @@ import {
   PROTON_GUIDE_URL,
   suggestExitName,
   WG_EXIT_NAME,
+  TOR_KEY,
   type ApplyView,
+  type TorExit,
   type WgExit,
 } from '@/features/uplinks/shared'
 import { generalLayout } from '@/layouts/general'
@@ -70,6 +78,47 @@ const ExitRow = ({ exit }: { exit: WgExit }) => {
         {remove.isError && <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>}
       </TableCell>
     </TableRow>
+  )
+}
+
+const TorCard = ({ tor }: { tor: TorExit }) => {
+  const toggle = torExitMutation.useMutation()
+  const t = useT()
+  const flip = async () => {
+    await toggle.mutateAsync({ enabled: !tor.enabled })
+    await torExitQuery.refetchQuery()
+  }
+  return (
+    <Section h2={t('uplinks.tor.title')} description={t('uplinks.tor.description')}>
+      <div className="space-y-3 text-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <Badge variant={tor.enabled ? 'success' : 'secondary'}>
+            {tor.enabled ? t('uplinks.tor.on') : t('uplinks.tor.off')}
+          </Badge>
+          <span className="font-mono text-xs text-muted-foreground">{TOR_KEY}</span>
+          <Button
+            variant={tor.enabled ? 'ghost' : 'default'}
+            size="sm"
+            loading={toggle.isPending}
+            confirm={tor.enabled ? t('uplinks.tor.confirmOff') : undefined}
+            onClick={() => void flip()}
+          >
+            {tor.enabled ? t('uplinks.tor.disable') : t('uplinks.tor.enable')}
+          </Button>
+        </div>
+        {toggle.isError && <p className="text-destructive">{toggle.error.message}</p>}
+        <ApplyLine apply={tor.apply} />
+        <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+          <li>{t('uplinks.tor.limits.tcp')}</li>
+          <li>{t('uplinks.tor.limits.speed')}</li>
+          <li>{t('uplinks.tor.limits.start')}</li>
+        </ul>
+        <p className="text-muted-foreground">{t('uplinks.tor.use')}</p>
+        <p className="font-mono text-xs text-muted-foreground">
+          {t('uplinks.tor.bridges', { bridges: tor.bridges.join(', ') })}
+        </p>
+      </div>
+    </Section>
   )
 }
 
@@ -179,9 +228,11 @@ export const uplinksPage = generalLayout.lets
     useHead({ title: t('nav.uplinks') })
     const data = wgExitsQuery.useQuery().data
     const exits = data?.exits
+    const tor = torExitQuery.useQuery().data?.tor
 
     return (
       <Sections gap="lg">
+        {tor && <TorCard tor={tor} />}
         <Section h1={t('uplinks.title')} description={t('uplinks.description')}>
           {data && !exits && <p className="text-sm text-muted-foreground">{data.reason}</p>}
           {exits && (

@@ -12,12 +12,12 @@ export type Device = {
   last_seen: string | null
 }
 
-export type DevicePolicy = 'vps' | 'dpn' | 'bypass' | 'block'
+export type DevicePolicy = 'vps' | 'dpn' | 'tor' | 'bypass' | 'block'
 
 /** The choice in the table: an own policy, or none — the device follows routing.mode. */
 export type PolicyChoice = DevicePolicy | 'mode'
 
-export const DEVICE_POLICIES = ['vps', 'dpn', 'bypass', 'block'] as const
+export const DEVICE_POLICIES = ['vps', 'dpn', 'tor', 'bypass', 'block'] as const
 
 /** What core addresses a device by: the MAC when known, the address otherwise. */
 export const deviceIdent = (device: Device): string => device.mac ?? device.ip ?? ''
@@ -31,10 +31,11 @@ export const deviceLabel = (device: Device, t: T): string =>
  *
  * @tags devices
  */
-export const policyOptions = (enabled: { vps: boolean; dpn: boolean }, t: T) => [
+export const policyOptions = (enabled: { vps: boolean; dpn: boolean; tor: boolean }, t: T) => [
   { value: 'mode', label: t('devices.policy.mode') },
   { value: 'vps', label: t('devices.policy.vps'), disabled: !enabled.vps },
   { value: 'dpn', label: t('devices.policy.dpn'), disabled: !enabled.dpn },
+  { value: 'tor', label: t('devices.policy.tor'), disabled: !enabled.tor },
   { value: 'bypass', label: t('devices.policy.bypass') },
   { value: 'block', label: t('devices.policy.block') },
 ]

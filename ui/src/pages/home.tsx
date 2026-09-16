@@ -106,14 +106,14 @@ const UplinkCard = ({ uplink, failopen }: { uplink: UplinkStatus; failopen: bool
 const RoutingControls = ({ status }: { status: BoxStatus }) => {
   const mutation = routingUpdateMutation.useMutation()
   const t = useT()
-  const change = async (input: { mode?: 'off' | 'full'; default_upstream?: 'vps' | 'dpn' }) => {
+  const change = async (input: { mode?: 'off' | 'full'; default_upstream?: 'vps' | 'dpn' | 'tor' }) => {
     await mutation.mutateAsync(input)
     await boxStatusQuery.refetchQuery()
   }
   // The consumers of rule countries (dpn-<country>) serve their rules only: no mode goes through them.
   const enabled = status.uplinks.filter(
-    (uplink): uplink is UplinkStatus & { name: 'vps' | 'dpn' } =>
-      uplink.enabled && (uplink.name === 'vps' || uplink.name === 'dpn'),
+    (uplink): uplink is UplinkStatus & { name: 'vps' | 'dpn' | 'tor' } =>
+      uplink.enabled && (uplink.name === 'vps' || uplink.name === 'dpn' || uplink.name === 'tor'),
   )
   return (
     <Section

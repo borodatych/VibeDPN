@@ -305,6 +305,20 @@ class ApplyView(BaseModel):
     finished_at: float | None
 
 
+class TorUplinkUpdate(BaseModel):
+    """``PUT /uplinks/tor``: turn the exit through Tor on or off."""
+
+    enabled: bool
+
+
+class TorUplinkView(BaseModel):
+    """Uplink tor as the panel shows it; a bridge is given as its transport and address only."""
+
+    enabled: bool
+    bridges: list[str]  # "snowflake 192.0.2.3:80"
+    apply: ApplyView
+
+
 class WgUplinksView(BaseModel):
     uplinks: list[WgUplinkView]
     apply: ApplyView

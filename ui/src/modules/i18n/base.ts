@@ -292,6 +292,21 @@ const table = {
   'uplinks.add.submit': 'Add the exit',
   'uplinks.add.private':
     'The file holds a private key: the box keeps it readable by root only and never shows it again.',
+  'uplinks.tor.title': "Free exit through Tor",
+  'uplinks.tor.description': "No account, no payment, no registration: the box reaches Tor through Snowflake bridges, which get past networks that block Tor.",
+  'uplinks.tor.on': "on",
+  'uplinks.tor.off': "off",
+  'uplinks.tor.enable': "Turn on",
+  'uplinks.tor.disable': "Turn off",
+  'uplinks.tor.confirmOff': "Turn off the exit through Tor? Sites and devices sent through it have to be moved first.",
+  'uplinks.tor.limits.tcp': "TCP only: websites and Telegram work, calls, games and other UDP do not.",
+  'uplinks.tor.limits.speed': "About 1 Mbit/s through Snowflake: enough for sites and messengers, not for video.",
+  'uplinks.tor.limits.start': "After turning on, the box needs a minute or two to connect to Tor.",
+  'uplinks.tor.use': "Send sites through it on the Rules page (channel Tor), Telegram by its networks, or choose tor as the uplink on the status screen.",
+  'uplinks.tor.bridges': "Bridges: {bridges}",
+  'rules.via.tor': "Through Tor",
+  'rules.channel.tor': "Tor",
+  'devices.policy.tor': "Through Tor",
 } as const
 
 export type MessageKey = keyof typeof table

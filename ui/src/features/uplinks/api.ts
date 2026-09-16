@@ -2,7 +2,7 @@ import { root } from '@/lib/root'
 import { AppError } from '@/lib/error'
 import { authorizedOnlyPlugin } from '@/modules/auth/plugins'
 import { coreFetch, coreRequest } from '@/modules/core/client'
-import { MAX_WG_FILE_BYTES, WG_EXIT_NAME, type WgExits } from '@/features/uplinks/shared'
+import { MAX_WG_FILE_BYTES, WG_EXIT_NAME, type TorExit, type WgExits } from '@/features/uplinks/shared'
 import { z } from 'zod'
 
 // The host applies a change within seconds; the page follows it closely while it is open.
@@ -24,6 +24,30 @@ export const wgExitsQuery = root.lets
     throw new AppError(answer.detail, { status: answer.status })
   })
   .query({ refetchInterval: EXITS_REFRESH_MS, staleTime: 0 })
+
+export const torExitQuery = root.lets
+  .query()
+  .use(authorizedOnlyPlugin)
+  .loader(async () => {
+    const answer = await coreFetch<TorExit>('/uplinks/tor')
+    if (answer.ok) {
+      return { tor: answer.body, reason: null }
+    }
+    if (answer.status === NOT_HERE) {
+      return { tor: null, reason: answer.detail }
+    }
+    throw new AppError(answer.detail, { status: answer.status })
+  })
+  .query({ refetchInterval: EXITS_REFRESH_MS, staleTime: 0 })
+
+export const torExitMutation = root.lets
+  .mutation()
+  .use(authorizedOnlyPlugin)
+  .input(z.object({ enabled: z.boolean() }))
+  .loader(async ({ input }) => {
+    return { tor: await coreRequest<TorExit>('/uplinks/tor', { method: 'PUT', body: input }) }
+  })
+  .mutation()
 
 export const wgExitAddMutation = root.lets
   .mutation()

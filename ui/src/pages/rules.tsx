@@ -38,11 +38,12 @@ import { useLanguage, useT } from '@/modules/i18n/use-t'
 import { formatDate } from '@/utils/date'
 import { useState } from 'react'
 
-const viaOptions = (t: T, exits: string[]) => [
+const viaOptions = (t: T, exits: string[], tor: boolean) => [
   { value: 'vps', label: t('rules.via.vps') },
   { value: 'dpn', label: t('rules.via.dpn') },
-  // a WireGuard exit is offered only when the box has one
+  // a WireGuard exit is offered only when the box has one, Tor only when it is on
   ...(exits.length > 0 ? [{ value: 'wg', label: t('rules.via.wg') }] : []),
+  ...(tor ? [{ value: 'tor', label: t('rules.via.tor') }] : []),
   { value: 'direct', label: t('rules.via.direct') },
 ]
 
@@ -50,6 +51,10 @@ const exitOptions = (exits: string[]) => exits.map((name) => ({ value: name, lab
 
 /** The named WireGuard exits of the box, for the channel choice of rules and lists. */
 const useWgExits = () => wgExitNames(boxStatusQuery.useQuery().data?.status.uplinks ?? [])
+
+/** Whether uplink tor is on, for the channel choice of rules and lists. */
+const useTorEnabled = () =>
+  (boxStatusQuery.useQuery().data?.status.uplinks ?? []).some((uplink) => uplink.name === 'tor' && uplink.enabled)
 
 const SHOWN_QUERIES = 100
 
@@ -62,6 +67,7 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
   const [country, setCountry] = useState(rule.country ?? '')
   const t = useT()
   const exits = useWgExits()
+  const torEnabled = useTorEnabled()
   const busy = setRule.isPending || removeRule.isPending
   const error = setRule.error ?? removeRule.error
 
@@ -85,7 +91,7 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
       <TableCell className="font-mono text-sm">{rule.domain}</TableCell>
       <TableCell>
         <XSelect
-          options={viaOptions(t, exits)}
+          options={viaOptions(t, exits, torEnabled)}
           value={rule.via}
           disabled={busy}
           onValueChange={(value) => void save({ via: String(value) as RuleVia })}
@@ -162,6 +168,7 @@ const AddRule = () => {
   const [via, setVia] = useState<RuleVia>('vps')
   const [country, setCountry] = useState('')
   const exits = useWgExits()
+  const torEnabled = useTorEnabled()
   const [uplink, setUplink] = useState('')
   const add = async () => {
     await setRule.mutateAsync({
@@ -185,7 +192,7 @@ const AddRule = () => {
         aria-label={t('rules.site')}
         onChange={(event) => setDomain(event.target.value)}
       />
-      <XSelect options={viaOptions(t, exits)} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
+      <XSelect options={viaOptions(t, exits, torEnabled)} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
       {via === 'wg' && (
         <XSelect
           options={exitOptions(exits)}
@@ -251,6 +258,7 @@ const AddDomainList = () => {
   const [via, setVia] = useState<RuleVia>('vps')
   const [country, setCountry] = useState('')
   const exits = useWgExits()
+  const torEnabled = useTorEnabled()
   const [uplink, setUplink] = useState('')
   const add = async () => {
     await setList.mutateAsync({
@@ -272,7 +280,7 @@ const AddDomainList = () => {
         aria-label={t('lists.url')}
         onChange={(event) => setUrl(event.target.value)}
       />
-      <XSelect options={viaOptions(t, exits)} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
+      <XSelect options={viaOptions(t, exits, torEnabled)} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
       {via === 'wg' && (
         <XSelect
           options={exitOptions(exits)}

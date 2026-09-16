@@ -215,3 +215,32 @@ def test_up_installs_the_units_once_and_enables_the_path(
     commands.clear()
     cli._ensure_apply_units(Path("/opt/vibedpn"))  # already current and enabled
     assert commands == [["is-enabled", "--quiet", "vibedpn-apply.path"]]
+
+
+def test_tor_is_turned_on_from_the_panel_and_the_host_asked_to_start_it(tmp_path: Path) -> None:
+    client, path = box(tmp_path)
+    shown = client.get("/uplinks/tor")
+    assert shown.status_code == 200, shown.text
+    assert shown.json()["enabled"] is False
+    assert shown.json()["bridges"] == ["snowflake 192.0.2.3:80", "snowflake 192.0.2.4:80"]
+    assert read_request(tmp_path / "data") is None
+    answer = client.put("/uplinks/tor", json={"enabled": True})
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["enabled"] is True and answer.json()["apply"]["pending"] is True
+    assert load_config(path).upstreams.tor.enabled
+    first = read_request(tmp_path / "data")
+    assert first is not None
+    # the same state again changes nothing and asks the host for nothing new
+    assert client.put("/uplinks/tor", json={"enabled": True}).status_code == 200
+    assert read_request(tmp_path / "data") == first
+
+
+def test_tor_the_lan_goes_through_is_not_turned_off(tmp_path: Path) -> None:
+    raw = home_config()
+    raw["upstreams"]["tor"] = {"enabled": True}
+    raw["routing"] = {"mode": "full", "default_upstream": "tor"}
+    client, path = box(tmp_path, raw)
+    answer = client.put("/uplinks/tor", json={"enabled": False})
+    assert answer.status_code == 422
+    assert "not an enabled uplink" in answer.json()["detail"]
+    assert load_config(path).upstreams.tor.enabled

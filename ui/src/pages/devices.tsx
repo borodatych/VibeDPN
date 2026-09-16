@@ -20,7 +20,7 @@ import { useLanguage, useT } from '@/modules/i18n/use-t'
 import { formatDate } from '@/utils/date'
 import { useState } from 'react'
 
-const DeviceRow = ({ device, enabled }: { device: Device; enabled: { vps: boolean; dpn: boolean } }) => {
+const DeviceRow = ({ device, enabled }: { device: Device; enabled: { vps: boolean; dpn: boolean; tor: boolean } }) => {
   const setPolicy = devicePolicySetMutation.useMutation()
   const unsetPolicy = devicePolicyUnsetMutation.useMutation()
   const [pendingBlock, setPendingBlock] = useState(false)
@@ -118,6 +118,7 @@ export const devicesPage = generalLayout.lets
     const enabled = {
       vps: uplinks.some((uplink) => uplink.name === 'vps' && uplink.enabled),
       dpn: uplinks.some((uplink) => uplink.name === 'dpn' && uplink.enabled),
+      tor: uplinks.some((uplink) => uplink.name === 'tor' && uplink.enabled),
     }
     const shown = devices.filter((device) => matchesSearch(device, search))
     return (

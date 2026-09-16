@@ -11,9 +11,9 @@ export type DomainRule = {
   also: string[]
 }
 
-export type RuleVia = 'vps' | 'dpn' | 'wg' | 'direct'
+export type RuleVia = 'vps' | 'dpn' | 'wg' | 'tor' | 'direct'
 
-export const RULE_VIAS = ['vps', 'dpn', 'wg', 'direct'] as const
+export const RULE_VIAS = ['vps', 'dpn', 'wg', 'tor', 'direct'] as const
 
 const WG_KEY_PREFIX = 'wg-'
 
@@ -125,6 +125,9 @@ export const channelLabel = (channel: string, t: T): string => {
   }
   if (channel === 'smart_vps') {
     return t('rules.channel.vps')
+  }
+  if (channel === 'smart_tor') {
+    return t('rules.channel.tor')
   }
   // core spells '-' of an exit name as '_' in the set name; a name never holds '_' itself
   const wg = /^smart_wg_(\w+)$/.exec(channel)

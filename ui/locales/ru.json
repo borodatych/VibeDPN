@@ -260,5 +260,20 @@
   "uplinks.add.missing": "Это не похоже на файл WireGuard: нет {parts}.",
   "uplinks.add.tooLarge": "Файл слишком большой для файла WireGuard.",
   "uplinks.add.submit": "Добавить выход",
-  "uplinks.add.private": "В файле закрытый ключ: коробка хранит его доступным только root и больше нигде не показывает."
+  "uplinks.add.private": "В файле закрытый ключ: коробка хранит его доступным только root и больше нигде не показывает.",
+  "uplinks.tor.title": "Бесплатный выход через Tor",
+  "uplinks.tor.description": "Без аккаунта, оплаты и регистрации: коробка подключается к Tor через мосты Snowflake, которые проходят сквозь блокировки Tor.",
+  "uplinks.tor.on": "включён",
+  "uplinks.tor.off": "выключен",
+  "uplinks.tor.enable": "Включить",
+  "uplinks.tor.disable": "Выключить",
+  "uplinks.tor.confirmOff": "Выключить выход через Tor? Сайты и устройства, отправленные через него, сначала нужно перевести на другой канал.",
+  "uplinks.tor.limits.tcp": "Только TCP: сайты и Telegram работают, звонки, игры и прочий UDP — нет.",
+  "uplinks.tor.limits.speed": "Около 1 Мбит/с через Snowflake: хватает для сайтов и мессенджеров, но не для видео.",
+  "uplinks.tor.limits.start": "После включения коробке нужна минута-две, чтобы подключиться к Tor.",
+  "uplinks.tor.use": "Отправьте через него сайты на странице «Правила» (канал Tor), Telegram — по его сетям, или выберите аплинк tor на главной.",
+  "uplinks.tor.bridges": "Мосты: {bridges}",
+  "rules.via.tor": "Через Tor",
+  "rules.channel.tor": "Tor",
+  "devices.policy.tor": "Через Tor"
 }

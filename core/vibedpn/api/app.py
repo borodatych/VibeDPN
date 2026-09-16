@@ -41,6 +41,8 @@ from vibedpn.api.models import (
     PeerView,
     RoutingUpdate,
     RoutingView,
+    TorUplinkUpdate,
+    TorUplinkView,
     UplinkStatus,
     VpsLanAccessUpdate,
     VpsLanAccessView,
@@ -84,6 +86,7 @@ from vibedpn.config_edit import (
     set_network,
     set_network_rule,
     set_routing,
+    set_tor_uplink,
     set_vps_lan_access,
     set_wg_uplink,
     unset_device,
@@ -272,9 +275,70 @@ def _add_link_routes(
         application, current, sources.events, sources.device_store, sources.wifi_stations
     )
     _add_wg_uplink_routes(application, current, state, sources.secrets_dir, sources.data_dir)
+    _add_tor_uplink_routes(application, current, state, sources.data_dir)
 
 
 NO_PANEL_APPLY = "this box takes no WireGuard exits from the panel: it routes no LAN"
+
+
+def _apply_view(data: Path) -> ApplyView:
+    """The last change the host applied for the panel, and whether one is still waiting."""
+    progress = apply_state(data, time.time())
+    last = progress.last
+    return ApplyView(
+        pending=progress.pending,
+        ok=None if last is None else last.ok,
+        message="" if last is None else last.message,
+        finished_at=None if last is None else last.finished_at,
+    )
+
+
+def _ask_host(data: Path, reason: str) -> None:
+    """Leave the request the host's path unit picks up: core cannot start containers itself."""
+    try:
+        request_apply(data, time.time(), reason)
+    except ApplyError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"saved, but the host was not asked to apply it: {exc}"
+        ) from exc
+
+
+def _add_tor_uplink_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    state: BoxState | None,
+    data_dir: Path | None,
+) -> None:
+    """``/uplinks/tor``: the free exit through Tor turned on and off in the panel (decision 27);
+    the host starts or stops its gateway when it applies the request core leaves."""
+
+    def box_paths() -> tuple[Config, BoxState, Path]:
+        box = current()
+        if box is None or box.network is None or state is None or data_dir is None:
+            raise HTTPException(status_code=404, detail=NO_PANEL_APPLY)
+        return box, state, data_dir
+
+    def view() -> TorUplinkView:
+        box, _state, data = box_paths()
+        tor = box.upstreams.tor
+        return TorUplinkView(
+            enabled=tor.enabled,
+            bridges=[" ".join(line.split()[:2]) for line in tor.bridges],
+            apply=_apply_view(data),
+        )
+
+    @application.get("/uplinks/tor", response_model=TorUplinkView)
+    def tor_uplink() -> TorUplinkView:
+        return view()
+
+    @application.put("/uplinks/tor", response_model=TorUplinkView)
+    def put_tor_uplink(request: TorUplinkUpdate) -> TorUplinkView:
+        box, box_state, data = box_paths()
+        if box.upstreams.tor.enabled == request.enabled:
+            return view()
+        _run_edit(box_state, lambda path: set_tor_uplink(path, request.enabled))
+        _ask_host(data, "uplink tor " + ("enabled" if request.enabled else "disabled"))
+        return view()
 
 
 def _add_wg_uplink_routes(
@@ -306,8 +370,6 @@ def _add_wg_uplink_routes(
 
     def view() -> WgUplinksView:
         box, _state, secrets, data = box_paths()
-        progress = apply_state(data, time.time())
-        last = progress.last
         return WgUplinksView(
             uplinks=[
                 WgUplinkView(
@@ -317,21 +379,10 @@ def _add_wg_uplink_routes(
                 )
                 for name, uplink in sorted(box.upstreams.wg.items())
             ],
-            apply=ApplyView(
-                pending=progress.pending,
-                ok=None if last is None else last.ok,
-                message="" if last is None else last.message,
-                finished_at=None if last is None else last.finished_at,
-            ),
+            apply=_apply_view(data),
         )
 
-    def ask_host(data: Path, reason: str) -> None:
-        try:
-            request_apply(data, time.time(), reason)
-        except ApplyError as exc:
-            raise HTTPException(
-                status_code=503, detail=f"saved, but the host was not asked to apply it: {exc}"
-            ) from exc
+    ask_host = _ask_host
 
     @application.get("/uplinks/wg", response_model=WgUplinksView)
     def list_wg_uplinks() -> WgUplinksView:
