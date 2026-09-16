@@ -608,6 +608,54 @@ print(".".join(map(str, r[-4:])) if struct.unpack("!H", r[6:8])[0] else "")' "$S
     sleep 2
   done
   echo "list: $LIST_NAME through smart_vps"
+
+  log "smart: a rule direct is stronger than a list through the VPS"
+  # a direct rule only matters against a tunnel channel: here the list sends the name through the
+  # VPS, the rule of the same name sends it direct, and the name must land in smart_direct alone
+  DIRECT_NAME="$(fresh_name 12)"
+  DIRECT_IP="$(printf '%s' "$DIRECT_NAME" | sed 's/\.nip\.io$//; s/-/./g')"
+  printf '%s\n' "$DIRECT_NAME" >"$WORK/lists/direct.txt"
+  DIRECT_URL="http://127.0.0.1:18080/direct.txt"
+  sudo "$CLI" lists add "$DIRECT_URL" vps --dir "$BOX" | grep -q "via vps" || fail "vibedpn lists add of the list for the direct rule failed"
+  sudo "$CLI" rule add "$DIRECT_NAME" direct --dir "$BOX" | grep -q "via direct, applied" || fail "vibedpn rule add direct failed"
+  i=0
+  until sudo "$CLI" lists show --dir "$BOX" | grep "$DIRECT_URL" | grep -q "(1 domains, fetched "; do
+    i=$((i + 2))
+    [ "$i" -lt 60 ] || fail "core did not fetch the list for the direct rule: $(sudo "$CLI" lists show --dir "$BOX")"
+    sleep 2
+  done
+  fresh_answers "$DIRECT_NAME" >/dev/null
+  i=0
+  until core_get "/dns/journal/$device_ip" | grep -q "\"name\":\"$DIRECT_NAME\",[^}]*\"channel\":\"smart_direct\""; do
+    i=$((i + 2))
+    [ "$i" -lt 60 ] || fail "$DIRECT_NAME under a direct rule did not take smart_direct: $(core_get "/dns/journal/$device_ip")"
+    sleep 2
+  done
+  sudo nft list set inet vibedpn_router smart_direct | grep -q "$DIRECT_IP" ||
+    fail "the resolver of core did not put $DIRECT_IP into the set smart_direct"
+  sudo nft list set inet vibedpn_router smart_vps | grep -q "$DIRECT_IP" &&
+    fail "$DIRECT_IP of a direct rule is in smart_vps too: the list beat the rule"
+  echo "rule direct: $DIRECT_NAME in smart_direct although its list goes through the VPS"
+  sudo "$CLI" rule rm "$DIRECT_NAME" --dir "$BOX" | grep -q "rule removed" || fail "vibedpn rule rm of the direct rule failed"
+  sudo "$CLI" lists rm "$DIRECT_URL" --dir "$BOX" | grep -q "list removed" || fail "vibedpn lists rm of the list for the direct rule failed"
+
+  log "smart: a CDN behind the CNAME of a site follows the site"
+  # www.github.com answers with the CNAME github.com, and no rule covers github.com itself. Learning
+  # is off for the site, so github.com asked right after it cannot be learned by time instead.
+  CNAME_SITE="www.github.com"
+  CNAME_TARGET="github.com"
+  sudo "$CLI" rule add "$CNAME_SITE" vps --no-learn --dir "$BOX" | grep -q "via vps, applied" || fail "vibedpn rule add of the CNAME site failed"
+  fresh_answers "$CNAME_SITE" >/dev/null
+  fresh_answers "$CNAME_TARGET" >/dev/null
+  i=0
+  until core_get "/dns/journal/$device_ip" | grep -q "\"name\":\"$CNAME_TARGET\",[^}]*\"channel\":\"smart_vps\""; do
+    i=$((i + 2))
+    [ "$i" -lt 60 ] || fail "$CNAME_TARGET behind the CNAME of $CNAME_SITE did not follow it through smart_vps: $(core_get "/dns/journal/$device_ip")"
+    sleep 2
+  done
+  echo "CNAME: $CNAME_TARGET follows $CNAME_SITE through smart_vps"
+  sudo "$CLI" rule rm "$CNAME_SITE" --dir "$BOX" | grep -q "rule removed" || fail "vibedpn rule rm of the CNAME site failed"
+
   sudo "$CLI" lists rm "$LIST_URL" --dir "$BOX" | grep -q "list removed" || fail "vibedpn lists rm failed"
   kill "$LIST_SERVER" 2>/dev/null || true
   LIST_SERVER=""
