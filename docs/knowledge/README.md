@@ -13,6 +13,8 @@
 - [sniBlocking.md](myst/sniBlocking.md) — провайдер режет TLS к `mysterium.network` по SNI: TCP открыт, рукопожатие виснет, с чужим SNI проходит; нода падает без hermes, нужен обход через свою VPS; обход без VPS: ClientHello двумя TLS-записями или имя в другом регистре — сертификат проверяется полностью
   `kill_switch: true` выключает kill-switch, баланс не нужен при нулевой цене, образ мультиарх
 
+- [selfFunding.md](myst/selfFunding.md) — коробка платит сама за себя: регистрация 0.095 MYST, бесплатной сейчас нет, `referral_token` делает её бесплатной на стороне ноды; заработок нельзя выводить в свой канал, но можно в канал consumer коробки — круг без биржи, не проверен исполнением
+
 ## adguard
 
 - [docker.md](adguard/docker.md) — тома, `AdGuardHome.yaml` со `schema_version: 34` вместо мастера
