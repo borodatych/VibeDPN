@@ -1,6 +1,8 @@
 """ASGI application factory: health, provider statistics (Stage 2) and tunnel peers (Stage 3)."""
 
+import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -12,6 +14,7 @@ from vibedpn import __version__
 from vibedpn.api.consumer import ConsumerStatus
 from vibedpn.api.lists import ListsStatus
 from vibedpn.api.models import (
+    ApplyView,
     BoxStatus,
     DevicePolicyUpdate,
     DevicePolicyView,
@@ -39,13 +42,18 @@ from vibedpn.api.models import (
     UplinkStatus,
     VpsLanAccessUpdate,
     VpsLanAccessView,
+    WgUplinkCreate,
+    WgUplinksView,
+    WgUplinkView,
     WifiClientView,
 )
 from vibedpn.api.smart import SmartLoop
 from vibedpn.api.state import BoxState
 from vibedpn.api.uplink import UplinkWatchers
-from vibedpn.bootstrap import BootstrapError, network_for
+from vibedpn.atomic import write_private
+from vibedpn.bootstrap import BootstrapError, check_peer_text, network_for
 from vibedpn.config import (
+    WG_UPLINK_NAME,
     Config,
     DeviceConfig,
     DomainList,
@@ -60,8 +68,10 @@ from vibedpn.config_edit import (
     DeviceNotFoundError,
     ListNotFoundError,
     RuleNotFoundError,
+    WgUplinkNotFoundError,
     remove_domain_list,
     remove_domain_rule,
+    remove_wg_uplink,
     set_device,
     set_domain_list,
     set_domain_rule,
@@ -69,10 +79,12 @@ from vibedpn.config_edit import (
     set_network,
     set_routing,
     set_vps_lan_access,
+    set_wg_uplink,
     unset_device,
 )
 from vibedpn.detect import DetectError, HostProbe, Interface
 from vibedpn.engine.adguard import AdguardError, set_dns_mode
+from vibedpn.engine.apply import ApplyError, apply_state, request_apply
 from vibedpn.engine.consumer import (
     CONSUMER_TEQUILAPI,
     CONSUMER_TIMEOUT_SECONDS,
@@ -229,6 +241,125 @@ def device_names(box: Config | None, device_store: DeviceStore | None) -> dict[s
     if box is not None:
         names.update({device.mac: device.name for device in box.devices if device.mac})
     return names
+
+
+@dataclass(frozen=True)
+class LinkRouteSources:
+    """What the routes about the links of the box read: devices, the journal, the access point,
+    and the secrets and data directory core shares with the host."""
+
+    device_store: DeviceStore | None
+    events: EventStore | None
+    wifi_stations: WifiStations
+    secrets_dir: Path | None
+    data_dir: Path | None
+
+
+def _add_link_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    state: BoxState | None,
+    sources: LinkRouteSources,
+) -> None:
+    """The journal and the Wi-Fi clients, and the WireGuard exits added in the panel."""
+    _add_event_routes(
+        application, current, sources.events, sources.device_store, sources.wifi_stations
+    )
+    _add_wg_uplink_routes(application, current, state, sources.secrets_dir, sources.data_dir)
+
+
+NO_PANEL_APPLY = "this box takes no WireGuard exits from the panel: it routes no LAN"
+
+
+def _add_wg_uplink_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    state: BoxState | None,
+    secrets_dir: Path | None,
+    data_dir: Path | None,
+) -> None:
+    """``/uplinks/wg``: WireGuard exits added and removed in the panel (decision 26). core keeps
+    the file and config.yaml; the host starts the exit when it applies the request core leaves."""
+
+    def box_paths() -> tuple[Config, BoxState, Path, Path]:
+        box = current()
+        if box is None or box.network is None or state is None or secrets_dir is None:
+            raise HTTPException(status_code=404, detail=NO_PANEL_APPLY)
+        if data_dir is None:
+            raise HTTPException(status_code=404, detail=NO_PANEL_APPLY)
+        return box, state, secrets_dir, data_dir
+
+    def checked_name(name: str) -> str:
+        # the name reaches a path in secrets/: nothing but the documented form gets that far
+        if not WG_UPLINK_NAME.fullmatch(name):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{name!r} is not a usable name: a-z, 0-9 and '-', up to 24 characters",
+            )
+        return name
+
+    def view() -> WgUplinksView:
+        box, _state, secrets, data = box_paths()
+        progress = apply_state(data)
+        last = progress.last
+        return WgUplinksView(
+            uplinks=[
+                WgUplinkView(
+                    name=name,
+                    enabled=uplink.enabled,
+                    has_file=(secrets / f"wg-{name}.conf").is_file(),
+                )
+                for name, uplink in sorted(box.upstreams.wg.items())
+            ],
+            apply=ApplyView(
+                pending=progress.pending,
+                ok=None if last is None else last.ok,
+                message="" if last is None else last.message,
+                finished_at=None if last is None else last.finished_at,
+            ),
+        )
+
+    def ask_host(data: Path, reason: str) -> None:
+        try:
+            request_apply(data, time.time(), reason)
+        except ApplyError as exc:
+            raise HTTPException(
+                status_code=503, detail=f"saved, but the host was not asked to apply it: {exc}"
+            ) from exc
+
+    @application.get("/uplinks/wg", response_model=WgUplinksView)
+    def list_wg_uplinks() -> WgUplinksView:
+        return view()
+
+    @application.post("/uplinks/wg", response_model=WgUplinksView)
+    def add_wg_uplink(request: WgUplinkCreate) -> WgUplinksView:
+        _box, box_state, secrets, data = box_paths()
+        name = checked_name(request.name)
+        try:
+            text = check_peer_text(request.config, "the file")
+        except BootstrapError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        target = secrets / f"wg-{name}.conf"
+        existed = target.exists()
+        write_private(target, text)
+        try:
+            _run_edit(box_state, lambda path: set_wg_uplink(path, name))
+        except HTTPException:
+            if not existed:  # a refused exit leaves no key behind
+                target.unlink(missing_ok=True)
+            raise
+        ask_host(data, f"WireGuard exit {name} added")
+        return view()
+
+    @application.delete("/uplinks/wg/{name}", response_model=WgUplinksView)
+    def remove_wg(name: str) -> WgUplinksView:
+        _box, box_state, secrets, data = box_paths()
+        checked = checked_name(name)
+        _run_edit(box_state, lambda path: remove_wg_uplink(path, checked))
+        # the private key of an exit the box no longer has does not stay on it
+        (secrets / f"wg-{checked}.conf").unlink(missing_ok=True)
+        ask_host(data, f"WireGuard exit {checked} removed")
+        return view()
 
 
 def _add_event_routes(
@@ -579,7 +710,7 @@ def _run_edit(box_state: BoxState, change: Callable[[Path], tuple[Config, bool]]
     """A rule or list edit of config.yaml applied live; core's refusals become HTTP answers."""
     try:
         return box_state.edit(change)
-    except (RuleNotFoundError, ListNotFoundError) as exc:
+    except (RuleNotFoundError, ListNotFoundError, WgUplinkNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ConfigEditError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -839,6 +970,7 @@ def create_app(
     lists: ListsStatus | None = None,
     events: EventStore | None = None,
     wifi_stations: WifiStations | None = None,
+    data_dir: Path | None = None,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -890,7 +1022,14 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     _add_device_routes(application, current, state, device_store)
-    _add_event_routes(application, current, events, device_store, wifi_stations or read_stations)
+    _add_link_routes(
+        application,
+        current,
+        state,
+        LinkRouteSources(
+            device_store, events, wifi_stations or read_stations, secrets_dir, data_dir
+        ),
+    )
 
     @application.get("/peers", response_model=list[PeerView])
     def peers() -> list[PeerView]:

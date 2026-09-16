@@ -80,7 +80,7 @@ def test_init_vps_non_interactive(tmp_path: Path) -> None:
 
 def test_init_client_with_flags(tmp_path: Path) -> None:
     peer = tmp_path / "home.conf"
-    peer.write_text("[Interface]\n", encoding="utf-8")
+    peer.write_text("[Interface]\nPrivateKey = x\n\n[Peer]\nPublicKey = y\n", encoding="utf-8")
     pw = tmp_path / "pw"
     pw.write_text("secret123\n", encoding="utf-8")
     result = runner.invoke(
@@ -156,7 +156,7 @@ def test_init_reasks_a_bad_endpoint_interactively(tmp_path: Path) -> None:
 
 def test_init_rejects_flags_of_another_role(tmp_path: Path) -> None:
     peer = tmp_path / "home.conf"
-    peer.write_text("[Interface]\n", encoding="utf-8")
+    peer.write_text("[Interface]\nPrivateKey = x\n\n[Peer]\nPublicKey = y\n", encoding="utf-8")
     result = runner.invoke(
         cli.app,
         ["init", "--role", "home", "--peer-config", str(peer), "--dir", str(tmp_path / "b")],
@@ -174,7 +174,9 @@ def test_init_rejects_flags_of_another_role(tmp_path: Path) -> None:
 
 def test_init_expands_tilde_in_peer_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    (tmp_path / "home.conf").write_text("[Interface]\n", encoding="utf-8")
+    (tmp_path / "home.conf").write_text(
+        "[Interface]\nPrivateKey = x\n\n[Peer]\nPublicKey = y\n", encoding="utf-8"
+    )
     result = runner.invoke(
         cli.app,
         ["init", "--role", "client", "--dir", str(tmp_path / "box")],

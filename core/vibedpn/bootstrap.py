@@ -431,8 +431,23 @@ def read_peer_config(path: Path) -> str:
         raise BootstrapError(
             f"{path} is not a UTF-8 text file (expected a WireGuard .conf)"
         ) from None
-    if "[Interface]" not in text:
-        raise BootstrapError(f"{path} has no [Interface] section; is it a WireGuard .conf?")
+    return check_peer_text(text, str(path))
+
+
+# What every usable WireGuard client file carries: the box's own key and address, and a peer.
+PEER_FILE_MARKERS = ("[Interface]", "PrivateKey", "[Peer]", "PublicKey")
+
+
+def check_peer_text(text: str, source: str) -> str:
+    """A WireGuard client file as text, or a ``BootstrapError`` naming what is missing — one check
+    for a file given to the CLI and a file sent from the panel."""
+    if len(text.encode("utf-8")) > MAX_PEER_FILE_BYTES:
+        raise BootstrapError(f"{source} is larger than a WireGuard peer file can be")
+    missing = [marker for marker in PEER_FILE_MARKERS if marker not in text]
+    if missing:
+        raise BootstrapError(
+            f"{source} has no {', '.join(missing)}; is it a WireGuard .conf of a provider?"
+        )
     return text
 
 

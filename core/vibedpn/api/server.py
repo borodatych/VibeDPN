@@ -165,6 +165,7 @@ def main() -> None:
         smart=smart,
         lists=lists,
         events=events,
+        data_dir=data_dir,
     )
     run_servers(
         config,

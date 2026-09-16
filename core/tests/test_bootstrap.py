@@ -138,7 +138,11 @@ def test_preserved_env_keeps_tags_only(tmp_path: Path) -> None:
 
 def test_write_box_writes_config_env_and_secrets(tmp_path: Path) -> None:
     peer = tmp_path / "home.conf"
-    peer.write_text("[Interface]\nPrivateKey = x\n", encoding="utf-8")
+    peer.write_text(
+        "[Interface]\nPrivateKey = x\nAddress = 10.78.0.2/32\n\n"
+        "[Peer]\nPublicKey = y\nEndpoint = vps.example.com:51820\n",
+        encoding="utf-8",
+    )
     answers = Answers(Role.CLIENT, password="secret123", peer_config=peer)
     config = build_config(answers, LAN)
     box = tmp_path / "box"
@@ -227,7 +231,11 @@ def test_read_peer_config_sanity(tmp_path: Path) -> None:
 
 def test_force_with_a_new_role_sets_old_secrets_aside(tmp_path: Path) -> None:
     peer = tmp_path / "home.conf"
-    peer.write_text("[Interface]\nPrivateKey = x\n", encoding="utf-8")
+    peer.write_text(
+        "[Interface]\nPrivateKey = x\nAddress = 10.78.0.2/32\n\n"
+        "[Peer]\nPublicKey = y\nEndpoint = vps.example.com:51820\n",
+        encoding="utf-8",
+    )
     client = Answers(Role.CLIENT, password="secret123", peer_config=peer)
     box = tmp_path / "box"
     write_box(box, build_config(client, LAN), client, force=False)

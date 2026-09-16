@@ -263,3 +263,32 @@ class WifiClientView(BaseModel):
     inactive_ms: int | None
     rx_bytes: int | None
     tx_bytes: int | None
+
+
+class WgUplinkCreate(BaseModel):
+    """``POST /uplinks/wg``: a name and the text of a provider's WireGuard file."""
+
+    name: str
+    config: str = Field(max_length=64 * 1024)
+
+
+class WgUplinkView(BaseModel):
+    """A named WireGuard exit; its file is never sent back, only whether it is there."""
+
+    name: str
+    enabled: bool
+    has_file: bool
+
+
+class ApplyView(BaseModel):
+    """The last change the host applied for the panel (engine/apply.py)."""
+
+    pending: bool  # the host has not run `vibedpn up` for the last change yet
+    ok: bool | None  # None: nothing applied yet
+    message: str
+    finished_at: float | None
+
+
+class WgUplinksView(BaseModel):
+    uplinks: list[WgUplinkView]
+    apply: ApplyView

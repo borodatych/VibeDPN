@@ -3,6 +3,7 @@
 Stage 1 ships ``init``; ``up``, ``down``, ``restart``, ``status``, ``logs`` and ``doctor`` follow.
 """
 
+import os
 import sys
 import time
 from collections.abc import Callable
@@ -90,6 +91,15 @@ from vibedpn.config_edit import (
 from vibedpn.detect import DetectError, HostProbe, find_tool
 from vibedpn.device_view import render_devices
 from vibedpn.doctor import evaluate, gather, has_failures, render, to_json
+from vibedpn.engine.apply import (
+    APPLY_UNIT,
+    BOX_DATA_DIR,
+    ApplyResult,
+    read_request,
+    read_result,
+    render_units,
+    write_result,
+)
 from vibedpn.engine.backup import (
     BACKUPS_DIR,
     BackupError,
@@ -438,6 +448,7 @@ def up(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     """Start the box, or apply config.yaml: derive .env and recreate only what changed."""
     previous = read_env(box_dir / ENV_FILE)
     config = _prepare(box_dir, refresh=True)
+    _ensure_apply_units(box_dir)
     active = config.digest_services()
     recreated = [
         service
@@ -693,6 +704,59 @@ def upstream(
     _switch_routing(box_dir, upstream=value)
 
 
+def _ensure_apply_units(box_dir: Path) -> None:
+    """The systemd units that apply a change made in the panel (decision 26), kept current by every
+    `up`. A host without systemd, or `up` without root, runs without them: the panel then says the
+    change waits, and `vibedpn up` by hand applies it."""
+    systemctl = find_tool("systemctl")
+    if systemctl is None or os.geteuid() != 0:
+        return
+    changed = False
+    try:
+        for name, text in render_units(box_dir.resolve(), sys.executable).items():
+            unit = SYSTEMD_DIR / name
+            if not unit.is_file() or unit.read_text(encoding="utf-8") != text:
+                unit.write_text(text, encoding="utf-8")
+                changed = True
+    except OSError as exc:
+        typer.secho(
+            f"cannot write the units that apply panel changes: {exc.strerror or exc}",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        return
+    path_unit = f"{APPLY_UNIT}.path"
+    if changed:
+        run([systemctl, "daemon-reload"])
+    if changed or run([systemctl, "is-enabled", "--quiet", path_unit]) != 0:
+        run([systemctl, "enable", "--now", path_unit])
+
+
+@app.command()
+def apply(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Run `up` for a change the panel asked for (the systemd unit vibedpn-apply runs this)."""
+    data_dir = box_dir / BOX_DATA_DIR
+    while True:
+        requested = read_request(data_dir)
+        last = read_result(data_dir)
+        if requested is None or (last is not None and last.requested_at >= requested):
+            return  # nothing asked, or already applied
+        try:
+            up(box_dir)
+            ok, message = True, "applied"
+        except typer.Exit as exc:
+            ok = exc.exit_code == 0
+            message = (
+                "applied"
+                if ok
+                else f"vibedpn up failed (exit {exc.exit_code}); journalctl -u {APPLY_UNIT}"
+            )
+        write_result(data_dir, ApplyResult(requested, time.time(), ok, message))
+        if not ok:
+            raise typer.Exit(EXIT_USER_ERROR)
+        # a change made while `up` ran was asked for after `requested`: the loop applies it too
+
+
 EVENTS_DEFAULT_HOURS = 24.0
 EVENTS_DEFAULT_LIMIT = 200
 
@@ -764,15 +828,16 @@ def uplink_rm(
     name: Annotated[str, typer.Argument(help="Name of the exit to drop.")],
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
-    """Drop a named exit; its file in secrets/ stays where it is."""
+    """Drop a named exit and its file: the key of an exit the box no longer has does not stay."""
     try:
         remove_wg_uplink(box_dir / CONFIG_FILE, name)
     except WgUplinkNotFoundError as exc:
         raise _fail(str(exc)) from None
     except ConfigEditError as exc:
         raise _fail(str(exc)) from None
-    kept = _wg_conf_path(box_dir, name)
-    typer.echo(f"uplink wg-{name} removed; {kept} kept — delete it yourself if it is not needed")
+    removed = _wg_conf_path(box_dir, name)
+    removed.unlink(missing_ok=True)
+    typer.echo(f"uplink wg-{name} removed with {removed}; `vibedpn up` stops its container")
 
 
 @uplink_app.command("show")
