@@ -13,7 +13,15 @@ from typer.testing import CliRunner
 from vibedpn import cli, doctor
 from vibedpn.bootstrap import Answers, HostFacts, build_config, render_config, secrets_present
 from vibedpn.compose import ServiceStatus
-from vibedpn.config import Config, DeviceConfig, DevicePolicy, FirewallConfig, Role, parse_yaml
+from vibedpn.config import (
+    Config,
+    DeviceConfig,
+    DevicePolicy,
+    FirewallConfig,
+    Role,
+    WgUplink,
+    parse_yaml,
+)
 from vibedpn.detect import Interface
 from vibedpn.doctor import (
     CheckResult,
@@ -507,6 +515,79 @@ def test_exit_verdicts_compare_the_uplink_with_the_direct_address() -> None:
         evaluate(facts(config=full_client(), exits=[doctor.ExitFact("direct", None, "timed out")]))
     )["exit direct"]
     assert offline.verdict is Verdict.WARN
+
+
+def with_wg_exits(config: Config, **exits: bool) -> Config:
+    """The configuration with named WireGuard exits, enabled or not, as `uplink add` writes them."""
+    wg = {name: WgUplink(enabled=enabled) for name, enabled in exits.items()}
+    return config.model_copy(update={"upstreams": config.upstreams.model_copy(update={"wg": wg})})
+
+
+def test_exit_verdicts_cover_named_wireguard_exits() -> None:
+    config = with_wg_exits(full_client(), proton=True)
+    direct = doctor.ExitFact("direct", "203.0.113.7")
+
+    def verdict(item: doctor.ExitFact) -> CheckResult:
+        return by_name(evaluate(facts(config=config, exits=[direct, item])))["exit wg-proton"]
+
+    through = verdict(doctor.ExitFact("wg-proton", "198.51.100.20"))
+    assert through.verdict is Verdict.OK and through.detail == "198.51.100.20"
+    bypass = verdict(doctor.ExitFact("wg-proton", "203.0.113.7"))
+    assert bypass.verdict is Verdict.FAIL and bypass.hint.endswith("vibedpn logs wg-proton")
+    silent = verdict(doctor.ExitFact("wg-proton", None, "wg-proton is not running"))
+    assert silent.verdict is Verdict.FAIL and silent.hint == "vibedpn logs wg-proton"
+
+
+def test_exits_probe_every_enabled_uplink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Named exits are asked for their address like vps and dpn; a disabled one is not."""
+    config = with_wg_exits(full_client(), proton=True, spare=False)
+    monkeypatch.setattr(
+        doctor, "_direct_exit", lambda _url: doctor.ExitFact("direct", "203.0.113.7")
+    )
+    probed: list[str] = []
+
+    def answer(argv: list[str]) -> str:
+        service = argv[argv.index("exec") + 2]
+        probed.append(service)
+        return "198.51.100.20\n" if service == "wg-proton" else "198.51.100.10\n"
+
+    monkeypatch.setattr(doctor, "capture", answer)
+    running = [
+        ServiceStatus(name, "running", "healthy", "Up") for name in ("wg-client", "wg-proton")
+    ]
+    exits = doctor._exits(tmp_path, config, running)
+    assert exits is not None
+    assert [(item.name, item.address) for item in exits] == [
+        ("direct", "203.0.113.7"),
+        ("vps", "198.51.100.10"),
+        ("wg-proton", "198.51.100.20"),
+    ]
+    assert probed == ["wg-client", "wg-proton"]
+    stopped = doctor._exits(tmp_path, config, running[:1])
+    assert stopped is not None
+    assert stopped[-1] == doctor.ExitFact("wg-proton", None, "wg-proton is not running")
+
+
+def test_gather_asks_for_the_files_of_named_exits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The file of an exit added after init is a required secret; the doctor must stat it."""
+    (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    config = with_wg_exits(home_config(), proton=True)
+    (tmp_path / "config.yaml").write_text(render_config(config), encoding="utf-8")
+    asked: list[list[str]] = []
+
+    def record(_box_dir: Path, extra: object = ()) -> dict[str, bool | None]:
+        asked.append(sorted(extra))  # type: ignore[call-overload]
+        return {}
+
+    monkeypatch.setattr(doctor, "secrets_present", record)
+    monkeypatch.setattr(
+        doctor, "preflight", lambda: (_ for _ in ()).throw(RuntimeError("no docker"))
+    )
+    with pytest.raises(RuntimeError):  # the preflight fake proves gather went past the secrets
+        gather(tmp_path)
+    assert "wg-proton.conf" in asked[0] and "htpasswd" in asked[0]
 
 
 def test_dns_leak_in_full_follows_the_dns_uplink_chain() -> None:

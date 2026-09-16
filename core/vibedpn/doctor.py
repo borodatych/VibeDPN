@@ -33,6 +33,7 @@ from vibedpn.compose import (
     preflight,
 )
 from vibedpn.config import (
+    WG_KEY_PREFIX,
     Config,
     NetworkMode,
     Profile,
@@ -102,8 +103,8 @@ EXIT_IP_URL = "https://api.ipify.org"
 EXIT_IP_URL_ENV = "VIBEDPN_EXIT_IP_URL"
 EXIT_IP_TIMEOUT_SECONDS = 8
 DIRECT_EXIT = "direct"
-# The gateway container of each uplink; both images carry busybox wget with TLS (verified).
-UPLINK_SERVICES = {Upstream.VPS: "wg-client", Upstream.DPN: "myst-consumer"}
+# The gateway containers (`uplink_service`) all carry busybox wget with TLS: `wg-client` and the
+# named exits `wg-<name>` share one image, `myst-consumer` is the official alpine one (verified).
 STRICT_RP_FILTER = 1
 
 DEFAULT_HTTP_PORT = 80
@@ -668,7 +669,7 @@ def _exit_results(
         if item.name == DIRECT_EXIT:
             continue
         name = f"exit {item.name}"
-        service = UPLINK_SERVICES[Upstream(item.name)]
+        service = uplink_service(item.name)
         if item.address is None:
             results.append(
                 CheckResult(
@@ -857,6 +858,9 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
     env_path = box_dir / ENV_FILE
     if config is not None and env_path.is_file():
         env_current = _env_matches(env_path, config)
+    # The exits of upstreams.wg name their own files; without the list the doctor would report
+    # them as unreadable even as root.
+    secrets = secrets_present(box_dir, required_secrets(config) if config is not None else ())
     docker_error = ""
     try:
         preflight()
@@ -912,7 +916,7 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         config_error=config_error,
         config_hint=config_hint,
         env_current=env_current,
-        secrets=secrets_present(box_dir),
+        secrets=secrets,
         wireguard=module_present(WIREGUARD_MODULE),
         nf_tables=module_present(NFTABLES_MODULE),
         ip_forward=_read_ip_forward(),
@@ -1003,28 +1007,35 @@ def _exits(box_dir: Path, config: Config, services: list[ServiceStatus]) -> list
     if config.network is None:
         return None
     url = os.environ.get(EXIT_IP_URL_ENV, EXIT_IP_URL)
-    exits = [_direct_exit(url)]
     running = {item.service for item in services if item.state == RUNNING_STATE}
-    for upstream in (Upstream.VPS, Upstream.DPN):
-        if not config.upstreams.is_enabled(upstream):
-            continue
-        service = UPLINK_SERVICES[upstream]
-        if service not in running:
-            exits.append(ExitFact(upstream.value, None, f"{service} is not running"))
-            continue
-        argv = compose_argv(
-            box_dir, "exec", "-T", service,
-            "wget", "-qO-", "-T", str(EXIT_IP_TIMEOUT_SECONDS), url,
-        )  # fmt: skip
-        try:
-            answer = capture(argv)
-        except ComposeError as exc:
-            exits.append(ExitFact(upstream.value, None, str(exc) or "no answer"))
-            continue
-        address = parse_exit_address(answer)
-        error = "" if address else f"unexpected answer {answer.strip()[:40]!r}"
-        exits.append(ExitFact(upstream.value, address, error))
-    return exits
+    names = [
+        upstream.value
+        for upstream in (Upstream.VPS, Upstream.DPN)
+        if config.upstreams.is_enabled(upstream)
+    ]
+    names.extend(
+        f"{WG_KEY_PREFIX}{name}"
+        for name, uplink in sorted(config.upstreams.wg.items())
+        if uplink.enabled
+    )
+    return [_direct_exit(url), *(_gateway_exit(box_dir, url, name, running) for name in names)]
+
+
+def _gateway_exit(box_dir: Path, url: str, name: str, running: set[str]) -> ExitFact:
+    """The public address seen from inside the gateway container of one uplink."""
+    service = uplink_service(name)
+    if service not in running:
+        return ExitFact(name, None, f"{service} is not running")
+    argv = compose_argv(
+        box_dir, "exec", "-T", service,
+        "wget", "-qO-", "-T", str(EXIT_IP_TIMEOUT_SECONDS), url,
+    )  # fmt: skip
+    try:
+        answer = capture(argv)
+    except ComposeError as exc:
+        return ExitFact(name, None, str(exc) or "no answer")
+    address = parse_exit_address(answer)
+    return ExitFact(name, address, "" if address else f"unexpected answer {answer.strip()[:40]!r}")
 
 
 def _direct_exit(url: str) -> ExitFact:
