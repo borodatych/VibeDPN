@@ -255,4 +255,4 @@ def test_the_round_asks_every_consumer_at_its_own_address(
     assert asked == ["http://10.77.0.20:4050", "http://10.77.0.40:4050"]
     assert list(states) == ["dpn", "dpn-de", "dpn-ru"]
     assert "myst-consumer-ru-passphrase" in states["dpn-ru"].error
-    assert "vibedpn restart" in states["dpn-ru"].error
+    assert "vibedpn up" in states["dpn-ru"].error

@@ -752,7 +752,7 @@ def _ssh_result(ssh_ports: list[int], listeners: list[Listener] | None) -> Check
             "ssh",
             Verdict.FAIL,
             f"sshd listens on {missing}, which firewall.ssh_ports does not open",
-            "add the port to firewall.ssh_ports in config.yaml, then vibedpn restart",
+            "add the port to firewall.ssh_ports in config.yaml, then vibedpn up",
         )
     heard = ", ".join(str(port) for port in listening)
     return CheckResult("ssh", Verdict.OK, f"sshd listens on {heard}, open in the firewall")

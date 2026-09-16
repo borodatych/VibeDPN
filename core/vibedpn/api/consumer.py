@@ -67,7 +67,7 @@ def consumer_targets(config: Config) -> list[ConsumerTarget]:
                 country_passphrase_file(country),
                 country,
                 key in used,
-                "run `vibedpn restart`: it creates the passphrase of a new country",
+                "run `vibedpn up`: it creates the passphrase of a new country",
             )
         )
     return targets

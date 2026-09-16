@@ -169,7 +169,7 @@ const table = {
   'rules.site': 'Site',
   'rules.exitCountry': 'Exit country',
   'rules.add': 'Add rule',
-  'rules.countryRestart': 'A new Mysterium country starts working after vibedpn restart.',
+  'rules.countryRestart': 'A new Mysterium country starts working after vibedpn up.',
   'rules.via.vps': 'Through the VPS',
   'rules.via.dpn': 'Through Mysterium',
   'rules.via.direct': 'Direct',

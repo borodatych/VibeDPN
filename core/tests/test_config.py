@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from vibedpn.api import server
 from vibedpn.config import (
+    DIGEST_SERVICES,
     Config,
     ConfigError,
     Profile,
@@ -292,10 +293,18 @@ def test_lan_address_check_handles_huge_and_tiny_subnets(home: dict[str, Any]) -
     assert Config.model_validate(home).network is not None
 
 
+def derived(raw: dict[str, Any]) -> dict[str, str]:
+    """env_vars without the config fingerprints: every one is there, their values are the concern
+    of test_config_digests.py."""
+    env = Config.model_validate(raw).env_vars()
+    assert set(DIGEST_SERVICES) <= set(env)
+    return {key: value for key, value in env.items() if key not in DIGEST_SERVICES}
+
+
 def test_env_vars_are_derived_from_config(
     home: dict[str, Any], vps: dict[str, Any], client: dict[str, Any]
 ) -> None:
-    assert Config.model_validate(home).env_vars() == {
+    assert derived(home) == {
         "COMPOSE_PROFILES": "provider,consumer,router,dns,ui",
         "VIBEDPN_API_PORT": "4480",
         "VIBEDPN_LAN_IP": "192.168.1.50",
@@ -307,14 +316,14 @@ def test_env_vars_are_derived_from_config(
         "VIBEDPN_MYST_UDP_TO": "56100",
         "VIBEDPN_MYST_TRAVERSAL": "manual,upnp,holepunching",
     }
-    assert Config.model_validate(vps).env_vars() == {
+    assert derived(vps) == {
         "COMPOSE_PROFILES": "provider,wg-server",
         "VIBEDPN_API_PORT": "4480",
         "VIBEDPN_MYST_UDP_FROM": "56000",
         "VIBEDPN_MYST_UDP_TO": "56100",
         "VIBEDPN_MYST_TRAVERSAL": "manual,upnp,holepunching",
     }
-    assert Config.model_validate(client).env_vars() == {
+    assert derived(client) == {
         "COMPOSE_PROFILES": "wg-client,router,dns,ui",
         "VIBEDPN_API_PORT": "4480",
         "VIBEDPN_LAN_IP": "192.168.1.50",

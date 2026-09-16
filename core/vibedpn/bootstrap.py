@@ -363,10 +363,22 @@ def preserved_env(env_path: Path, default_tag: str = DEFAULT_IMAGE_TAG) -> dict[
     return kept
 
 
+def read_env(env_path: Path) -> dict[str, str]:
+    """Every ``KEY=value`` of an existing ``.env``; an absent file is an empty one."""
+    if not env_path.is_file():
+        return {}
+    values = {}
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and not key.lstrip().startswith("#"):
+            values[key.strip()] = value.strip()
+    return values
+
+
 def render_env(config: Config, preserved: dict[str, str]) -> str:
     lines = [
         "# VibeDPN — written by `vibedpn init` from config.yaml."
-        " Edit config.yaml, then `vibedpn restart`.",
+        " Edit config.yaml, then `vibedpn up`.",
         "",
         *(f"{key}={value}" for key, value in config.env_vars().items()),
         "",

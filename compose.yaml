@@ -12,6 +12,10 @@ services:
   # host default route: every uplink is a gateway container on the `upstreams` network.
   core:
     image: ghcr.io/borodatych/vibedpn-core:${VIBEDPN_TAG:-latest}
+    environment:
+      # The config.yaml sections this service's start-time files come from
+      # (Config.config_digests): a change recreates it at `vibedpn up`, and nothing else.
+      VIBEDPN_CONFIG_DIGEST: ${VIBEDPN_DIGEST_CORE:-}
     build:
       context: ./core
     network_mode: host
@@ -324,6 +328,10 @@ services:
   # the UDP port is opened by the nftables baseline core applies (Stage 2/3).
   wg-server:
     image: ghcr.io/borodatych/vibedpn-wg:${VIBEDPN_TAG:-latest}
+    environment:
+      # The config.yaml sections this service's start-time files come from
+      # (Config.config_digests): a change recreates it at `vibedpn up`, and nothing else.
+      VIBEDPN_CONFIG_DIGEST: ${VIBEDPN_DIGEST_WG_SERVER:-}
     build:
       context: ./images/wg
     profiles:
@@ -355,6 +363,10 @@ services:
   # interface. Host network; the config with the passphrase comes from core (mode 600).
   hostapd:
     image: ghcr.io/borodatych/vibedpn-hostapd:${VIBEDPN_TAG:-latest}
+    environment:
+      # The config.yaml sections this service's start-time files come from
+      # (Config.config_digests): a change recreates it at `vibedpn up`, and nothing else.
+      VIBEDPN_CONFIG_DIGEST: ${VIBEDPN_DIGEST_HOSTAPD:-}
     build:
       context: ./images/hostapd
     profiles:
@@ -377,6 +389,10 @@ services:
   # server of an ISP router). Host network on the LAN interface; the config comes from core.
   dnsmasq:
     image: ghcr.io/borodatych/vibedpn-dnsmasq:${VIBEDPN_TAG:-latest}
+    environment:
+      # The config.yaml sections this service's start-time files come from
+      # (Config.config_digests): a change recreates it at `vibedpn up`, and nothing else.
+      VIBEDPN_CONFIG_DIGEST: ${VIBEDPN_DIGEST_DNSMASQ:-}
     build:
       context: ./images/dnsmasq
     profiles:
@@ -394,6 +410,10 @@ services:
 
   adguard:
     image: adguard/adguardhome:${ADGUARD_TAG:-v0.107.79}
+    environment:
+      # The config.yaml sections this service's start-time files come from
+      # (Config.config_digests): a change recreates it at `vibedpn up`, and nothing else.
+      VIBEDPN_CONFIG_DIGEST: ${VIBEDPN_DIGEST_ADGUARD:-}
     profiles:
       - dns
     restart: unless-stopped

@@ -145,7 +145,7 @@
   "rules.site": "Сайт",
   "rules.exitCountry": "Страна выхода",
   "rules.add": "Добавить правило",
-  "rules.countryRestart": "Новая страна Mysterium заработает после vibedpn restart.",
+  "rules.countryRestart": "Новая страна Mysterium заработает после vibedpn up.",
   "rules.via.vps": "Через VPS",
   "rules.via.dpn": "Через Mysterium",
   "rules.via.direct": "Напрямую",

@@ -36,6 +36,7 @@ from vibedpn.atomic import write_private
 from vibedpn.bootstrap import (
     CONFIG_FILE,
     DEFAULT_BOX_DIR,
+    ENV_FILE,
     SECRET_DIR_MODE,
     SECRETS_DIR,
     Answers,
@@ -46,6 +47,7 @@ from vibedpn.bootstrap import (
     ensure_country_secrets,
     ensure_replaceable,
     public_address,
+    read_env,
     read_peer_config,
     set_panel_password,
     write_box,
@@ -76,6 +78,7 @@ from vibedpn.config import (
     UiVariant,
     WifiConfig,
     check_endpoint,
+    recreated_services,
 )
 from vibedpn.config_edit import (
     ConfigEditError,
@@ -432,8 +435,20 @@ def _retire_stale(box_dir: Path) -> None:
 
 @app.command()
 def up(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
-    """Start the box: derive .env from config.yaml and bring the role's services up."""
-    _prepare(box_dir, refresh=True)
+    """Start the box, or apply config.yaml: derive .env and recreate only what changed."""
+    previous = read_env(box_dir / ENV_FILE)
+    config = _prepare(box_dir, refresh=True)
+    active = config.digest_services()
+    recreated = [
+        service
+        for service in recreated_services(previous, config.config_digests())
+        if service in active
+    ]
+    if recreated:
+        typer.echo(
+            f"config.yaml changed for {', '.join(recreated)}:"
+            " they are recreated, the other services keep running"
+        )
     _retire_stale(box_dir)
     _compose(box_dir, "up", "-d", "--remove-orphans")
 

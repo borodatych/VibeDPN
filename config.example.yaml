@@ -1,7 +1,7 @@
 # VibeDPN — config.yaml
 #
 # Единственный источник правды о коробке. `vibedpn init` пишет этот файл сам; править руками
-# можно, после правки — `vibedpn restart`. Секретов здесь нет: пароль UI, ключи WireGuard и
+# можно, после правки — `vibedpn up`. Секретов здесь нет: пароль UI, ключи WireGuard и
 # keystore ноды лежат в secrets/ и data/, переменные Compose — в .env.
 #
 # Полная спека формата с образцами для всех ролей — docs/manuals/configSpec.md; какая роль что

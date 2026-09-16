@@ -9,6 +9,8 @@ role, is ``docs/manuals/configSpec.md``; keep the two in sync.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from enum import StrEnum
 from ipaddress import IPv4Address, IPv4Network
@@ -43,6 +45,39 @@ INTERFACE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")  # IFNAMSIZ is 16 with
 # wg-<name> and the routing key wg-<name>, so it stays within what all three accept.
 WG_UPLINK_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
 WG_KEY_PREFIX = "wg-"
+# Fingerprints of config.yaml sections in .env, one per service that reads files core renders at
+# start (Config.config_digests). Short: they only have to change when their sections change.
+DIGEST_CORE = "VIBEDPN_DIGEST_CORE"
+DIGEST_HOSTAPD = "VIBEDPN_DIGEST_HOSTAPD"
+DIGEST_DNSMASQ = "VIBEDPN_DIGEST_DNSMASQ"
+DIGEST_ADGUARD = "VIBEDPN_DIGEST_ADGUARD"
+DIGEST_WG_SERVER = "VIBEDPN_DIGEST_WG_SERVER"
+DIGEST_SERVICES = {
+    DIGEST_CORE: "core",
+    DIGEST_HOSTAPD: "hostapd",
+    DIGEST_DNSMASQ: "dnsmasq",
+    DIGEST_ADGUARD: "adguard",
+    DIGEST_WG_SERVER: "wg-server",
+}
+DIGEST_LENGTH = 16
+
+
+def config_digest(payload: object) -> str:
+    """A stable fingerprint of JSON-like data: the same sections give the same value on any box."""
+    text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:DIGEST_LENGTH]
+
+
+def recreated_services(previous: dict[str, str], current: dict[str, str]) -> list[str]:
+    """The services ``up`` recreates because their sections of config.yaml changed: a fingerprint
+    that was in the previous .env and differs now. A first start has nothing to compare with."""
+    return [
+        DIGEST_SERVICES[name]
+        for name, value in current.items()
+        if name in DIGEST_SERVICES and previous.get(name) not in (None, value)
+    ]
+
+
 PORT_MIN = 1
 PORT_MAX = 65535
 DEFAULT_SSH_PORT = 22
@@ -848,7 +883,59 @@ class Config(StrictModel):
             env["VIBEDPN_MYST_UDP_FROM"] = str(start)
             env["VIBEDPN_MYST_UDP_TO"] = str(end)
             env["VIBEDPN_MYST_TRAVERSAL"] = ",".join(t.value for t in self.provider.traversal)
+        env.update(self.config_digests())
         return env
+
+    def config_digests(self) -> dict[str, str]:
+        """A fingerprint per service of the ``config.yaml`` sections its start-time files come from.
+
+        core renders hostapd.conf, dnsmasq.conf, AdGuardHome.yaml and the tunnel server config only
+        when it starts, and applies the firewall and the base of the router there too. Nothing of
+        that changes a service in Compose's eyes, so ``up`` would leave them as they are. Each
+        service carries its fingerprint in its environment (compose.yaml): a changed section
+        recreates exactly core and the services reading its files, and nothing else — a new
+        Wi-Fi name does not restart DNS, a new DNS upstream does not drop the Wi-Fi clients.
+        Routing, devices, rules and lists are applied live through core and are not part of it.
+        """
+        network = self.network.model_dump(mode="json") if self.network is not None else None
+        lan = {key: value for key, value in network.items() if key != "wifi"} if network else None
+        wifi = (
+            {"lan_interface": network["lan_interface"], "wifi": network["wifi"]}
+            if network
+            else None
+        )
+        parts: dict[str, object] = {
+            DIGEST_HOSTAPD: wifi,
+            DIGEST_DNSMASQ: {"lan": lan, "dns": self.dns.enabled},
+            DIGEST_ADGUARD: {
+                "lan": lan,
+                "dns": self.dns.model_dump(mode="json"),
+                "ui": {"enabled": self.ui.enabled, "host_name": self.ui.host_name},
+            },
+            DIGEST_WG_SERVER: (
+                self.wg_server.model_dump(mode="json") if self.wg_server is not None else None
+            ),
+        }
+        parts[DIGEST_CORE] = {
+            **parts,
+            "network": network,
+            "firewall": self.firewall.model_dump(mode="json"),
+        }
+        return {name: config_digest(payload) for name, payload in parts.items()}
+
+    def digest_services(self) -> set[str]:
+        """The services with a fingerprint that this box actually runs: core always, the others by
+        their profile."""
+        profiles = set(self.compose_profiles())
+        by_profile = {
+            "hostapd": Profile.WIFI,
+            "dnsmasq": Profile.DHCP,
+            "adguard": Profile.DNS,
+            "wg-server": Profile.WG_SERVER,
+        }
+        return {"core"} | {
+            service for service, profile in by_profile.items() if profile in profiles
+        }
 
 
 class ConfigError(ValueError):

@@ -85,7 +85,7 @@ export const networkPage = generalLayout.lets
           {mutation.error && <p className="mt-2 text-sm text-destructive">{mutation.error.message}</p>}
           {network.restart_required && (
             <p className="mt-4 rounded-md border p-3 text-sm">
-              {t('network.saved', { command: 'sudo vibedpn restart', address: network.lan_address })}
+              {t('network.saved', { command: 'sudo vibedpn up', address: network.lan_address })}
             </p>
           )}
         </Section>
