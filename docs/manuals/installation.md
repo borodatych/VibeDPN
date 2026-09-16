@@ -336,9 +336,20 @@ sudo vibedpn update
 sudo vibedpn update --timer on
 ```
 
+### Изменения из панели без SSH
+
+Некоторые изменения из панели требуют `vibedpn up` на хосте — например, новый выход WireGuard: его контейнер
+должно создать хост, а у ядра доступа к Docker нет намеренно. Ядро оставляет запрос в
+`data/core/apply-request`, юнит `vibedpn-apply.path` видит его и запускает `vibedpn apply` (он делает `up`
+и пишет результат в `data/core/apply-result.json`, откуда его показывает панель). Юниты ставит и держит
+актуальными сама команда `sudo vibedpn up`; без systemd коробка работает без них, и изменение ждёт ручного
+`sudo vibedpn up`. Журнал применения — `journalctl -u vibedpn-apply`.
+
 ## Удалить
 
 ```bash
+sudo systemctl disable --now vibedpn-apply.path
+sudo rm -f /etc/systemd/system/vibedpn-apply.path /etc/systemd/system/vibedpn-apply.service
 sudo rm -rf /opt/vibedpn /usr/local/bin/vibedpn
 ```
 
