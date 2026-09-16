@@ -30,6 +30,7 @@ const navLinks = (t: T): NavItem[] => [
   { label: t('nav.rules'), to: routes.rules() },
   { label: t('nav.node'), to: routes.node() },
   { label: t('nav.network'), to: routes.network() },
+  { label: t('nav.journal'), to: routes.journal() },
 ]
 
 // Right of the header — depends on who's signed in.

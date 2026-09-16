@@ -11,6 +11,8 @@ import {
 } from '@/features/status/api'
 import { formatMyst } from '@/features/node/shared'
 import { summarizeStatus, type BoxStatus, type DpnStatus, type UplinkStatus } from '@/features/status/shared'
+import { eventListQuery } from '@/features/events/api'
+import { DROPS_WINDOW_HOURS, WIFI_DROPS_WARNING, wifiDrops } from '@/features/events/shared'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import type { T } from '@/modules/i18n/base'
@@ -243,6 +245,17 @@ const DpnCard = ({ dpn }: { dpn: DpnStatus }) => {
   )
 }
 
+/** Frequent Wi-Fi drops are worth a line under the headline; a few are normal and stay in the journal. */
+const WifiDropsNotice = () => {
+  const t = useT()
+  const events = eventListQuery.useQuery({ kind: 'wifi', hours: DROPS_WINDOW_HOURS }).data?.events ?? []
+  const drops = wifiDrops(events)
+  if (drops < WIFI_DROPS_WARNING) {
+    return null
+  }
+  return <p className="mt-3 text-sm text-warning">{t('status.wifiDrops', { count: drops })}</p>
+}
+
 export const homePage = generalLayout.lets
   .page('/')
   .head({
@@ -263,6 +276,7 @@ export const homePage = generalLayout.lets
             </Badge>
             <p className="font-accent text-lg">{t(summary.headline.key, summary.headline.params)}</p>
           </div>
+          <WifiDropsNotice />
         </Section>
         <RoutingControls status={status} />
         {status.dpn && <DpnCard dpn={status.dpn} />}
