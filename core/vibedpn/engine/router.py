@@ -416,6 +416,8 @@ def used_uplinks(config: Config) -> list[str]:
         for item in config.routing.channels():
             if item.via is DomainVia.DPN and item.country:
                 wanted.add(country_key(item.country))
+            elif item.via is DomainVia.WG and item.uplink:
+                wanted.add(wg_key(item.uplink))
             elif item.via in RULE_UPLINKS:
                 wanted.add(RULE_UPLINKS[item.via].value)
     if config.network is not None:
@@ -472,6 +474,8 @@ def smart_marks(config: Config) -> list[UplinkPolicy]:
     for item in config.routing.channels():
         if item.via is DomainVia.DPN and item.country:
             marks[channel_set(item)] = hex(table[country_key(item.country)].mark)
+        elif item.via is DomainVia.WG and item.uplink:
+            marks[channel_set(item)] = hex(table[wg_key(item.uplink)].mark)
         elif item.via in RULE_UPLINKS:
             marks[channel_set(item)] = hex(UPLINKS[RULE_UPLINKS[item.via]].mark)
     return [UplinkPolicy(name, mark) for name, mark in sorted(marks.items())]

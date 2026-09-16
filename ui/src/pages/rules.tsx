@@ -21,13 +21,16 @@ import {
 import {
   cdnCandidates,
   channelLabel,
+  channelText,
   listCopyText,
+  wgExitNames,
   withCdn,
   type DomainListView,
   type DomainRule,
   type JournalEntry,
   type RuleVia,
 } from '@/features/rules/shared'
+import { boxStatusQuery } from '@/features/status/api'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import type { T } from '@/modules/i18n/base'
@@ -35,11 +38,18 @@ import { useLanguage, useT } from '@/modules/i18n/use-t'
 import { formatDate } from '@/utils/date'
 import { useState } from 'react'
 
-const viaOptions = (t: T) => [
+const viaOptions = (t: T, exits: string[]) => [
   { value: 'vps', label: t('rules.via.vps') },
   { value: 'dpn', label: t('rules.via.dpn') },
+  // a WireGuard exit is offered only when the box has one
+  ...(exits.length > 0 ? [{ value: 'wg', label: t('rules.via.wg') }] : []),
   { value: 'direct', label: t('rules.via.direct') },
 ]
+
+const exitOptions = (exits: string[]) => exits.map((name) => ({ value: name, label: name }))
+
+/** The named WireGuard exits of the box, for the channel choice of rules and lists. */
+const useWgExits = () => wgExitNames(boxStatusQuery.useQuery().data?.status.uplinks ?? [])
 
 const SHOWN_QUERIES = 100
 
@@ -51,12 +61,18 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
   const removeRule = ruleRemoveMutation.useMutation()
   const [country, setCountry] = useState(rule.country ?? '')
   const t = useT()
+  const exits = useWgExits()
   const busy = setRule.isPending || removeRule.isPending
   const error = setRule.error ?? removeRule.error
 
   const save = async (change: Partial<DomainRule>) => {
     const next = { ...rule, ...change }
-    await setRule.mutateAsync({ ...next, country: next.via === 'dpn' ? next.country : null })
+    await setRule.mutateAsync({
+      ...next,
+      country: next.via === 'dpn' ? next.country : null,
+      // a rule switched to wg takes the first exit; the owner picks another in the next cell
+      uplink: next.via === 'wg' ? (next.uplink ?? exits.at(0) ?? null) : null,
+    })
     await ruleListQuery.refetchQuery()
   }
   const remove = async () => {
@@ -69,28 +85,37 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
       <TableCell className="font-mono text-sm">{rule.domain}</TableCell>
       <TableCell>
         <XSelect
-          options={viaOptions(t)}
+          options={viaOptions(t, exits)}
           value={rule.via}
           disabled={busy}
           onValueChange={(value) => void save({ via: String(value) as RuleVia })}
         />
       </TableCell>
       <TableCell>
-        <Input
-          value={country}
-          placeholder={t('rules.anyCountry')}
-          maxLength={2}
-          className="w-16 uppercase"
-          disabled={rule.via !== 'dpn' || busy}
-          aria-label={t('rules.exitCountryOf', { domain: rule.domain })}
-          onChange={(event) => setCountry(event.target.value.toUpperCase())}
-          onBlur={() => {
-            const code = country.trim() || null
-            if (code !== rule.country && (code === null || code.length === 2)) {
-              void save({ country: code })
-            }
-          }}
-        />
+        {rule.via === 'wg' ? (
+          <XSelect
+            options={exitOptions(exits)}
+            value={rule.uplink ?? ''}
+            disabled={busy}
+            onValueChange={(value) => void save({ uplink: String(value) })}
+          />
+        ) : (
+          <Input
+            value={country}
+            placeholder={t('rules.anyCountry')}
+            maxLength={2}
+            className="w-16 uppercase"
+            disabled={rule.via !== 'dpn' || busy}
+            aria-label={t('rules.exitCountryOf', { domain: rule.domain })}
+            onChange={(event) => setCountry(event.target.value.toUpperCase())}
+            onBlur={() => {
+              const code = country.trim() || null
+              if (code !== rule.country && (code === null || code.length === 2)) {
+                void save({ country: code })
+              }
+            }}
+          />
+        )}
       </TableCell>
       <TableCell>
         <XSwitch
@@ -136,11 +161,14 @@ const AddRule = () => {
   const t = useT()
   const [via, setVia] = useState<RuleVia>('vps')
   const [country, setCountry] = useState('')
+  const exits = useWgExits()
+  const [uplink, setUplink] = useState('')
   const add = async () => {
     await setRule.mutateAsync({
       domain,
       via,
       country: via === 'dpn' && country.trim().length === 2 ? country.trim() : null,
+      uplink: via === 'wg' ? uplink || exits[0] || null : null,
       learn: true,
       also: [],
     })
@@ -157,7 +185,14 @@ const AddRule = () => {
         aria-label={t('rules.site')}
         onChange={(event) => setDomain(event.target.value)}
       />
-      <XSelect options={viaOptions(t)} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
+      <XSelect options={viaOptions(t, exits)} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
+      {via === 'wg' && (
+        <XSelect
+          options={exitOptions(exits)}
+          value={uplink || exits[0] || ''}
+          onValueChange={(value) => setUplink(String(value))}
+        />
+      )}
       {via === 'dpn' && (
         <Input
           value={country}
@@ -187,11 +222,7 @@ const DomainListRow = ({ item }: { item: DomainListView }) => {
   return (
     <TableRow>
       <TableCell className="font-mono text-xs break-all">{item.url}</TableCell>
-      <TableCell className="text-sm">
-        {item.via === 'dpn' && item.country
-          ? t('rules.channel.dpnCountry', { country: item.country })
-          : t(`rules.channel.${item.via}`)}
-      </TableCell>
+      <TableCell className="text-sm">{channelText(item, t)}</TableCell>
       <TableCell className="text-sm">{listCopyText(item, t)}</TableCell>
       <TableCell className="text-xs whitespace-nowrap">
         {item.fetched_at === null ? t('common.none') : unixDate(item.fetched_at, language)}
@@ -219,11 +250,14 @@ const AddDomainList = () => {
   const t = useT()
   const [via, setVia] = useState<RuleVia>('vps')
   const [country, setCountry] = useState('')
+  const exits = useWgExits()
+  const [uplink, setUplink] = useState('')
   const add = async () => {
     await setList.mutateAsync({
       url,
       via,
       country: via === 'dpn' && country.trim().length === 2 ? country.trim() : null,
+      uplink: via === 'wg' ? uplink || exits[0] || null : null,
     })
     setUrl('')
     setCountry('')
@@ -238,7 +272,14 @@ const AddDomainList = () => {
         aria-label={t('lists.url')}
         onChange={(event) => setUrl(event.target.value)}
       />
-      <XSelect options={viaOptions(t)} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
+      <XSelect options={viaOptions(t, exits)} value={via} onValueChange={(value) => setVia(String(value) as RuleVia)} />
+      {via === 'wg' && (
+        <XSelect
+          options={exitOptions(exits)}
+          value={uplink || exits[0] || ''}
+          onValueChange={(value) => setUplink(String(value))}
+        />
+      )}
       {via === 'dpn' && (
         <Input
           value={country}

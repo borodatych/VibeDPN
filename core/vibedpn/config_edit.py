@@ -315,6 +315,8 @@ def set_domain_rule(path: Path, rule: DomainRule) -> tuple[Config, bool]:
         entry = CommentedMap([("domain", rule.domain), ("via", rule.via.value)])
         if rule.country is not None:
             entry["country"] = rule.country
+        if rule.uplink is not None:
+            entry["uplink"] = rule.uplink
         if not rule.learn:
             entry["learn"] = False
         if rule.also:
@@ -369,6 +371,8 @@ def set_domain_list(path: Path, item: DomainList) -> tuple[Config, bool]:
         entry = CommentedMap([("url", item.url), ("via", item.via.value)])
         if item.country is not None:
             entry["country"] = item.country
+        if item.uplink is not None:
+            entry["uplink"] = item.uplink
         for index, existing in enumerate(lists):
             if isinstance(existing, dict) and str(existing.get("url", "")) == item.url:
                 lists[index] = entry

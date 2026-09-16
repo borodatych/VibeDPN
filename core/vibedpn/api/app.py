@@ -489,6 +489,7 @@ def _rule_view(rule: DomainRule) -> DomainRuleView:
         domain=rule.domain,
         via=rule.via.value,
         country=rule.country,
+        uplink=rule.uplink,
         learn=rule.learn,
         also=list(rule.also),
     )
@@ -594,6 +595,7 @@ def _list_view(item: DomainList, lists: ListsStatus | None) -> DomainListView:
         url=item.url,
         via=item.via.value,
         country=item.country,
+        uplink=item.uplink,
         domains=0 if state is None else state.domains,
         fetched_at=None if state is None else state.fetched_at,
         error="" if state is None else state.error,

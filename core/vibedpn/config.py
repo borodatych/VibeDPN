@@ -352,20 +352,30 @@ class DomainVia(StrEnum):
 
     VPS = "vps"
     DPN = "dpn"
+    WG = "wg"  # a named WireGuard exit of upstreams.wg, named by `uplink`
     DIRECT = "direct"
 
 
 class DomainChannel(StrictModel):
     """Where the names of a site or of a whole list go in smart: an uplink, Mysterium in a country,
-    or direct. Sets, marks, uplinks and country consumers are built from channels."""
+    a named WireGuard exit, or direct. Sets, marks, uplinks and country consumers are built from
+    channels."""
 
     via: DomainVia
     country: str | None = None  # via dpn: the exit country; None: any
+    uplink: str | None = None  # via wg: the name of the exit in upstreams.wg
 
     @field_validator("country", mode="before")
     @classmethod
     def check_country(cls, value: object) -> str | None:
         return None if value is None else normalize_country(value)
+
+    @field_validator("uplink")
+    @classmethod
+    def check_uplink(cls, value: str | None) -> str | None:
+        if value is not None and not WG_UPLINK_NAME.fullmatch(value):
+            raise ValueError(f"{value!r} is not a name of upstreams.wg")
+        return value
 
     def subject(self) -> str:
         """What the owner calls this entry in a message."""
@@ -375,6 +385,10 @@ class DomainChannel(StrictModel):
     def check_country_channel(self) -> Self:
         if self.country is not None and self.via is not DomainVia.DPN:
             raise ValueError(f"{self.subject()}: a country is only chosen for via dpn")
+        if self.via is DomainVia.WG and self.uplink is None:
+            raise ValueError(f"{self.subject()}: via wg names its exit in uplink")
+        if self.uplink is not None and self.via is not DomainVia.WG:
+            raise ValueError(f"{self.subject()}: an uplink is only named for via wg")
         return self
 
 
@@ -806,6 +820,13 @@ class Config(StrictModel):
             for item in channels
             if item.via in uplinks and not self.upstreams.is_enabled(uplinks[item.via])
         ]
+        errors.extend(
+            f"routing: {item.subject()} goes via wg {item.uplink} but upstreams.wg has no enabled"
+            " exit of that name"
+            for item in channels
+            if item.via is DomainVia.WG
+            and not self.upstreams.is_key_enabled(f"{WG_KEY_PREFIX}{item.uplink}")
+        )
         countries = {
             item.country
             for item in channels

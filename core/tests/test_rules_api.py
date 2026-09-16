@@ -35,6 +35,7 @@ def test_a_rule_is_added_replaced_listed_and_removed(tmp_path: Path) -> None:
         "domain": "kinopoisk.ru",
         "via": "dpn",
         "country": None,
+        "uplink": None,
         "learn": True,
         "also": ["strm.yandex.net"],
     }

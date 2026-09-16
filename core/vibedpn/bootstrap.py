@@ -547,7 +547,9 @@ def country_passphrase_file(country: str) -> str:
 def wg_uplink_secrets(config: Config) -> list[str]:
     """The peer file of every named WireGuard exit; the owner supplies these, nothing generates
     them — a configuration file of a provider is the whole uplink (decision 23)."""
-    return [f"wg-{name}.conf" for name in sorted(config.upstreams.wg)]
+    return [
+        f"wg-{name}.conf" for name, uplink in sorted(config.upstreams.wg.items()) if uplink.enabled
+    ]
 
 
 def country_secrets(config: Config) -> list[str]:

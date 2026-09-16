@@ -87,6 +87,9 @@ routing:
 {% if rule.country %}
       country: {{ rule.country }}
 {% endif %}
+{% if rule.uplink %}
+      uplink: {{ rule.uplink }}
+{% endif %}
 {% if not rule.learn %}
       learn: false
 {% endif %}
@@ -110,6 +113,9 @@ routing:
       via: {{ item.via.value }}
 {% if item.country %}
       country: {{ item.country }}
+{% endif %}
+{% if item.uplink %}
+      uplink: {{ item.uplink }}
 {% endif %}
 {% endfor %}
 {% else %}

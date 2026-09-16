@@ -172,10 +172,12 @@ const table = {
   'rules.countryRestart': 'A new Mysterium country starts working after vibedpn up.',
   'rules.via.vps': 'Through the VPS',
   'rules.via.dpn': 'Through Mysterium',
+  'rules.via.wg': 'Through a WireGuard exit',
   'rules.via.direct': 'Direct',
   'rules.channel.vps': 'VPS',
   'rules.channel.dpn': 'Mysterium',
   'rules.channel.dpnCountry': 'Mysterium {country}',
+  'rules.channel.wg': 'WireGuard {uplink}',
   'rules.channel.direct': 'direct',
   'rules.channel.ruleDirect': 'direct (rule)',
 

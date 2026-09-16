@@ -1215,7 +1215,7 @@ def rule_forget(
 
 def render_domain_list(item: DomainListView) -> str:
     """One line of `vibedpn lists show`: the channel, the domains in use and their age."""
-    country = f" {item.country}" if item.country else ""
+    country = f" {item.country or item.uplink}" if item.country or item.uplink else ""
     if item.fetched_at is None:
         copy = "no copy yet" if item.error else "fetching"
     else:
@@ -1239,17 +1239,20 @@ def lists_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
 @lists_app.command("add")
 def lists_add(
     url: Annotated[str, typer.Argument(help="An http(s) URL of a text list of domains.")],
-    via: Annotated[DomainVia, typer.Argument(help="vps | dpn | direct.")],
+    via: Annotated[DomainVia, typer.Argument(help="vps | dpn | wg | direct.")],
     country: Annotated[
         str | None, typer.Option("--country", help="Exit country of via dpn (ISO code).")
+    ] = None,
+    uplink: Annotated[
+        str | None, typer.Option("--uplink", help="The exit of via wg: a name of upstreams.wg.")
     ] = None,
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
     """Give every domain of a list a channel; a list with that URL gets the new channel."""
     config = _lan_box(box_dir)
-    update = DomainListUpdate(url=url, via=via.value, country=country)
+    update = DomainListUpdate(url=url, via=via.value, country=country, uplink=uplink)
     item = _core_call(lambda: core_api.set_domain_list(config.api.port, update))
-    country_text = f" {item.country}" if item.country else ""
+    country_text = f" {item.country or item.uplink}" if item.country or item.uplink else ""
     typer.echo(f"{item.url}: via {item.via}{country_text}, core fetches it within a minute")
 
 
@@ -1285,9 +1288,12 @@ def rule_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
 @rule_app.command("add")
 def rule_add(
     domain: Annotated[str, typer.Argument(help="The site; its subdomains follow it.")],
-    via: Annotated[DomainVia, typer.Argument(help="vps | dpn | direct.")],
+    via: Annotated[DomainVia, typer.Argument(help="vps | dpn | wg | direct.")],
     country: Annotated[
         str | None, typer.Option("--country", help="Exit country of via dpn (ISO code).")
+    ] = None,
+    uplink: Annotated[
+        str | None, typer.Option("--uplink", help="The exit of via wg: a name of upstreams.wg.")
     ] = None,
     learn: Annotated[
         bool, typer.Option("--learn/--no-learn", help="CDNs the site calls follow it.")
@@ -1299,9 +1305,11 @@ def rule_add(
 ) -> None:
     """Give a site its channel in routing.mode smart; a rule for the same domain is replaced."""
     config = _lan_box(box_dir)
-    update = DomainRuleUpdate(via=via.value, country=country, learn=learn, also=also or [])
+    update = DomainRuleUpdate(
+        via=via.value, country=country, uplink=uplink, learn=learn, also=also or []
+    )
     rule = _core_call(lambda: core_api.set_rule(config.api.port, domain, update))
-    country_text = f" {rule.country}" if rule.country else ""
+    country_text = f" {rule.country or rule.uplink}" if rule.country or rule.uplink else ""
     typer.echo(f"{rule.domain}: via {rule.via}{country_text}, applied")
 
 

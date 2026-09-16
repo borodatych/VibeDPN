@@ -43,6 +43,7 @@ export const ruleSetMutation = root.lets
       domain: z.string().trim().min(1),
       via: z.enum(RULE_VIAS),
       country: z.string().length(2).nullable(),
+      uplink: z.string().min(1).nullable(),
       learn: z.boolean(),
       also: z.array(z.string().min(1)),
     }),
@@ -139,6 +140,7 @@ export const domainListSetMutation = root.lets
       url: z.string().trim().url(),
       via: z.enum(RULE_VIAS),
       country: z.string().length(2).nullable(),
+      uplink: z.string().min(1).nullable(),
     }),
   )
   .loader(async ({ input }) => {

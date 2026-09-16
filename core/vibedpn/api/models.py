@@ -181,8 +181,9 @@ class NetworkUpdate(BaseModel):
 class DomainRuleUpdate(BaseModel):
     """The channel of a site in routing.mode smart; the domain comes from the path."""
 
-    via: Literal["vps", "dpn", "direct"]
+    via: Literal["vps", "dpn", "wg", "direct"]
     country: str | None = None
+    uplink: str | None = None  # via wg: the name of the exit in upstreams.wg
     learn: bool = True
     also: list[str] = []
 
@@ -191,6 +192,7 @@ class DomainRuleView(BaseModel):
     domain: str
     via: str
     country: str | None
+    uplink: str | None
     learn: bool
     also: list[str]
 
@@ -199,14 +201,16 @@ class DomainListUpdate(BaseModel):
     """A ready domain list by URL and the channel of all its domains."""
 
     url: str
-    via: Literal["vps", "dpn", "direct"]
+    via: Literal["vps", "dpn", "wg", "direct"]
     country: str | None = None
+    uplink: str | None = None  # via wg: the name of the exit in upstreams.wg
 
 
 class DomainListView(BaseModel):
     url: str
     via: str
     country: str | None
+    uplink: str | None
     domains: int  # 0 until core has a first copy
     fetched_at: float | None  # unix seconds of the copy in use
     error: str  # why the copy in use is not newer, or why there is none

@@ -5,13 +5,40 @@ export type DomainRule = {
   domain: string
   via: RuleVia
   country: string | null
+  /** via wg: the name of the exit in upstreams.wg */
+  uplink: string | null
   learn: boolean
   also: string[]
 }
 
-export type RuleVia = 'vps' | 'dpn' | 'direct'
+export type RuleVia = 'vps' | 'dpn' | 'wg' | 'direct'
 
-export const RULE_VIAS = ['vps', 'dpn', 'direct'] as const
+export const RULE_VIAS = ['vps', 'dpn', 'wg', 'direct'] as const
+
+const WG_KEY_PREFIX = 'wg-'
+
+/**
+ * The named WireGuard exits of the box, from the uplink keys of `GET /status` (`wg-<name>`).
+ *
+ * @tags rules
+ */
+export const wgExitNames = (uplinks: { name: string }[]): string[] =>
+  uplinks
+    .map((uplink) => uplink.name)
+    .filter((name) => name.startsWith(WG_KEY_PREFIX))
+    .map((name) => name.slice(WG_KEY_PREFIX.length))
+    .sort()
+
+/** The channel of a rule or a list as the owner reads it: `Mysterium DE`, `WireGuard proton`, `VPS`. */
+export const channelText = (item: { via: RuleVia; country: string | null; uplink: string | null }, t: T): string => {
+  if (item.via === 'dpn' && item.country) {
+    return t('rules.channel.dpnCountry', { country: item.country })
+  }
+  if (item.via === 'wg' && item.uplink) {
+    return t('rules.channel.wg', { uplink: item.uplink })
+  }
+  return t(`rules.channel.${item.via}`)
+}
 
 /** One DNS query of a device from `GET /dns/journal/{client}`; `time` in unix seconds. */
 export type JournalEntry = {
@@ -99,6 +126,11 @@ export const channelLabel = (channel: string, t: T): string => {
   if (channel === 'smart_vps') {
     return t('rules.channel.vps')
   }
+  // core spells '-' of an exit name as '_' in the set name; a name never holds '_' itself
+  const wg = /^smart_wg_(\w+)$/.exec(channel)
+  if (wg) {
+    return t('rules.channel.wg', { uplink: wg[1].replaceAll('_', '-') })
+  }
   const dpn = /^smart_dpn_(\w+)$/.exec(channel)
   if (dpn) {
     return dpn[1] === 'any' ? t('rules.channel.dpn') : t('rules.channel.dpnCountry', { country: dpn[1].toUpperCase() })
@@ -111,6 +143,7 @@ export type DomainListView = {
   url: string
   via: RuleVia
   country: string | null
+  uplink: string | null
   /** 0 until core has a first copy */
   domains: number
   /** unix seconds of the copy in use */

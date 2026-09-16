@@ -1,8 +1,10 @@
 import {
   cdnCandidates,
   channelLabel,
+  channelText,
   listCopyText,
   ruleOf,
+  wgExitNames,
   withCdn,
   type DomainRule,
   type JournalEntry,
@@ -14,10 +16,11 @@ const kinopoisk: DomainRule = {
   domain: 'kinopoisk.ru',
   via: 'direct',
   country: null,
+  uplink: null,
   learn: true,
   also: ['kp-cdn.net'],
 }
-const zdf: DomainRule = { domain: 'zdf.de', via: 'dpn', country: 'DE', learn: false, also: [] }
+const zdf: DomainRule = { domain: 'zdf.de', via: 'dpn', country: 'DE', uplink: null, learn: false, also: [] }
 const rules = [kinopoisk, zdf]
 
 const entry = (time: number, name: string, channel = 'direct'): JournalEntry => ({
@@ -83,6 +86,7 @@ describe('rules', () => {
       url: 'https://l.example/a.txt',
       via: 'vps' as const,
       country: null,
+      uplink: null,
       domains: 0,
       fetched_at: null,
       error: '',
@@ -90,5 +94,16 @@ describe('rules', () => {
     expect(listCopyText(list, baseT)).toBe('fetching…')
     expect(listCopyText({ ...list, error: 'HTTP 503' }, baseT)).toBe('no copy yet')
     expect(listCopyText({ ...list, domains: 12, fetched_at: 1_700_000_000 }, baseT)).toBe('12 domains')
+  })
+
+  test('a WireGuard exit is named by its channel, its set and the uplink keys of the status', () => {
+    expect(wgExitNames([{ name: 'vps' }, { name: 'wg-proton' }, { name: 'dpn-de' }, { name: 'wg-my-vps' }])).toEqual([
+      'my-vps',
+      'proton',
+    ])
+    expect(channelText({ via: 'wg', country: null, uplink: 'proton' }, baseT)).toBe('WireGuard proton')
+    expect(channelText({ via: 'dpn', country: 'DE', uplink: null }, baseT)).toBe('Mysterium DE')
+    // core spells '-' as '_' in the set name; the label gives the name back as the owner wrote it
+    expect(channelLabel('smart_wg_my_vps', baseT)).toBe('WireGuard my-vps')
   })
 })
