@@ -57,6 +57,16 @@ ash-speed.hetzner.com) не соединяется вовсе.
 - Проверено на коробке в отдельной сети Docker: клиент с маршрутом по умолчанию через шлюз открыл
   rutracker, lostfilm, rutor, web.telegram.org, TCP к дата-центру Telegram, адрес выхода — узел Tor.
 
+## Готовые списки заблокированного
+
+С коробки (с российского адреса) 2026-09-17; с Mac через зарубежный выход Deeper все три адреса не ответили:
+- https://community.antifilter.download/list/domains.lst — 7 КБ, 486 строк, домен в строке; `parse_list` ядра
+  берёт 485 доменов; внутри rutracker.org/.ru, lostfilm.tv/.today/.win/.run, nnmclub.to, rutor.info/.is/.org,
+  kinozal.tv/.me, 4pda.to, instagram.com. Годится для `routing.lists` без доработок.
+- https://antifilter.download/list/domains.lst — 31 МБ, 1.65 млн строк: больше предела `MAX_LIST_BYTES` (16 МиБ).
+- https://community.antifilter.download/list/community.lst — 894 записи вида `a.b.c.d/32`: сети, не домены;
+  подошли бы для скачиваемых списков сетей, которых у `routing.networks` пока нет.
+
 ## Грабли стенда на коробке
 
 - Новая сеть Docker на коробке не выпускает контейнер в интернет (`apt-get update` не прошёл):

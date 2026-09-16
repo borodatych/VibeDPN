@@ -60,7 +60,7 @@
 
 - [snowflake.md](tor/snowflake.md) — как Ростелеком режет цели (rutracker и lostfilm по имени с замерзанием после ~20 КБ,
   Telegram и rutor по адресу, ответы Mysterium через ретранслятор замирают на 16 КБ), obfs4-мосты Tor Browser не проходят,
-  Snowflake проходит (~145 КБ/с), пакеты trixie без lyrebird/webtunnel, прозрачный шлюз в Tor в netns контейнера
+  Snowflake проходит (~145 КБ/с), пакеты trixie без lyrebird/webtunnel, прозрачный шлюз в Tor в netns контейнера; общественный список antifilter (485 доменов) подходит `routing.lists`, открывается только с российского адреса
 
 ## platform
 
