@@ -24,6 +24,7 @@ from vibedpn.api.models import (
     DpnCountryUpdate,
     DpnCountryView,
     DpnStatus,
+    EventView,
     HostInterface,
     JournalDeviceView,
     JournalEntryView,
@@ -38,6 +39,7 @@ from vibedpn.api.models import (
     UplinkStatus,
     VpsLanAccessUpdate,
     VpsLanAccessView,
+    WifiClientView,
 )
 from vibedpn.api.smart import SmartLoop
 from vibedpn.api.state import BoxState
@@ -79,6 +81,7 @@ from vibedpn.engine.consumer import (
     countries,
 )
 from vibedpn.engine.devices import DeviceError, DeviceStore, SeenDevice
+from vibedpn.engine.events import DEFAULT_LIMIT, EventError, EventKind, EventStore
 from vibedpn.engine.learned import LearnedError
 from vibedpn.engine.myst import MystError, ProviderStats, TequilaClient, provider_stats
 from vibedpn.engine.router import (
@@ -104,6 +107,7 @@ from vibedpn.engine.wg import (
     read_wg_dump,
     remove_peer,
 )
+from vibedpn.engine.wifi import HostapdControl, Station, WifiError
 
 StatsSource = Callable[[], ProviderStats]
 RoutingReader = Callable[[Config], RoutingFacts]
@@ -197,6 +201,85 @@ def _unseen_views(seen: list[SeenDevice], configured: list[DeviceConfig]) -> lis
         if (item.mac is not None and item.mac not in macs)
         or (item.mac is None and item.ip not in ips)
     ]
+
+
+MAX_EVENT_LIMIT = 5000
+NO_JOURNAL = "this box keeps no event journal: it routes no LAN"
+NO_ACCESS_POINT = "this box runs no access point (network.wifi)"
+
+WifiStations = Callable[[str], list[Station]]
+
+
+def read_stations(interface: str) -> list[Station]:
+    """The clients of the access point now, asked over its control socket."""
+    with HostapdControl(interface) as control:
+        return control.stations()
+
+
+def _add_event_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    events: EventStore | None,
+    device_store: DeviceStore | None,
+    wifi_stations: WifiStations,
+) -> None:
+    """``/events``: the journal of the box; ``/wifi/clients``: who is on the access point now."""
+
+    @application.get("/events", response_model=list[EventView])
+    def list_events(
+        kind: str | None = None, since: float | None = None, limit: int = DEFAULT_LIMIT
+    ) -> list[EventView]:
+        if events is None:
+            raise HTTPException(status_code=404, detail=NO_JOURNAL)
+        try:
+            wanted = None if kind is None else EventKind(kind)
+        except ValueError:
+            known = ", ".join(item.value for item in EventKind)
+            raise HTTPException(status_code=422, detail=f"kind is one of: {known}") from None
+        try:
+            found = events.events(
+                kind=wanted, since=since, limit=min(max(limit, 1), MAX_EVENT_LIMIT)
+            )
+        except EventError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return [
+            EventView(
+                time=item.time,
+                kind=item.kind.value,
+                subject=item.subject,
+                action=item.action.value,
+                detail=item.detail,
+            )
+            for item in found
+        ]
+
+    @application.get("/wifi/clients", response_model=list[WifiClientView])
+    def wifi_clients() -> list[WifiClientView]:
+        box = current()
+        if box is None or box.network is None or box.network.wifi is None:
+            raise HTTPException(status_code=404, detail=NO_ACCESS_POINT)
+        try:
+            stations = wifi_stations(box.network.lan_interface)
+        except WifiError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        names: dict[str, str | None] = {}
+        if device_store is not None:
+            try:
+                names = {seen.mac: seen.hostname for seen in device_store.devices()}
+            except DeviceError:
+                names = {}
+        return [
+            WifiClientView(
+                mac=station.mac,
+                name=names.get(station.mac),
+                connected_seconds=station.connected_seconds,
+                signal_dbm=station.signal_dbm,
+                inactive_ms=station.inactive_ms,
+                rx_bytes=station.rx_bytes,
+                tx_bytes=station.tx_bytes,
+            )
+            for station in stations
+        ]
 
 
 def _add_device_routes(
@@ -740,6 +823,8 @@ def create_app(
     interfaces_source: InterfacesSource = _host_interfaces,
     smart: SmartLoop | None = None,
     lists: ListsStatus | None = None,
+    events: EventStore | None = None,
+    wifi_stations: WifiStations | None = None,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -791,6 +876,7 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     _add_device_routes(application, current, state, device_store)
+    _add_event_routes(application, current, events, device_store, wifi_stations or read_stations)
 
     @application.get("/peers", response_model=list[PeerView])
     def peers() -> list[PeerView]:

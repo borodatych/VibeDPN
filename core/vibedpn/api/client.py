@@ -22,6 +22,7 @@ from vibedpn.api.models import (
     DomainRuleUpdate,
     DomainRuleView,
     DpnCountryView,
+    EventView,
     JournalEntryView,
     LearnedView,
     PeerCreate,
@@ -29,6 +30,7 @@ from vibedpn.api.models import (
     PeerView,
     RoutingUpdate,
     RoutingView,
+    WifiClientView,
 )
 from vibedpn.config import DevicePolicy, RoutingMode
 from vibedpn.engine.myst import STATS_DEADLINE_SECONDS, ProviderStats
@@ -400,3 +402,49 @@ def remove_domain_list(port: int, url: str, transport: httpx.BaseTransport | Non
         transport=transport,
         error=RuleRequestError,
     )
+
+
+class EventRequestError(RuntimeError):
+    """Core refused or failed a journal or Wi-Fi request; the text is its ``detail``."""
+
+
+EVENT_LIST: TypeAdapter[list[EventView]] = TypeAdapter(list[EventView])
+WIFI_CLIENT_LIST: TypeAdapter[list[WifiClientView]] = TypeAdapter(list[WifiClientView])
+
+
+def list_events(
+    port: int,
+    kind: str | None = None,
+    since: float | None = None,
+    limit: int | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> list[EventView]:
+    query = "&".join(
+        f"{key}={quote(str(value), safe='')}"
+        for key, value in (("kind", kind), ("since", since), ("limit", limit))
+        if value is not None
+    )
+    path = f"/events?{query}" if query else "/events"
+    response = _peer_request(
+        port, "GET", path, httpx.codes.OK, transport=transport, error=EventRequestError
+    )
+    try:
+        return EVENT_LIST.validate_python(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise EventRequestError(
+            f"core answered something that is not an event list ({VERSION_HINT})"
+        ) from exc
+
+
+def list_wifi_clients(
+    port: int, transport: httpx.BaseTransport | None = None
+) -> list[WifiClientView]:
+    response = _peer_request(
+        port, "GET", "/wifi/clients", httpx.codes.OK, transport=transport, error=EventRequestError
+    )
+    try:
+        return WIFI_CLIENT_LIST.validate_python(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise EventRequestError(
+            f"core answered something that is not a Wi-Fi client list ({VERSION_HINT})"
+        ) from exc

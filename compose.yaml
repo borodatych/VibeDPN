@@ -35,6 +35,9 @@ services:
       - ./data/dnsmasq:/etc/vibedpn/dnsmasq
       # core renders hostapd.conf of the access point with its passphrase (engine/hostapd.py).
       - ./data/hostapd:/etc/vibedpn/hostapd
+      # hostapd's control socket: core journals Wi-Fi events and lists clients (engine/wifi.py).
+      # /run, not ./data: a socket is runtime state, gone at reboot, and never belongs in a backup.
+      - /run/vibedpn/hostapd:/run/vibedpn/hostapd
     healthcheck:
       test:
         - CMD
@@ -366,6 +369,8 @@ services:
         condition: service_healthy
     volumes:
       - ./data/hostapd:/var/lib/vibedpn-hostapd:ro
+      # ctrl_interface of hostapd.conf; core attaches to the socket from the other side.
+      - /run/vibedpn/hostapd:/var/run/hostapd
 
   # DHCP of gateway mode (network.mode gateway only: the profile dhcp never runs next to the DHCP
   # server of an ISP router). Host network on the LAN interface; the config comes from core.

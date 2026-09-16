@@ -32,6 +32,9 @@ SAE_PWE_BOTH = 2
 # drops stations on low ack; 802.11n with WMM and no low-ack kick made that minutes, not seconds
 # (docs/knowledge/linux/hostapdConfigCheck.md).
 STABLE_AP_LINES = ("ieee80211n=1", "wmm_enabled=1", "disassoc_low_ack=0")
+# The control socket core reads events and clients from (engine/wifi.py). The directory is the one
+# of the example hostapd.conf of the package; compose.yaml shares it with core. Group 0: root only.
+CTRL_INTERFACE_LINES = ("ctrl_interface=/var/run/hostapd", "ctrl_interface_group=0")
 
 
 class HostapdError(RuntimeError):
@@ -52,6 +55,7 @@ def hostapd_conf(config: Config, passphrase: str) -> str | None:
         "# Rendered by vibedpn core from config.yaml and secrets/wifi-passphrase at every start.",
         f"interface={network.lan_interface}",
         "driver=nl80211",
+        *CTRL_INTERFACE_LINES,
         f"ssid={wifi.ssid}",
         f"country_code={wifi.country}",
         f"hw_mode={HW_MODES[wifi.band]}",

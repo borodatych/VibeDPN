@@ -236,3 +236,25 @@ class LearnedView(BaseModel):
     first_seen: float
     last_seen: float
     hits: int
+
+
+class EventView(BaseModel):
+    """One entry of the event journal: codes and numbers, the phrase is built by the reader."""
+
+    time: float  # unix seconds
+    kind: str  # wifi | uplink
+    subject: str  # a client MAC or the interface for wifi, an uplink key for uplink
+    action: str  # engine/events.py: EventAction
+    detail: dict[str, int | float | str]
+
+
+class WifiClientView(BaseModel):
+    """A client connected to the access point now, as hostapd reports it."""
+
+    mac: str
+    name: str | None  # the host name discovery knows for this MAC
+    connected_seconds: int
+    signal_dbm: int | None
+    inactive_ms: int | None
+    rx_bytes: int | None
+    tx_bytes: int | None

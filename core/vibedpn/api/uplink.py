@@ -15,6 +15,8 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
+from vibedpn.api.journal import Journal, ignore_event
+from vibedpn.engine.events import Event, EventAction, EventKind
 from vibedpn.engine.probe import ping
 from vibedpn.engine.router import RouterError, Uplink, set_gateway_route
 
@@ -56,6 +58,7 @@ async def watch_uplink(
     sleep: Sleep = asyncio.sleep,
     check_seconds: float = UPLINK_CHECK_SECONDS,
     report: Report = _ignore,
+    journal: Journal = ignore_event,
 ) -> None:
     """Probe the gateway forever and set the route on every round: ``ip route replace`` is
     idempotent, so a route removed behind the watcher's back (a recreated bridge, a manual flush)
@@ -86,6 +89,8 @@ async def watch_uplink(
             if alive != logged_state:
                 state = "answers; LAN traffic goes through it" if alive else "does not answer"
                 _log(f"uplink {upstream} gateway {gateway} {state}")
+                action = EventAction.GATEWAY_ANSWERS if alive else EventAction.GATEWAY_SILENT
+                journal(Event(time.time(), EventKind.UPLINK, upstream, action))
                 logged_state = alive
         report(UplinkState(alive, time.time(), error))
         await sleep(check_seconds)
@@ -98,10 +103,15 @@ class UplinkWatchers:
     ``run`` owns the tasks on the event loop; ``sync`` may be called from a request thread and
     hands the new set over to the loop."""
 
-    def __init__(self, uplinks: Mapping[str, Uplink], watch: Watch | None = None) -> None:
+    def __init__(
+        self,
+        uplinks: Mapping[str, Uplink],
+        watch: Watch | None = None,
+        journal: Journal = ignore_event,
+    ) -> None:
         self._wanted = dict(uplinks)
         self._watch: Watch = watch or (
-            lambda key, uplink, report: watch_uplink(key, uplink, report=report)
+            lambda key, uplink, report: watch_uplink(key, uplink, report=report, journal=journal)
         )
         self._tasks: dict[str, tuple[Uplink, asyncio.Task[None]]] = {}
         # Written by the watchers on the loop, read by request threads; each value is replaced

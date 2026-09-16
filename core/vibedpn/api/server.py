@@ -17,11 +17,13 @@ from pydantic import ValidationError
 
 from vibedpn.api.app import create_app
 from vibedpn.api.consumer import ConsumerStatus, consumer_round, watch_consumer
+from vibedpn.api.journal import Journal, ignore_event, store_journal
 from vibedpn.api.lists import ListsStatus, watch_lists
 from vibedpn.api.smart import DnsJournal, SmartLoop, watch_querylog
 from vibedpn.api.state import BoxState
 from vibedpn.api.tunnel import run_servers
 from vibedpn.api.uplink import UplinkWatchers
+from vibedpn.api.wifi import watch_wifi
 from vibedpn.config import Config, ConfigError, load_config
 from vibedpn.engine import hostapd
 from vibedpn.engine.adguard import (
@@ -33,6 +35,8 @@ from vibedpn.engine.adguard import (
 from vibedpn.engine.devices import DB_FILE, DeviceError, DeviceStore
 from vibedpn.engine.dnsmasq import DnsmasqError, core_dir, ensure_dnsmasq
 from vibedpn.engine.domainlists import LISTS_DIR, ListCache, http_fetch, list_client
+from vibedpn.engine.events import DB_FILE as EVENTS_FILE
+from vibedpn.engine.events import EventError, EventStore
 from vibedpn.engine.learned import LEARNED_FILE, LearnedError, LearnedStore
 from vibedpn.engine.resolver import (
     UPSTREAM_TIMEOUT_SECONDS,
@@ -145,14 +149,8 @@ def main() -> None:
                 f"vibedpn-core: peer {moved.name} moved from {moved.old} to {moved.new};"
                 f" run `vibedpn peer export {moved.name}` for its home box\n"
             )
-    devices = None
-    if config.network is not None:
-        try:
-            devices = DeviceStore(data_dir / DB_FILE)
-        except DeviceError as exc:
-            sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
-            raise SystemExit(os.EX_CONFIG) from None
-    watchers = _watchers(config, uplinks)
+    devices, events, journal = _lan_stores(config, data_dir)
+    watchers = _watchers(config, uplinks, journal)
     box_state, resolver, smart, lists = _box_state(
         config, config_path, watchers, secrets_dir, data_dir
     )
@@ -166,6 +164,7 @@ def main() -> None:
         consumer=consumer,
         smart=smart,
         lists=lists,
+        events=events,
     )
     run_servers(
         config,
@@ -177,6 +176,8 @@ def main() -> None:
             *([partial(serve_resolver, resolver)] if resolver is not None else []),
             *([partial(watch_querylog, smart)] if smart is not None else []),
             *_list_task(box_state, resolver, lists, data_dir),
+            # returns at once on a box without network.wifi
+            *([partial(watch_wifi, config, journal)] if events is not None else []),
         ],
     )
 
@@ -301,7 +302,22 @@ def _smart_loop(
     )
 
 
-def _watchers(config: Config, uplinks: Sequence[str]) -> UplinkWatchers:
-    """A watcher for every uplink the router just put in use."""
+def _lan_stores(
+    config: Config, data_dir: Path
+) -> tuple[DeviceStore | None, EventStore | None, Journal]:
+    """The device store and the event journal of a box with a LAN; nothing to keep otherwise."""
+    if config.network is None:
+        return None, None, ignore_event
+    try:
+        devices = DeviceStore(data_dir / DB_FILE)
+        events = EventStore(data_dir / EVENTS_FILE)
+    except (DeviceError, EventError) as exc:
+        sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
+        raise SystemExit(os.EX_CONFIG) from None
+    return devices, events, store_journal(events)
+
+
+def _watchers(config: Config, uplinks: Sequence[str], journal: Journal) -> UplinkWatchers:
+    """A watcher for every uplink the router just put in use; state changes go to the journal."""
     table = uplink_table(config)
-    return UplinkWatchers({key: table[key] for key in uplinks})
+    return UplinkWatchers({key: table[key] for key in uplinks}, journal=journal)

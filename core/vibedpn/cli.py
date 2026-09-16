@@ -103,6 +103,7 @@ from vibedpn.engine.hostapd import (
     write_passphrase,
 )
 from vibedpn.engine.myst import render_stats
+from vibedpn.event_view import client_line, event_line
 from vibedpn.tunnel_view import qr_code, render_peers
 
 EXIT_USER_ERROR = 1
@@ -677,6 +678,35 @@ def upstream(
     _switch_routing(box_dir, upstream=value)
 
 
+EVENTS_DEFAULT_HOURS = 24.0
+EVENTS_DEFAULT_LIMIT = 200
+
+
+@app.command()
+def events(
+    kind: Annotated[
+        str | None, typer.Option("--kind", help="Only this kind: wifi or uplink.")
+    ] = None,
+    hours: Annotated[
+        float, typer.Option("--hours", help="How far back to look, in hours.")
+    ] = EVENTS_DEFAULT_HOURS,
+    limit: Annotated[
+        int, typer.Option("--limit", help="At most this many events, newest first.")
+    ] = EVENTS_DEFAULT_LIMIT,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """The event journal of the box: Wi-Fi clients coming and going, uplinks up and down."""
+    config = _lan_box(box_dir)
+    since = time.time() - hours * 3600
+    found = _core_call(
+        lambda: core_api.list_events(config.api.port, kind=kind, since=since, limit=limit)
+    )
+    if not found:
+        typer.echo(f"no events in the last {hours:g} h")
+    for item in reversed(found):  # oldest first reads like a log
+        typer.echo(event_line(item))
+
+
 uplink_app = typer.Typer(
     help="Own exits by a ready WireGuard file, one per name (docs/manuals/wgUplink.md).",
     no_args_is_help=True,
@@ -751,6 +781,17 @@ dpn_app = typer.Typer(
 app.add_typer(dpn_app, name="dpn")
 wifi_app = typer.Typer(help="The Wi-Fi access point of gateway mode.", no_args_is_help=True)
 app.add_typer(wifi_app, name="wifi")
+
+
+@wifi_app.command("clients")
+def wifi_clients(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Who is on the access point now, for how long, and at what signal."""
+    config = _lan_box(box_dir)
+    clients = _core_call(lambda: core_api.list_wifi_clients(config.api.port))
+    if not clients:
+        typer.echo("no Wi-Fi clients connected")
+    for client in clients:
+        typer.echo(client_line(client))
 
 
 @wifi_app.command("show")
@@ -1031,7 +1072,12 @@ def _core_call(call: Callable[[], T]) -> T:
         return call()
     except CoreUnreachableError:
         raise _fail("core is not running; start the box with `vibedpn up`") from None
-    except (PeerRequestError, DeviceRequestError, core_api.RuleRequestError) as exc:
+    except (
+        PeerRequestError,
+        DeviceRequestError,
+        core_api.RuleRequestError,
+        core_api.EventRequestError,
+    ) as exc:
         raise _fail(str(exc)) from None
 
 
