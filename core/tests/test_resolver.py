@@ -20,6 +20,7 @@ from vibedpn.engine.resolver import (
     channel_set,
     fill_script,
     smart_set_names,
+    steerable,
 )
 from vibedpn.engine.router import router_ruleset
 
@@ -93,6 +94,24 @@ def test_a_rule_name_fills_its_set_with_a_capped_ttl() -> None:
     assert response.answer[0].ttl == MAX_ANSWER_TTL
     assert nft.calls == [
         fill_script("smart_dpn_de", ["203.0.113.5"], MAX_ANSWER_TTL + SET_MARGIN_SECONDS)
+    ]
+
+
+def test_a_sinkhole_or_loopback_answer_never_enters_a_set() -> None:
+    nft = Nft()
+    upstream = Upstream(
+        ("www.kinopoisk.ru.", 300, "A", "127.0.0.1"),
+        ("www.kinopoisk.ru.", 300, "A", "0.0.0.0"),
+    )
+    resolver = Resolver(RuleIndex.from_config(smart_box()), upstream, nft)
+    resolver.resolve(dns.message.make_query("www.kinopoisk.ru", "A"))
+    assert nft.calls == []
+    assert steerable(["127.0.0.1", "0.0.0.5", "169.254.1.1", "224.0.0.1", "240.0.0.1"]) == []
+    # a VPS network behind the tunnel and the benchmark range of the stands are destinations
+    assert steerable(["10.8.0.1", "198.18.0.10", "203.0.113.5"]) == [
+        "10.8.0.1",
+        "198.18.0.10",
+        "203.0.113.5",
     ]
 
 

@@ -695,7 +695,11 @@ def _exit_results(
             results.append(_dns_leak_result(config, dns_uplink))
         else:
             results.append(
-                CheckResult("dns leak", Verdict.OK, "routing.mode off: DNS goes direct by design")
+                CheckResult(
+                    "dns leak",
+                    Verdict.OK,
+                    f"routing.mode {config.routing.mode.value}: DNS goes direct by design",
+                )
             )
     return results
 

@@ -23,6 +23,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from ipaddress import IPv4Address, IPv4Network
 
 import dns.exception
 import dns.message
@@ -42,6 +43,10 @@ SET_MARGIN_SECONDS = 60  # a set element outlives the TTL AdGuard caches the ans
 RECENT_ANSWERS = 4096
 UPSTREAM_TIMEOUT_SECONDS = 5.0
 DIRECT_SET = "smart_direct"
+
+
+# "This network" (RFC 1122): no packet is addressed there; ipaddress marks only 0.0.0.0 unspecified.
+THIS_NETWORK = IPv4Network("0.0.0.0/8")
 
 
 class ResolverError(RuntimeError):
@@ -126,6 +131,26 @@ def answer_facts(response: dns.message.Message) -> AnswerFacts:
         elif rrset.rdtype == dns.rdatatype.CNAME:
             targets.extend(item.target.to_text().rstrip(".").lower() for item in rrset)
     return AnswerFacts(addresses, targets, min(ttls) if ttls else None)
+
+
+def steerable(addresses: Iterable[str]) -> list[str]:
+    """The answer addresses a channel set may take. An answer of 0.0.0.0, loopback, link-local,
+    multicast or a reserved address is a sinkhole or a local service, never a destination an uplink
+    carries (found on the box: kinozal.tv answered 127.0.0.1). Private and benchmark ranges stay:
+    a VPS serves its own private network through the tunnel, and the stands use them."""
+    kept = []
+    for address in addresses:
+        ip = IPv4Address(address)
+        if not (
+            ip.is_unspecified
+            or ip in THIS_NETWORK
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+        ):
+            kept.append(address)
+    return kept
 
 
 def cap_ttl(response: dns.message.Message, cap: int = MAX_ANSWER_TTL) -> int | None:
@@ -216,8 +241,9 @@ class Resolver:
                 self.index.add(target, set_name)
                 self.cnames[target] = qname
         ttl = cap_ttl(response)
-        if facts.addresses and ttl is not None:
-            self.nft(fill_script(set_name, facts.addresses, ttl + SET_MARGIN_SECONDS))
+        wanted = steerable(facts.addresses)
+        if wanted and ttl is not None:
+            self.nft(fill_script(set_name, wanted, ttl + SET_MARGIN_SECONDS))
         return response
 
     def learn(self, name: str, parent: str) -> bool:
@@ -280,8 +306,9 @@ class Resolver:
             return
         addresses, _ttl, expires = remembered
         left = int(expires - self.clock())
-        if left > 0:
-            self.nft(fill_script(set_name, addresses, left + SET_MARGIN_SECONDS))
+        wanted = steerable(addresses)
+        if left > 0 and wanted:
+            self.nft(fill_script(set_name, wanted, left + SET_MARGIN_SECONDS))
 
 
 class ResolverProtocol(asyncio.DatagramProtocol):
