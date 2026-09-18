@@ -32,7 +32,18 @@ SAE_PWE_BOTH = 2
 # RTL8852BE (rtw89) on the N100 box kicked a phone every few seconds as a legacy 802.11g AP that
 # drops stations on low ack; 802.11n with WMM and no low-ack kick made that minutes, not seconds
 # (docs/knowledge/linux/hostapdConfigCheck.md).
-STABLE_AP_LINES = ("ieee80211n=1", "wmm_enabled=1", "disassoc_low_ack=0")
+# A phone with its screen off goes quiet, and at 300 s — the hostapd default of ap_max_inactivity —
+# the access point polls it and removes it when the poll goes unacknowledged. Measured on the box
+# 2026-09-18: `inactive=277168ms`, then `probe client: no ack` and `del station` in the nl80211
+# events. On a household access point that is a phone in a pocket, not a station that left, so the
+# box waits half an hour instead of five minutes (knowledge linux/hostapdConfigCheck.md).
+AP_MAX_INACTIVITY_SECONDS = 1800
+STABLE_AP_LINES = (
+    "ieee80211n=1",
+    "wmm_enabled=1",
+    "disassoc_low_ack=0",
+    f"ap_max_inactivity={AP_MAX_INACTIVITY_SECONDS}",
+)
 # The control socket core reads events and clients from (engine/wifi.py). hostapd answers a datagram
 # to the path the client bound, as a string: the directory must have the same path in both
 # containers, so it is core's ctrl_dir here too, not the package default /var/run/hostapd.

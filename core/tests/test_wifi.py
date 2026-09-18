@@ -78,7 +78,14 @@ def test_hostapd_conf_per_security() -> None:
     lines = transition.splitlines()
     assert "interface=wlan0" in lines and "ssid=Home" in lines and "country_code=DE" in lines
     assert "hw_mode=g" in lines and "channel=6" in lines
-    assert {"ieee80211n=1", "wmm_enabled=1", "disassoc_low_ack=0"} <= set(lines)
+    # ap_max_inactivity: a phone with its screen off is polled out at the hostapd default of
+    # 300 s (measured on the box), and on a household access point that is a pocket, not a leaver
+    assert {
+        "ieee80211n=1",
+        "wmm_enabled=1",
+        "disassoc_low_ack=0",
+        "ap_max_inactivity=1800",
+    } <= set(lines)
     assert "wpa_key_mgmt=WPA-PSK SAE" in lines and "ieee80211w=1" in lines
     assert "wpa_passphrase=pass-phrase-1" in lines
     wpa3_box = Config.model_validate(wifi_box(security="wpa3", band="5", channel=36))
