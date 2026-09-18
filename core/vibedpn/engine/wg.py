@@ -166,8 +166,8 @@ def public_key(private_key: str) -> str:
 
 def server_address(config: Config) -> IPv4Interface:
     """The server takes the first host of ``wg_server.subnet``: 10.78.0.0/24 → 10.78.0.1/24."""
-    subnet = _server_config(config).subnet
-    return IPv4Interface(f"{next(subnet.hosts())}/{subnet.prefixlen}")
+    server = _server_config(config)
+    return IPv4Interface(f"{server.address}/{server.subnet.prefixlen}")
 
 
 def render_server_conf(config: Config, private_key: str, peers: Sequence[Peer] = ()) -> str:

@@ -99,7 +99,10 @@ def firewall_ruleset(config: Config) -> str | None:
             udp_to=udp_to,
             wg_interface=WG_INTERFACE,
             tunnel_subnet=str(config.wg_server.subnet) if config.wg_server else None,
-            tunnel_tcp_ports=[NODEUI_PORT, config.api.port],
+            # The panel of a VPS is reachable the same way its node panel is: inside the tunnel
+            # and nowhere else. Nothing here opens it on the public address, by design.
+            tunnel_tcp_ports=[NODEUI_PORT, config.api.port]
+            + ([config.ui.port] if config.ui.enabled else []),
             allow_tcp=config.firewall.allow_tcp,
             allow_udp=config.firewall.allow_udp,
         )

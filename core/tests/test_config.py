@@ -91,11 +91,21 @@ def test_home_requires_network_and_routing() -> None:
 
 
 def test_vps_rejects_lan_sections(vps: dict[str, Any]) -> None:
-    vps["ui"] = {"enabled": True}
     vps["devices"] = []
+    vps["dns"] = {"enabled": True}
     message = errors_of(vps)
-    assert "ui: not part of role 'vps'" in message
     assert "devices: not part of role 'vps'" in message
+    assert "dns: not part of role 'vps'" in message
+
+
+def test_the_panel_of_a_vps_is_off_unless_it_is_asked_for(vps: dict[str, Any]) -> None:
+    """A VPS is a public machine: a default that opens a web interface there is the kind nobody
+    reads until it is too late. Every other role turns the panel on by itself."""
+    off = Config.model_validate(vps)
+    assert off.ui.enabled is False and Profile.UI not in off.compose_profiles()
+
+    asked = Config.model_validate({**vps, "ui": {"enabled": True}})
+    assert asked.ui.enabled is True and Profile.UI in asked.compose_profiles()
 
 
 def test_vps_rejects_incomplete_lan_section_by_name(vps: dict[str, Any]) -> None:
@@ -308,6 +318,8 @@ def test_env_vars_are_derived_from_config(
         "COMPOSE_PROFILES": "provider,consumer,router,dns,ui",
         "VIBEDPN_API_PORT": "4480",
         "VIBEDPN_LAN_IP": "192.168.1.50",
+        # the panel answers on the LAN address of a box that has a LAN
+        "VIBEDPN_UI_IP": "192.168.1.50",
         "VIBEDPN_UI_PORT": "80",
         "VIBEDPN_UI_HOST_NAME": "vibedpn.lan",
         "VIBEDPN_UI_VARIANT": "full",
@@ -323,10 +335,15 @@ def test_env_vars_are_derived_from_config(
         "VIBEDPN_MYST_UDP_TO": "56100",
         "VIBEDPN_MYST_TRAVERSAL": "manual,upnp,holepunching",
     }
+    # a VPS that was asked for a panel answers inside its tunnel and nowhere else
+    with_panel = derived({**vps, "ui": {"enabled": True}})
+    assert with_panel["VIBEDPN_UI_IP"] == "10.78.0.1"
+    assert with_panel["COMPOSE_PROFILES"] == "provider,wg-server,ui"
     assert derived(client) == {
         "COMPOSE_PROFILES": "wg-client,router,dns,ui",
         "VIBEDPN_API_PORT": "4480",
         "VIBEDPN_LAN_IP": "192.168.1.50",
+        "VIBEDPN_UI_IP": "192.168.1.50",
         "VIBEDPN_UI_PORT": "80",
         "VIBEDPN_UI_HOST_NAME": "vibedpn.lan",
         "VIBEDPN_UI_VARIANT": "full",

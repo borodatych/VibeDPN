@@ -95,10 +95,10 @@ services:
       # Languages of the panel as files the owner sees and edits: the image seeds the ones it ships.
       - ./data/ui/locales:/app/locales
     environment:
-      UI_LISTEN_HOST: ${VIBEDPN_LAN_IP:-127.0.0.1}
+      UI_LISTEN_HOST: ${VIBEDPN_UI_IP:-127.0.0.1}
       PORT: ${VIBEDPN_UI_PORT:-80}
-      SERVER_URL: http://${VIBEDPN_LAN_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}
-      CLIENT_URL: http://${VIBEDPN_LAN_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}
+      SERVER_URL: http://${VIBEDPN_UI_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}
+      CLIENT_URL: http://${VIBEDPN_UI_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}
       UI_HOST_NAME: ${VIBEDPN_UI_HOST_NAME:-vibedpn.lan}
       UI_LANGUAGE: ${VIBEDPN_UI_LANGUAGE:-ru}
       LOCALES_DIR: /app/locales
@@ -109,7 +109,7 @@ services:
         - CMD
         - bun
         - -e
-        - "fetch('http://${VIBEDPN_LAN_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+        - "fetch('http://${VIBEDPN_UI_IP:-127.0.0.1}:${VIBEDPN_UI_PORT:-80}/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
       interval: 30s
       timeout: 5s
       retries: 3

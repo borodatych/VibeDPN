@@ -20,6 +20,7 @@ from vibedpn.engine.router import (
     active_uplink,
     apply_router,
     device_sets,
+    firewall_ruleset,
     plan_docker_user,
     plan_rules,
     remove_router,
@@ -432,3 +433,17 @@ def test_a_named_wireguard_exit_gets_its_rule_like_any_other_uplink() -> None:
         f'"table":"{stand.table}"}},{{"priority":32766',
     )
     assert plan_rules(listing, [stand]) == ([vps_rule], [])
+
+
+def test_the_panel_of_a_vps_opens_only_inside_the_tunnel() -> None:
+    """A rented server must not answer its panel on the public address. The port is opened the
+    same way the node panel is — for the tunnel interface — and the firewall says so itself."""
+    box = vps_box()
+    off = firewall_ruleset(box) or ""
+    assert "tcp dport { 4449, 4480 } accept" in off
+
+    with_panel = box.model_copy(update={"ui": box.ui.model_copy(update={"enabled": True})})
+    rules = firewall_ruleset(with_panel) or ""
+    assert 'iifname "wg0" tcp dport { 4449, 4480, 80 } accept' in rules
+    # and nothing opens that port to everyone
+    assert "tcp dport { 80 } accept" not in rules

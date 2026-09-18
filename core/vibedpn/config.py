@@ -733,6 +733,12 @@ class WgServerConfig(StrictModel):
     def validate_endpoint(cls, value: str) -> str:
         return check_endpoint(value)
 
+    @property
+    def address(self) -> IPv4Address:
+        """The first host of its subnet: 10.78.0.0/24 → 10.78.0.1. One rule in one place —
+        engine/wg.py builds the interface address from this and nothing computes it twice."""
+        return next(self.subnet.hosts())
+
     @field_validator("subnet")
     @classmethod
     def check_subnet(cls, value: IPv4Network) -> IPv4Network:
@@ -827,7 +833,9 @@ class FirewallConfig(StrictModel):
 
 
 # Sections that describe a LAN-side box and make no sense on a headless VPS.
-LAN_SECTIONS = ("network", "routing", "devices", "upstreams", "dns", "ui")
+# Sections a VPS has no use for. `ui` is not among them since Stage 11: a VPS may run the panel
+# too, but only through the tunnel and only when the owner says so (see `_vps_panel_default`).
+LAN_SECTIONS = ("network", "routing", "devices", "upstreams", "dns")
 # Sections that only a VPS has (LAN roles get the router engine in Stage 4).
 VPS_SECTIONS = ("firewall",)
 
@@ -872,6 +880,21 @@ class Config(StrictModel):
                         f"{section}: only role 'vps' has a host firewall" for section in present
                     )
                 )
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _vps_panel_default(cls, data: object) -> object:
+        """A VPS is a public machine: its panel is off unless config.yaml says otherwise.
+
+        Every other box turns it on by default, because there the panel answers on the LAN only.
+        A default that opens a web interface on a rented server is the kind of default nobody
+        reads until it is too late.
+        """
+        if not isinstance(data, dict) or data.get("role") != Role.VPS:
+            return data
+        if "ui" not in data:
+            return {**data, "ui": {"enabled": False}}
         return data
 
     @model_validator(mode="after")
@@ -987,7 +1010,10 @@ class Config(StrictModel):
     def compose_profiles(self) -> list[Profile]:
         """Compose profiles this box needs, in the canonical order of ``Profile``."""
         if self.role is Role.VPS:
-            return [Profile.PROVIDER, Profile.WG_SERVER]
+            profiles = [Profile.PROVIDER, Profile.WG_SERVER]
+            if self.ui.enabled:
+                profiles.append(Profile.UI)
+            return profiles
         wanted = {
             Profile.PROVIDER: self.provider.enabled,
             Profile.CONSUMER: self.upstreams.dpn.enabled,
@@ -1005,6 +1031,19 @@ class Config(StrictModel):
         }
         return [profile for profile in Profile if wanted.get(profile, False)]
 
+    def ui_address(self) -> IPv4Address | None:
+        """The one address the panel listens on, or ``None`` when this box runs none.
+
+        A box with a LAN answers there. A VPS answers **inside its tunnel** and nowhere else: the
+        panel of a rented server has no business on its public address, and the home boxes that
+        may reach it are exactly the ones already inside the tunnel.
+        """
+        if not self.ui.enabled:
+            return None
+        if self.network is not None:
+            return self.network.lan_address
+        return self.wg_server.address if self.wg_server is not None else None
+
     def env_vars(self) -> dict[str, str]:
         """Values ``vibedpn init`` writes to ``.env`` for ``compose.yaml``; every one is derived.
 
@@ -1016,6 +1055,8 @@ class Config(StrictModel):
         }
         if self.network is not None:
             env["VIBEDPN_LAN_IP"] = str(self.network.lan_address)
+        if self.ui.enabled and (address := self.ui_address()) is not None:
+            env["VIBEDPN_UI_IP"] = str(address)
             env["VIBEDPN_UI_PORT"] = str(self.ui.port)
             env["VIBEDPN_UI_HOST_NAME"] = self.ui.host_name
             env["VIBEDPN_UI_VARIANT"] = self.ui.variant.value
