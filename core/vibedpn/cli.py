@@ -41,6 +41,7 @@ from vibedpn.bootstrap import (
     ENV_FILE,
     SECRET_DIR_MODE,
     SECRETS_DIR,
+    XRAY_LINK_FILE,
     Answers,
     BootstrapError,
     HostFacts,
@@ -67,6 +68,7 @@ from vibedpn.compose import (
     refresh_env,
     refresh_tor_bridges,
     refresh_wg_uplinks,
+    refresh_xray_config,
     run,
     stale_services,
 )
@@ -91,6 +93,7 @@ from vibedpn.config_edit import (
     set_routing,
     set_tor_uplink,
     set_wg_uplink,
+    set_xray_uplink,
 )
 from vibedpn.detect import DetectError, HostProbe, find_tool
 from vibedpn.device_view import render_devices
@@ -120,6 +123,7 @@ from vibedpn.engine.hostapd import (
     write_passphrase,
 )
 from vibedpn.engine.myst import render_stats
+from vibedpn.engine.xray import XrayError, parse_share_link
 from vibedpn.event_view import client_line, event_line
 from vibedpn.tunnel_view import qr_code, render_peers
 
@@ -420,6 +424,7 @@ def _prepare(box_dir: Path, *, refresh: bool) -> Config:
             refresh_countries(box_dir, config)
             refresh_wg_uplinks(box_dir, config)
             refresh_tor_bridges(box_dir, config)
+            refresh_xray_config(box_dir, config)
     except ComposeError as exc:
         raise _fail(str(exc)) from None
     return config
@@ -863,6 +868,84 @@ def uplink_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
         path = box_dir / SECRETS_DIR / f"wg-{name}.conf"
         file_state = "file in place" if path.is_file() else f"NO FILE at {path}"
         typer.echo(f"wg-{name}  {state}  ({file_state})")
+
+
+xray_app = typer.Typer(
+    help="Uplink xray: a masking transport by your own share link (docs/manuals/xrayUplink.md).",
+    no_args_is_help=True,
+)
+app.add_typer(xray_app, name="xray")
+
+
+@xray_app.command("enable")
+def xray_enable(
+    link_file: Annotated[
+        Path | None,
+        typer.Option("--link-file", help="File with the vless:// link; without it, asked here."),
+    ] = None,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Take a share link as the masking exit of this box; `vibedpn up` starts its gateway.
+
+    The link is never an argument: it carries the credentials of the server, and an argument lands
+    in the shell history and in `ps` for every user of the box.
+    """
+    if link_file is not None:
+        try:
+            link = link_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise _fail(f"cannot read {link_file}: {exc.strerror}") from None
+    else:
+        link = typer.prompt("Share link (vless://…)")
+    try:
+        server = parse_share_link(link)
+    except XrayError as exc:
+        raise _fail(str(exc)) from None
+    target = box_dir / SECRETS_DIR / XRAY_LINK_FILE
+    try:
+        target.parent.mkdir(mode=SECRET_DIR_MODE, exist_ok=True)
+        write_private(target, link.strip() + "\n")
+    except OSError as exc:
+        raise _fail(f"cannot write {target}: {exc.strerror}; run with sudo?") from None
+    _set_xray(box_dir, True)
+    typer.echo(f"uplink xray enabled: {server.endpoint}, {server.security}; `vibedpn up`, then:")
+    typer.echo(
+        "  vibedpn rule add <domain> xray   (smart mode), or vibedpn upstream xray (full mode)"
+    )
+
+
+@xray_app.command("disable")
+def xray_disable(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Turn uplink xray off; rules and devices that name it keep the config from validating."""
+    _set_xray(box_dir, False)
+    typer.echo("uplink xray disabled; `vibedpn up` stops its gateway")
+
+
+@xray_app.command("show")
+def xray_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Whether uplink xray is on and which server it uses — without a word of its credentials."""
+    config = check_box(box_dir)
+    state = "on" if config.upstreams.xray.enabled else "off"
+    path = box_dir / SECRETS_DIR / XRAY_LINK_FILE
+    try:
+        server = parse_share_link(path.read_text(encoding="utf-8"))
+    except OSError:
+        typer.echo(f"uplink xray {state}; no link at {path} (vibedpn xray enable)")
+        return
+    except XrayError as exc:
+        typer.echo(f"uplink xray {state}; the link at {path} is unusable: {exc}")
+        return
+    transport = f"{server.network}/{server.security}"
+    name = f" ({server.remark})" if server.remark else ""
+    typer.echo(f"uplink xray {state}: {server.endpoint} over {transport}{name}")
+
+
+def _set_xray(box_dir: Path, enabled: bool) -> Config:
+    try:
+        config, _changed = set_xray_uplink(box_dir / CONFIG_FILE, enabled)
+    except ConfigEditError as exc:
+        raise _fail(str(exc)) from None
+    return config
 
 
 tor_app = typer.Typer(

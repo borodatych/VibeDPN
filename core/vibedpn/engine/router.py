@@ -298,6 +298,7 @@ UPLINKS: dict[Upstream, Uplink] = {
     Upstream.DPN: Uplink(mark=0x20, table=7720, gateway="10.77.0.20"),
     # 0x30 is BLOCK_MARK; countries take 0x40+i, named WireGuard exits 0x50+i.
     Upstream.TOR: Uplink(mark=0x60, table=7760, gateway="10.77.0.60"),
+    Upstream.XRAY: Uplink(mark=0x70, table=7770, gateway="10.77.0.70"),
 }
 # Countries of routing.domains and routing.lists get their own consumer (docs/decisions.md, 20):
 # the i-th country in sorted order has mark 0x40+i, table 7740+i and gateway 10.77.0.40+i.
@@ -402,6 +403,7 @@ def uplink_service(key: str) -> str:
         Upstream.VPS.value: "wg-client",
         Upstream.DPN.value: "myst-consumer",
         Upstream.TOR.value: "tor",
+        Upstream.XRAY.value: "xray",
     }[key]
 
 
@@ -410,6 +412,7 @@ POLICY_UPLINKS: dict[DevicePolicy, Upstream] = {
     DevicePolicy.VPS: Upstream.VPS,
     DevicePolicy.DPN: Upstream.DPN,
     DevicePolicy.TOR: Upstream.TOR,
+    DevicePolicy.XRAY: Upstream.XRAY,
 }
 # policy block: no ip rule knows this mark, and the forward chain drops it.
 BLOCK_MARK = 0x30
@@ -418,6 +421,7 @@ RULE_UPLINKS: dict[DomainVia, Upstream] = {
     DomainVia.VPS: Upstream.VPS,
     DomainVia.DPN: Upstream.DPN,
     DomainVia.TOR: Upstream.TOR,
+    DomainVia.XRAY: Upstream.XRAY,
 }
 # AdGuard Home runs as this user (compose.yaml `user:`), so its own DoH traffic can be told from
 # the host's and steered into the uplink of routing.mode full (docs/decisions.md, decision 14).

@@ -386,6 +386,38 @@ services:
       retries: 3
       start_period: 180s
 
+  # Uplink `xray`: a gateway container at 10.77.0.70 that carries the TCP of the LAN through a
+  # masking transport — VLESS over Reality and the rest Xray speaks (docs/decisions.md, 29). Where
+  # a network drops the WireGuard handshake, this one still passes. No routing inside: TCP from the
+  # bridge is redirected to the dokodemo-door inbound and everything else is dropped; out of the
+  # container only xray itself may speak (images/xray/entrypoint.sh).
+  xray:
+    image: ghcr.io/borodatych/vibedpn-xray:${VIBEDPN_TAG:-latest}
+    build:
+      context: ./images/xray
+    profiles:
+      - xray
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    networks:
+      upstreams:
+        ipv4_address: 10.77.0.70
+    volumes:
+      # core renders this from the share link in secrets/ on every `vibedpn up`; a directory is
+      # mounted, not the file, so rewriting it never meets EBUSY (knowledge docker/bindMountRename.md)
+      - ./data/xray/config:/etc/vibedpn-xray:ro
+    command:
+      - run
+    healthcheck:
+      # Healthy once the inbound the LAN is redirected to is open: that happens after xray has read
+      # its configuration. Whether the server answers is what `vibedpn doctor --network` asks.
+      test: ["CMD", "/usr/local/bin/entrypoint.sh", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   # AdGuard Home on port 53 of the LAN address. Host network (needed for DHCP later and for real
   # client IPs); core renders AdGuardHome.yaml into ./data/adguard/conf so the setup wizard on
   # port 3000 never appears (Stage 4).

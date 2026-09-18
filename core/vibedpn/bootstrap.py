@@ -65,6 +65,9 @@ ENV_FILE = ".env"
 SECRETS_DIR = "secrets"
 HTPASSWD_FILE = "htpasswd"
 WG_CLIENT_CONF = "wg-client.conf"
+# The share link of uplink xray: it carries the credentials of the server, so it is a secret
+# and not a line of config.yaml (`vibedpn xray enable <link>` writes it).
+XRAY_LINK_FILE = "xray-link"
 # The panel's own secrets: generated once and kept by every re-run of init, because the database
 # volume (data/ui-db) and the signed sessions depend on them. Written without a trailing newline.
 UI_DB_PASSWORD_FILE = "ui-db-password"
@@ -146,6 +149,8 @@ def required_secrets(config: Config) -> list[str]:
     needed.extend(generated_secrets(config))
     needed.extend(country_secrets(config))
     needed.extend(wg_uplink_secrets(config))
+    if config.upstreams.xray.enabled:
+        needed.append(XRAY_LINK_FILE)
     return needed
 
 

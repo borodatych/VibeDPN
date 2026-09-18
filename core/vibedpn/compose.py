@@ -18,6 +18,9 @@ from vibedpn.bootstrap import (
     CONFIG_FILE,
     ENV_FILE,
     PUBLIC_FILE_MODE,
+    SECRET_FILE_MODE,
+    SECRETS_DIR,
+    XRAY_LINK_FILE,
     checkout_image_tag,
     give_to_invoker,
     preserved_env,
@@ -28,6 +31,7 @@ from vibedpn.bootstrap import (
 )
 from vibedpn.config import Config, ConfigError, Profile, load_config
 from vibedpn.engine.router import country_uplinks, wg_uplinks
+from vibedpn.engine.xray import XrayError, config_from_link
 
 COMPOSE_FILE = "compose.yaml"
 COUNTRIES_FILE = "compose.countries.yaml"
@@ -37,6 +41,10 @@ OVERRIDE_FILE = "compose.override.yaml"
 # the file never meets EBUSY of a file bind-mount (knowledge docker/bindMountRename.md).
 TOR_CONFIG_DIR = "data/tor/config"
 TOR_BRIDGES_FILE = "bridges"
+# The rendered configuration of uplink xray, for the same reason in a directory of its own. It
+# carries the credentials of the share link, so it is written with the mode of a secret.
+XRAY_CONFIG_DIR = "data/xray/config"
+XRAY_CONFIG_FILE = "config.json"
 DEFAULT_LOG_TAIL = 100
 # Before 28.0.0 ports published on 127.0.0.1 were reachable from L2 neighbours (Docker release
 # notes 28.0.0), and nat-unprotected did not exist; the box relies on both.
@@ -242,6 +250,31 @@ def refresh_tor_bridges(box_dir: Path, config: Config) -> Path:
     try:
         directory.mkdir(parents=True, exist_ok=True)
         write_file(path, render_tor_bridges(config), PUBLIC_FILE_MODE)
+    except OSError as exc:
+        raise ComposeError(f"cannot write {path}: {exc.strerror}; run with sudo?") from exc
+    return path
+
+
+def refresh_xray_config(box_dir: Path, config: Config) -> Path | None:
+    """Render data/xray/config/config.json from the share link in ``secrets/``; ``None`` when this
+    box has no uplink xray or no link yet — the missing secret is what `doctor` reports, and a
+    half-written configuration would start a gateway that leads nowhere."""
+    if not config.upstreams.xray.enabled:
+        return None
+    link_path = box_dir / SECRETS_DIR / XRAY_LINK_FILE
+    try:
+        link = link_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    directory = box_dir / XRAY_CONFIG_DIR
+    path = directory / XRAY_CONFIG_FILE
+    try:
+        rendered = config_from_link(link)
+    except XrayError as exc:
+        raise ComposeError(f"{link_path}: {exc}") from None
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        write_file(path, rendered, SECRET_FILE_MODE)
     except OSError as exc:
         raise ComposeError(f"cannot write {path}: {exc.strerror}; run with sudo?") from exc
     return path

@@ -109,6 +109,7 @@ class Profile(StrEnum):
     WG_CLIENT = "wg-client"
     WG_UPLINK = "wg-uplink"  # the named uplinks of upstreams.wg, generated from compose.yaml
     TOR = "tor"  # uplink tor: a gateway into Tor through bridges (decision 27)
+    XRAY = "xray"  # uplink xray: a masking transport by the owner's share link (decision 29)
     ROUTER = "router"
     DHCP = "dhcp"  # dnsmasq: gateway mode only, never next to the DHCP of an ISP router
     WIFI = "wifi"  # hostapd: gateway mode with network.wifi, the LAN interface is the radio
@@ -131,12 +132,14 @@ class Upstream(StrEnum):
     VPS = "vps"
     DPN = "dpn"
     TOR = "tor"
+    XRAY = "xray"  # a masking transport where plain WireGuard does not pass (decision 29)
 
 
 class DevicePolicy(StrEnum):
     VPS = "vps"
     DPN = "dpn"
     TOR = "tor"
+    XRAY = "xray"
     BYPASS = "bypass"
     BLOCK = "block"
 
@@ -379,6 +382,7 @@ class DomainVia(StrEnum):
     DPN = "dpn"
     WG = "wg"  # a named WireGuard exit of upstreams.wg, named by `uplink`
     TOR = "tor"
+    XRAY = "xray"
     DIRECT = "direct"
 
 
@@ -645,10 +649,22 @@ class TorUplink(StrictModel):
         return self.bridges != list(DEFAULT_TOR_BRIDGES)
 
 
+class XrayUplink(StrictModel):
+    """An exit through a masking transport: VLESS over Reality and the rest Xray speaks.
+
+    The share link of the server carries the credentials, so it lives in ``secrets/xray-link`` and
+    not here — `vibedpn xray enable <link>` puts it there. Core renders the configuration of the
+    gateway from it at every ``up`` (engine/xray.py).
+    """
+
+    enabled: bool = False
+
+
 class UpstreamsConfig(StrictModel):
     vps: VpsUplink = Field(default_factory=VpsUplink)
     dpn: DpnUplink = Field(default_factory=DpnUplink)
     tor: TorUplink = Field(default_factory=TorUplink)
+    xray: XrayUplink = Field(default_factory=XrayUplink)
     # name -> its uplink; the name reaches a file name, a Compose service and a routing key
     wg: dict[str, WgUplink] = Field(default_factory=dict)
 
@@ -668,6 +684,7 @@ class UpstreamsConfig(StrictModel):
             Upstream.VPS: self.vps.enabled,
             Upstream.DPN: self.dpn.enabled,
             Upstream.TOR: self.tor.enabled,
+            Upstream.XRAY: self.xray.enabled,
         }[upstream]
 
     def is_key_enabled(self, key: str) -> bool:
@@ -979,6 +996,7 @@ class Config(StrictModel):
             # start here while the base service, whose file this box has not got, does not.
             Profile.WG_UPLINK: bool(self.upstreams.wg),
             Profile.TOR: self.upstreams.tor.enabled,
+            Profile.XRAY: self.upstreams.xray.enabled,
             Profile.ROUTER: True,
             Profile.DHCP: self.network is not None and self.network.mode is NetworkMode.GATEWAY,
             Profile.WIFI: self.network is not None and self.network.wifi is not None,

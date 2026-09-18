@@ -162,6 +162,27 @@ def set_tor_uplink(path: Path, enabled: bool) -> tuple[Config, bool]:
     return _edit(path, mutate)
 
 
+def set_xray_uplink(path: Path, enabled: bool) -> tuple[Config, bool]:
+    """Turn uplink xray on or off (``upstreams.xray.enabled``); the link itself is a secret and
+    never enters config.yaml."""
+
+    def mutate(data: CommentedMap) -> None:
+        upstreams = data.get("upstreams")
+        if not isinstance(upstreams, CommentedMap):
+            raise ConfigEditError(
+                f"{path} has no upstreams section: a box of this role has no uplink"
+            )
+        xray = upstreams.get("xray")
+        if xray is None:
+            xray = CommentedMap()
+            upstreams["xray"] = xray
+        if not isinstance(xray, CommentedMap):
+            raise ConfigEditError(f"{path}: upstreams.xray must be a mapping")
+        xray["enabled"] = enabled
+
+    return _edit(path, mutate)
+
+
 class WgUplinkNotFoundError(ConfigEditError):
     """``config.yaml`` has no named WireGuard exit by this name."""
 
