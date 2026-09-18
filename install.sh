@@ -26,6 +26,7 @@ DOCKER_KEYRING="/etc/apt/keyrings/docker.asc"
 DOCKER_SOURCES="/etc/apt/sources.list.d/docker.sources"
 DOCKER_PACKAGES="docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
 F2B_JAIL="sshd"  # the jail of host/fail2ban/vibedpn-sshd.local
+F2B_WAIT=10  # seconds to wait for the restarted server to answer its socket
 
 log() { printf '\033[1;34m[vibedpn]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[vibedpn] error:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -180,7 +181,15 @@ arm_jail() {
   jail_is_armed && return 0
   log "fail2ban: jail $F2B_JAIL has no action — restarting the service"
   systemctl restart fail2ban
-  jail_is_armed || log "fail2ban: jail $F2B_JAIL still has no action; a ban would do nothing"
+  # The server opens its socket a moment after the unit is up, and a question asked earlier
+  # gets no answer at all — which reads exactly like a mute jail. So ask until it answers.
+  local left="$F2B_WAIT"
+  while [ "$left" -gt 0 ]; do
+    jail_is_armed && return 0
+    sleep 1
+    left=$((left - 1))
+  done
+  log "fail2ban: jail $F2B_JAIL still has no action after ${F2B_WAIT}s; a ban would do nothing"
 }
 
 jail_is_armed() {
