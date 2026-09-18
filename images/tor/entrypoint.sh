@@ -19,6 +19,10 @@ TOR_USER=debian-tor
 TRANS_PORT=9040
 DNS_PORT=5353
 SOCKS_PORT=9050
+# The SNI relay (compose.yaml, 10.77.0.30) carries the TLS of the Mysterium zone through this
+# SocksPort: that ISP throttles the answers of names it filters, and Tor is what gets them here.
+# Nobody else is let in, neither by tor itself (SocksPolicy) nor by the filter below.
+SOCKS_CLIENT="${VIBEDPN_TOR_SOCKS_CLIENT:-10.77.0.30}"
 NFT_TABLE=vibedpn_tor
 # The embedded DNS of Docker: the container resolves the fronting domains of the transports here.
 DOCKER_DNS=127.0.0.11
@@ -62,7 +66,12 @@ write_torrc() {
     echo "User $TOR_USER"
     echo "Log notice stdout"
     echo "Log notice file $NOTICE_LOG"
-    echo "SocksPort 127.0.0.1:$SOCKS_PORT"
+    # One listener on every address: binding 127.0.0.1 as well would clash with it. Who may use
+    # it is decided by SocksPolicy below and by the input chain of the firewall.
+    echo "SocksPort 0.0.0.0:$SOCKS_PORT"
+    echo "SocksPolicy accept 127.0.0.1"
+    echo "SocksPolicy accept $SOCKS_CLIENT"
+    echo "SocksPolicy reject *"
     echo "TransPort 0.0.0.0:$TRANS_PORT"
     echo "DNSPort 0.0.0.0:$DNS_PORT"
     echo "VirtualAddrNetworkIPv4 $VIRTUAL_NETWORK"
@@ -95,6 +104,12 @@ table ip $NFT_TABLE {
     ip daddr 127.0.0.0/8 return
     ip protocol tcp redirect to :$TRANS_PORT
     udp dport 53 redirect to :$DNS_PORT
+  }
+  chain input {
+    type filter hook input priority filter; policy accept;
+    tcp dport $SOCKS_PORT ip saddr $SOCKS_CLIENT accept comment "the SNI relay, and only it"
+    tcp dport $SOCKS_PORT iifname "lo" accept
+    tcp dport $SOCKS_PORT drop comment "SocksPort is not for the rest of the gateway network"
   }
   chain forward {
     type filter hook forward priority filter; policy drop;

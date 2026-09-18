@@ -21,6 +21,7 @@ import struct
 import sys
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 RELAY_PORT = 443
@@ -39,8 +40,30 @@ CLIENT_HELLO = 0x01
 SERVER_NAME_EXTENSION = 0x00
 HOST_NAME_TYPE = 0x00
 RANDOM_BYTES = 32
+# The gateway container of uplink tor (compose.yaml) and its SocksPort. A name the ISP filters is
+# carried through Tor instead of being cut: cutting gets the handshake through, and the answer is
+# throttled anyway — measured on the box, knowledge myst/relayThrottling.md.
+SOCKS_ENV = "VIBEDPN_RELAY_SOCKS"
+DEFAULT_SOCKS = "10.77.0.60:9050"
+SOCKS_VERSION = 0x05
+SOCKS_CONNECT = 0x01
+SOCKS_NO_AUTH = 0x00
+SOCKS_BY_NAME = 0x03
+SOCKS_IPV4 = 0x01
+SOCKS_IPV6 = 0x04
+SOCKS_OK = 0x00
+# Tor builds a circuit before it answers: seconds, not the milliseconds of a direct connection.
+SOCKS_TIMEOUT = 30.0
 
 Resolve = Callable[[str], Coroutine[Any, Any, tuple[str, int]]]
+
+
+class Route(StrEnum):
+    """How this relay reaches one name; learned by the first connection that name makes."""
+
+    AS_IS = "as it is"
+    TOR = "through Tor"
+    SPLIT = "with the ClientHello cut"
 
 
 def _to_stderr(message: str) -> None:
@@ -134,6 +157,48 @@ async def resolve_host(host: str) -> tuple[str, int]:
     return str(address), int(port)
 
 
+async def open_through_socks(
+    proxy: str, host: str, port: int
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    """A connection to ``host`` made by a SOCKS5 proxy (Tor). The name travels to the proxy and is
+    resolved there: this box never looks it up, and the ISP never sees it."""
+    address, _, text = proxy.rpartition(":")
+    if not address or not text.isdigit():
+        raise RelayError(f"{proxy!r} is not a SOCKS address host:port")
+    # The proxy is a neighbour on the gateway network, so reaching it is quick or hopeless: a box
+    # without uplink tor must fall back to the cut in seconds, not after a circuit-long wait.
+    reader, writer = await asyncio.wait_for(
+        asyncio.open_connection(address, int(text)), CONNECT_TIMEOUT
+    )
+    try:
+        writer.write(bytes([SOCKS_VERSION, 1, SOCKS_NO_AUTH]))
+        await writer.drain()
+        greeting = await asyncio.wait_for(reader.readexactly(2), SOCKS_TIMEOUT)
+        if greeting[0] != SOCKS_VERSION or greeting[1] != SOCKS_NO_AUTH:
+            raise RelayError(f"the SOCKS proxy wants authentication ({greeting[1]:#x})")
+        name = host.encode("idna")
+        request = bytes([SOCKS_VERSION, SOCKS_CONNECT, 0, SOCKS_BY_NAME, len(name)])
+        writer.write(request + name + struct.pack(">H", port))
+        await writer.drain()
+        head = await asyncio.wait_for(reader.readexactly(4), SOCKS_TIMEOUT)
+        if head[1] != SOCKS_OK:
+            raise RelayError(f"the SOCKS proxy refused {host}: reply {head[1]:#x}")
+        # The bound address comes back and is of no use here, but it has to be read off the stream.
+        if head[3] == SOCKS_IPV4:
+            await asyncio.wait_for(reader.readexactly(4 + 2), SOCKS_TIMEOUT)
+        elif head[3] == SOCKS_IPV6:
+            await asyncio.wait_for(reader.readexactly(16 + 2), SOCKS_TIMEOUT)
+        elif head[3] == SOCKS_BY_NAME:
+            size = (await asyncio.wait_for(reader.readexactly(1), SOCKS_TIMEOUT))[0]
+            await asyncio.wait_for(reader.readexactly(size + 2), SOCKS_TIMEOUT)
+        else:
+            raise RelayError(f"the SOCKS proxy answered with address type {head[3]:#x}")
+    except (TimeoutError, ConnectionError, asyncio.IncompleteReadError, RelayError):
+        writer.close()
+        raise
+    return reader, writer
+
+
 async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     try:
         while True:
@@ -155,22 +220,27 @@ class Relay:
     resolve: Resolve = resolve_host
     zone: str = DEFAULT_ZONE
     log: Callable[[str], None] = _to_stderr
-    # name → whether its ClientHello has to be cut; filled by the first connection of that name
-    split: dict[str, bool] = field(default_factory=dict)
+    # The SOCKS5 proxy of uplink tor; empty when this box has none and only the cut is left.
+    socks: str = ""
+    # name → the way it is reached; filled by the first connection of that name
+    routes: dict[str, Route] = field(default_factory=dict)
 
     def serves(self, host: str) -> bool:
         return host == self.zone or host.endswith(f".{self.zone}")
 
     async def _open(
-        self, host: str, hello: bytes, cut: int, split: bool
+        self, host: str, hello: bytes, cut: int, route: Route
     ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, bytes]:
-        """Connect, send the ClientHello (split or as it is) and wait for the first answer."""
-        address, port = await self.resolve(host)
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(address, port), CONNECT_TIMEOUT
-        )
+        """Connect the way ``route`` says, send the ClientHello and wait for the first answer."""
+        if route is Route.TOR:
+            reader, writer = await open_through_socks(self.socks, host, RELAY_PORT)
+        else:
+            address, port = await self.resolve(host)
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(address, port), CONNECT_TIMEOUT
+            )
         try:
-            writer.write(split_hello(hello, cut) if split else hello)
+            writer.write(split_hello(hello, cut) if route is Route.SPLIT else hello)
             await writer.drain()
             answer = await asyncio.wait_for(reader.read(65536), HANDSHAKE_TIMEOUT)
             if not answer:
@@ -184,20 +254,38 @@ class Relay:
         self, host: str, hello: bytes, cut: int
     ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, bytes]:
         """The upstream connection, in the way this name is known to need, learning it if new."""
-        known = self.split.get(host)
+        known = self.routes.get(host)
         if known is not None:
             return await self._open(host, hello, cut, known)
         try:
-            opened = await self._open(host, hello, cut, split=False)
+            opened = await self._open(host, hello, cut, Route.AS_IS)
         except (TimeoutError, ConnectionError, RelayError) as exc:
-            self.log(f"{host}: no handshake as it is ({reason(exc)}); cutting it")
-            opened = await self._open(host, hello, cut, split=True)
-            self.split[host] = True
-            self.log(f"{host}: the cut ClientHello goes through")
-            return opened
-        self.split[host] = False
+            self.log(f"{host}: no handshake as it is ({reason(exc)})")
+            return await self._around(host, hello, cut)
+        self.routes[host] = Route.AS_IS
         self.log(f"{host}: the handshake goes through as it is")
         return opened
+
+    async def _around(
+        self, host: str, hello: bytes, cut: int
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, bytes]:
+        """A name this ISP filters. Tor comes first and the cut second: cutting only gets the
+        handshake through, and the same filter then throttles the answer — on the box a reply
+        above ~16 KB never arrived, while the whole 7.9 MB came through Tor (knowledge
+        myst/relayThrottling.md). Without a SOCKS proxy the cut is all there is."""
+        ways = (Route.TOR, Route.SPLIT) if self.socks else (Route.SPLIT,)
+        last = ""
+        for route in ways:
+            try:
+                opened = await self._open(host, hello, cut, route)
+            except (TimeoutError, ConnectionError, RelayError, OSError) as exc:
+                last = reason(exc)
+                self.log(f"{host}: {route.value} does not get through either ({last})")
+                continue
+            self.routes[host] = route
+            self.log(f"{host}: it goes {route.value}")
+            return opened
+        raise RelayError(f"no way to {host} gets through: {last}")
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -241,7 +329,10 @@ async def serve(relay: Relay, address: str = DEFAULT_ADDRESS, port: int = RELAY_
 
 def main() -> None:
     """``python -m vibedpn.relay``: the relay service of compose.yaml."""
-    relay = Relay(zone=os.environ.get("VIBEDPN_RELAY_ZONE", DEFAULT_ZONE))
+    relay = Relay(
+        zone=os.environ.get("VIBEDPN_RELAY_ZONE", DEFAULT_ZONE),
+        socks=os.environ.get(SOCKS_ENV, DEFAULT_SOCKS),
+    )
     address = os.environ.get("VIBEDPN_RELAY_ADDRESS", DEFAULT_ADDRESS)
     port = int(os.environ.get("VIBEDPN_RELAY_PORT", RELAY_PORT))
     with contextlib.suppress(KeyboardInterrupt):  # the container stops it

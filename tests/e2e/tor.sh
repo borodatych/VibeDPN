@@ -237,6 +237,35 @@ wait_healthy vibedpn-core-1 "$TIMEOUT"
 log "box: waiting for the tor gateway to bootstrap (Snowflake, up to $TOR_TIMEOUT s)"
 wait_healthy vibedpn-tor-1 "$TOR_TIMEOUT"
 [ -s "$BOX/data/tor/config/bridges" ] || fail "core did not write data/tor/config/bridges"
+
+log "tor gateway: its SocksPort serves the SNI relay and nobody else"
+# The relay carries the TLS of the Mysterium zone through Tor, because that ISP throttles the
+# answers of the names it filters (knowledge myst/relayThrottling.md). The port is proven with the
+# product's own SOCKS client, from the relay's address and from a foreign one on the same network.
+socks_probe() {
+  sudo docker run --rm --network vibedpn-upstreams --ip "$1" "$CORE_IMAGE" python -c '
+import asyncio, sys
+from vibedpn.relay import open_through_socks
+
+async def main() -> None:
+    reader, writer = await open_through_socks("10.77.0.60:9050", "check.torproject.org", 443)
+    writer.close()
+    print("reached")
+
+try:
+    asyncio.run(main())
+except Exception as exc:  # noqa: BLE001 - the stand reads the word, not the type
+    print(f"refused: {exc}")
+' 2>&1 | tail -1
+}
+seen="$(socks_probe 10.77.0.30)"
+[ "$seen" = reached ] || fail "the relay address cannot use the SocksPort of tor: $seen"
+echo "relay address: $seen"
+seen="$(socks_probe 10.77.0.31)"
+case "$seen" in
+  reached) fail "the SocksPort of tor is open to the whole gateway network" ;;
+  *) echo "another address: $seen" ;;
+esac
 ECHO_ADDRESS="$(device_resolve "$ECHO_HOST")"
 [ -n "$ECHO_ADDRESS" ] || fail "the box's DNS gave the device no address for $ECHO_HOST"
 echo "$ECHO_HOST resolves to $ECHO_ADDRESS through the box"

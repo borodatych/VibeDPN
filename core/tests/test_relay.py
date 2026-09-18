@@ -5,6 +5,7 @@ import ssl
 
 import pytest
 
+from vibedpn import relay as relay_module
 from vibedpn.relay import (
     RECORD_HEADER,
     Relay,
@@ -124,7 +125,7 @@ def test_a_blocked_name_goes_through_cut_and_the_choice_is_remembered() -> None:
         await isp.start()
         relay = relay_to(isp)
         assert await talk(relay, isp) == b"server-helloecho:payload"
-        assert relay.split == {HOST: True}
+        assert relay.routes == {HOST: relay_module.Route.SPLIT}
         # the ISP saw the whole name once (refused) and then never again
         assert sum(HOST.encode() in record for record in isp.records) == 1
         direct, first, second = isp.records
@@ -142,7 +143,7 @@ def test_a_name_that_is_not_blocked_is_forwarded_as_it_is() -> None:
         await isp.start()
         relay = relay_to(isp)
         assert await talk(relay, isp) == b"server-helloecho:payload"
-        assert relay.split == {HOST: False}
+        assert relay.routes == {HOST: relay_module.Route.AS_IS}
         # one record, the name whole inside it: nothing was cut
         assert len(isp.records) == 1 and HOST.encode() in isp.records[0]
 
@@ -155,7 +156,7 @@ def test_a_name_outside_the_zone_is_refused() -> None:
         await isp.start()
         relay = relay_to(isp)
         assert await talk(relay, isp, host="example.com") == b""
-        assert isp.records == [] and relay.split == {}
+        assert isp.records == [] and relay.routes == {}
 
     asyncio.run(scenario())
 
@@ -185,3 +186,99 @@ def test_the_log_names_a_failure_that_carries_no_text() -> None:
     assert (
         reason(RelayError("the server closed the connection")) == "the server closed the connection"
     )
+
+
+class FakeSocks:
+    """A SOCKS5 proxy standing in for Tor: it speaks the handshake and then carries the bytes to
+    an upstream that no filter touches — which is what a circuit through Tor amounts to here."""
+
+    def __init__(self, upstream_port: int, refuse: bool = False) -> None:
+        self.upstream_port = upstream_port
+        self.refuse = refuse
+        self.asked: list[str] = []
+        self.port = 0
+
+    async def start(self) -> None:
+        server = await asyncio.start_server(self.handle, "127.0.0.1", 0)
+        self.port = server.sockets[0].getsockname()[1]
+        self.server = server
+
+    def address(self) -> str:
+        return f"127.0.0.1:{self.port}"
+
+    async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        greeting = await reader.readexactly(2)
+        await reader.readexactly(greeting[1])  # the methods the client offers
+        writer.write(bytes([5, 0]))
+        await writer.drain()
+        head = await reader.readexactly(4)
+        size = (await reader.readexactly(1))[0]
+        name = (await reader.readexactly(size)).decode()
+        await reader.readexactly(2)  # port
+        self.asked.append(name)
+        if self.refuse or head[1] != 1:
+            writer.write(bytes([5, 5, 0, 1, 0, 0, 0, 0, 0, 0]))  # connection refused
+            await writer.drain()
+            writer.close()
+            return
+        writer.write(bytes([5, 0, 0, 1, 127, 0, 0, 1, 0, 0]))
+        await writer.drain()
+        up_reader, up_writer = await asyncio.open_connection("127.0.0.1", self.upstream_port)
+        await asyncio.gather(
+            relay_module._pipe(reader, up_writer),
+            relay_module._pipe(up_reader, writer),
+            return_exceptions=True,
+        )
+
+
+def test_a_filtered_name_goes_through_tor_and_the_cut_stays_the_fallback() -> None:
+    """Cutting the ClientHello only gets the handshake past the filter; the answer is throttled
+    after it. So a name the ISP filters is carried through Tor whenever there is a proxy."""
+
+    async def scenario() -> None:
+        isp = FakeIsp()  # filters HOST: a direct ClientHello naming it stays unanswered
+        await isp.start()
+        free = FakeIsp(blocked=None)  # what the same server looks like from a Tor exit
+        await free.start()
+        socks = FakeSocks(free.port)
+        await socks.start()
+        said: list[str] = []
+        relay = relay_to(isp, said, socks=socks.address())
+
+        assert await talk(relay, isp) == b"server-helloecho:payload"
+        assert relay.routes == {HOST: relay_module.Route.TOR}
+        # the name travelled to the proxy, so it was resolved there and not on this box
+        assert socks.asked == [HOST]
+        # nothing was ever cut: the filtered name never had to be
+        assert all(HOST.encode() in record for record in free.records)
+        assert any("through Tor" in line for line in said)
+
+        # the choice is remembered: the second connection goes straight through the proxy
+        await talk(relay, isp)
+        assert socks.asked == [HOST, HOST] and len(isp.records) == 1
+
+    asyncio.run(scenario())
+
+
+def test_a_refusing_proxy_leaves_the_cut_to_do_the_work() -> None:
+    async def scenario() -> None:
+        isp = FakeIsp()
+        await isp.start()
+        socks = FakeSocks(0, refuse=True)
+        await socks.start()
+        said: list[str] = []
+        relay = relay_to(isp, said, socks=socks.address())
+
+        assert await talk(relay, isp) == b"server-helloecho:payload"
+        assert relay.routes == {HOST: relay_module.Route.SPLIT}
+        assert any("does not get through either" in line for line in said)
+
+    asyncio.run(scenario())
+
+
+def test_the_socks_address_has_to_be_host_and_port() -> None:
+    async def scenario() -> None:
+        with pytest.raises(RelayError, match="SOCKS address"):
+            await relay_module.open_through_socks("10.77.0.60", "example.org", 443)
+
+    asyncio.run(scenario())
