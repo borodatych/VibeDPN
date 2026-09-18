@@ -514,6 +514,7 @@ jobs:
         run: |
           docker build -q -t ghcr.io/borodatych/vibedpn-core:e2e core
           docker build -q -t ghcr.io/borodatych/vibedpn-wg:e2e images/wg
+          docker build -q -t ghcr.io/borodatych/vibedpn-xray:e2e images/xray
       - name: The CLI in a venv
         run: |
           uv venv /tmp/e2e-venv --python 3.12
@@ -653,6 +654,9 @@ jobs:
           - name: tor
             repository: tor
             context: images/tor
+          - name: xray
+            repository: xray
+            context: images/xray
           - name: ui-full
             repository: ui
             context: ui

@@ -41,6 +41,12 @@ EXIT=e2e-exit
 EXIT_IP=198.18.0.30
 EXIT_PORT=51898
 EXIT_NAME=stand
+# The masking transport of uplink xray: one more provider of the stand, with its own address, so
+# "through xray" is an address too. The image is the official one the gateway is built from.
+XRAY=e2e-xray
+XRAY_IP=198.18.0.40
+XRAY_PORT=8443
+XRAY_IMAGE=ghcr.io/xtls/xray-core:26.3.27
 LAN=lan0
 LAN_SUBNET=192.168.77.0/24
 BOX_LAN_IP=192.168.77.1
@@ -85,7 +91,7 @@ cleanup() {
   if [ -n "${PY:-}" ] && [ -x "$PY" ]; then
     sudo "$PY" -c "from vibedpn.engine.router import remove_router; remove_router()" >/dev/null 2>&1 || true
   fi
-  docker rm -f "$WEB" "$VPS" "$EXIT" "$LISTENER" >/dev/null 2>&1 || true
+  docker rm -f "$WEB" "$VPS" "$EXIT" "$XRAY" "$LISTENER" >/dev/null 2>&1 || true
   docker network rm "$INTERNET" >/dev/null 2>&1 || true
   sudo ip netns del "$NETNS" 2>/dev/null || true
   sudo ip netns del "$NETNS2" 2>/dev/null || true
@@ -744,6 +750,48 @@ print(".".join(map(str, r[-4:])) if struct.unpack("!H", r[6:8])[0] else "")' "$S
   kill "$LIST_SERVER" 2>/dev/null || true
   LIST_SERVER=""
 fi
+
+log "uplink xray: a masking transport by a share link, and the device leaves through it"
+# A server of our own on the stand's internet: VLESS over plain TCP is enough to prove the path,
+# and what Reality adds to the rendered configuration is covered by the unit tests of engine/xray.
+XRAY_UUID="$(cat /proc/sys/kernel/random/uuid)"
+mkdir -m 700 "$WORK/xray"
+cat >"$WORK/xray/config.json" <<EOF
+{"log": {"loglevel": "warning"},
+ "inbounds": [{"port": 443, "protocol": "vless",
+   "settings": {"clients": [{"id": "$XRAY_UUID"}], "decryption": "none"},
+   "streamSettings": {"network": "tcp"}}],
+ "outbounds": [{"protocol": "freedom"}]}
+EOF
+docker run -d --name "$XRAY" --network "$INTERNET" --ip "$XRAY_IP" \
+  -p "$XRAY_PORT:443" -v "$WORK/xray:/usr/local/etc/xray:ro" "$XRAY_IMAGE" >/dev/null
+printf 'vless://%s@%s:%s?type=tcp&security=none#stand\n' "$XRAY_UUID" "$INTERNET_GATEWAY" "$XRAY_PORT" \
+  >"$WORK/xray-link"
+sudo "$CLI" xray enable --link-file "$WORK/xray-link" --dir "$BOX" | grep -q "uplink xray enabled" ||
+  fail "vibedpn xray enable failed"
+sudo "$CLI" xray show --dir "$BOX" | grep -q "uplink xray on" || fail "vibedpn xray show does not say it is on"
+sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up with uplink xray failed"
+wait_healthy vibedpn-xray-1
+# The rendered configuration holds the credentials and is written as a secret, not as a public file.
+[ "$(sudo stat -c '%a' "$BOX/data/xray/config/config.json")" = 600 ] ||
+  fail "the rendered xray configuration is not 600"
+sudo "$CLI" upstream xray --dir "$BOX" >/dev/null || fail "vibedpn upstream xray failed"
+await_exit "$XRAY_IP" "the device does not leave through uplink xray"
+echo "xray: the device leaves as $XRAY_IP"
+
+log "uplink xray: the kill switch holds when the server is gone"
+docker stop "$XRAY" >/dev/null
+await_exit none "with the xray server stopped the device still reaches the internet"
+docker start "$XRAY" >/dev/null
+await_exit "$XRAY_IP" "the device does not come back through xray when its server returns"
+sudo "$CLI" upstream vps --dir "$BOX" >/dev/null || fail "vibedpn upstream vps after xray failed"
+sudo "$CLI" xray disable --dir "$BOX" | grep -q "disabled" || fail "vibedpn xray disable failed"
+sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up after xray disable failed"
+if docker ps --format '{{.Names}}' | grep -q vibedpn-xray-1; then
+  fail "the gateway of the disabled uplink xray keeps running"
+fi
+await_exit "$VPS_IP" "the device lost the VPS after uplink xray was turned off"
+echo "xray off: the gateway is gone and the device is back on the VPS"
 
 log "named exit: removing it takes its file, its container and its uplink away"
 sudo "$CLI" mode full --dir "$BOX" >/dev/null || fail "vibedpn mode full before removing the named exit failed"
