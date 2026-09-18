@@ -1,0 +1,21 @@
+; VibeDPN: ssh jail. Dropped in by install.sh, never into jail.local: jail.d/*.local is read
+; after it, so an administrator's own settings stay in charge of everything but this jail.
+; No [DEFAULT] section here on purpose — it would silently override ignoreip, bantime and
+; maxretry of every other jail (man jail.conf(5)).
+; In fail2ban files `#` comments only at the start of a line; inline comments are ` ;`.
+[sshd]
+enabled = true
+; Debian 12 and later keep no /var/log/auth.log: the journal is the only source. The backend
+; needs python3-systemd, which fail2ban only Recommends — install.sh installs it explicitly.
+backend = systemd
+ignoreip = 127.0.0.1/8 ::1
+maxretry = 5
+findtime = 10m
+bantime = 1h
+bantime.increment = true
+bantime.maxtime = 1w
+; normal, not aggressive: aggressive counts a disconnect before authentication as an offence.
+mode = normal
+; The ban lands in the nftables table inet f2b-table, separate from the router's own tables.
+; It filters input only: a banned address keeps being routed, it just cannot reach the box.
+banaction = nftables-multiport

@@ -758,3 +758,55 @@ def test_gateway_needs_dhcp_port_and_its_lan_address() -> None:
     present = evaluate(facts(config=gateway_config(), lan_address_set=True))
     assert any(r.name == "lan address" and r.verdict is Verdict.OK for r in present)
     assert not any(r.name == "lan address" for r in evaluate(facts()))
+
+
+F2B_STATUS = """Status
+|- Number of jail:\t2
+`- Jail list:\tsshd, nginx-limit-req
+"""
+
+F2B_JAIL_STATUS = """Status for the jail: sshd
+|- Filter
+|  |- Currently failed:\t1
+|  `- Journal matches:\t_SYSTEMD_UNIT=sshd.service + _COMM=sshd
+`- Actions
+   |- Currently banned:\t2
+   `- Banned IP list:\t10.0.0.5 10.0.0.9
+"""
+
+
+def test_parse_fail2ban_reads_jails_and_bans() -> None:
+    assert doctor.parse_fail2ban_jails(F2B_STATUS) == ["sshd", "nginx-limit-req"]
+    assert doctor.parse_fail2ban_jails("Status\n|- Number of jail:\t0\n") == []
+    assert doctor.parse_fail2ban_banned(F2B_JAIL_STATUS) == 2
+    assert doctor.parse_fail2ban_banned("Status for the jail: sshd\n") is None
+
+
+def test_fail2ban_verdict_separates_counting_from_banning() -> None:
+    absent = by_name(evaluate(facts(fail2ban=doctor.Fail2banFact(installed=False))))["fail2ban"]
+    assert absent.verdict is Verdict.WARN
+
+    no_jail = by_name(evaluate(facts(fail2ban=doctor.Fail2banFact(True, jails=["nginx"]))))
+    assert no_jail["fail2ban"].verdict is Verdict.FAIL
+
+    # It runs, counts offenders and reports bans — with no table to put them in.
+    toothless = doctor.Fail2banFact(True, jails=["sshd"], banned=2, table=False)
+    assert by_name(evaluate(facts(fail2ban=toothless)))["fail2ban"].verdict is Verdict.FAIL
+
+    armed = doctor.Fail2banFact(True, jails=["sshd"], banned=0, table=True)
+    good = by_name(evaluate(facts(fail2ban=armed)))["fail2ban"]
+    assert good.verdict is Verdict.OK and "0 banned" in good.detail
+
+    asked = doctor.Fail2banFact(True, error="fail2ban-client status failed: not root")
+    assert by_name(evaluate(facts(fail2ban=asked)))["fail2ban"].verdict is Verdict.WARN
+
+
+def test_updates_verdict_needs_the_timer_not_only_the_file() -> None:
+    missing = by_name(evaluate(facts(updates=doctor.UpdatesFact(conf=False))))["updates"]
+    assert missing.verdict is Verdict.WARN
+
+    off = by_name(evaluate(facts(updates=doctor.UpdatesFact(conf=True, timer=False))))["updates"]
+    assert off.verdict is Verdict.FAIL
+
+    on = by_name(evaluate(facts(updates=doctor.UpdatesFact(conf=True, timer=True))))["updates"]
+    assert on.verdict is Verdict.OK

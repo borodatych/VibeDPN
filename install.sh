@@ -56,7 +56,7 @@ install_base_packages() {
   log "Installing base packages"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y -qq --no-install-recommends ca-certificates curl git iproute2 nftables python3 python3-venv >/dev/null
+  apt-get install -y -qq --no-install-recommends ca-certificates curl fail2ban git iproute2 nftables python3 python3-systemd python3-venv unattended-upgrades >/dev/null
 }
 
 # Official apt repository of Docker (https://docs.docker.com/engine/install/debian/); Raspberry Pi
@@ -134,6 +134,69 @@ install_cli() {
   log "CLI: $("$VIBEDPN_BIN" --version)"
 }
 
+# Host drop-ins from host/: the ssh jail of fail2ban and the unattended security upgrades.
+# Both are written only when their text differs, so re-running install.sh changes nothing;
+# an administrator's own [sshd] jail is left alone and the drop-in is skipped out loud.
+install_file() {
+  local src="$1" dst="$2"
+  if [ -e "$dst" ] && cmp -s "$src" "$dst"; then
+    return 1
+  fi
+  install -m 0644 -o root -g root "$src" "$dst"
+  return 0
+}
+
+# Says whether an [sshd] section already exists outside our own drop-in. Debian ships
+# jail.d/defaults-debian.conf with `enabled = true` under [sshd]; that one does not count,
+# it carries no settings of ours to clash with.
+foreign_sshd_jail() {
+  local ours="$1" file
+  for file in /etc/fail2ban/jail.local /etc/fail2ban/jail.d/*.local; do
+    [ -e "$file" ] || continue
+    [ "$file" = "$ours" ] && continue
+    grep -q '^\[sshd\]' "$file" && { echo "$file"; return 0; }
+  done
+  return 1
+}
+
+# In the chroot of an OS image no service manager runs: the packages enable their own units and
+# they start on the first boot of the box, so nothing is enabled or reloaded during the build.
+manage_unit() {
+  [ "$VIBEDPN_IMAGE_BUILD" = 1 ] && return 0
+  systemctl "$@"
+}
+
+install_hardening() {
+  local jail="/etc/fail2ban/jail.d/vibedpn-sshd.local" owner
+  local apt_conf="/etc/apt/apt.conf.d/52vibedpn-unattended-upgrades"
+
+  if [ -d /etc/fail2ban ]; then
+    # The systemd backend is the python module systemd.journal: fail2ban only Recommends it,
+    # and without it the jail does not start at all while the service still shows `active`.
+    python3 -c 'import systemd.journal' 2>/dev/null \
+      || die "python3-systemd is missing: the fail2ban jail would never start (backend = systemd)"
+    if owner="$(foreign_sshd_jail "$jail")"; then
+      log "fail2ban: an [sshd] jail already exists in $owner — VibeDPN drop-in skipped, yours stays"
+    else
+      if install_file "$VIBEDPN_DIR/host/fail2ban/vibedpn-sshd.local" "$jail"; then
+        log "fail2ban: ssh jail installed ($jail)"
+        manage_unit reload fail2ban 2>/dev/null || manage_unit restart fail2ban
+      fi
+      manage_unit enable -q fail2ban
+      manage_unit is-active -q fail2ban || manage_unit start fail2ban
+    fi
+  else
+    log "fail2ban is not installed — ssh jail skipped"
+  fi
+
+  if install_file "$VIBEDPN_DIR/host/apt/52vibedpn-unattended-upgrades" "$apt_conf"; then
+    log "Unattended security upgrades enabled ($apt_conf; the box never reboots on its own)"
+  fi
+  # Both timers ship with apt itself; without them the drop-in above would never fire.
+  manage_unit enable -q --now apt-daily.timer apt-daily-upgrade.timer \
+    || log "apt timers are not available — security upgrades stay manual"
+}
+
 add_docker_group() {
   local user="${SUDO_USER:-}"
   { [ -n "$user" ] && [ "$user" != "root" ]; } || return 0
@@ -151,6 +214,7 @@ main() {
   install_docker
   clone_or_update
   install_cli
+  install_hardening
   [ "$VIBEDPN_IMAGE_BUILD" = 1 ] || add_docker_group
   if [ "$VIBEDPN_IMAGE_BUILD" = 1 ]; then
     log "Done for the image. On the box: sudo vibedpn init"

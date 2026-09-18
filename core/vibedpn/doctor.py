@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import urllib.request
 from dataclasses import asdict, dataclass, field
@@ -44,6 +45,7 @@ from vibedpn.config import (
     parse_port_range,
 )
 from vibedpn.detect import (
+    SBIN_DIRS,
     SSHD,
     WIREGUARD_MODULE,
     HostProbe,
@@ -85,6 +87,12 @@ from vibedpn.engine.wg import SERVER_CONF_FILE, SERVER_KEY_FILE, server_address
 from vibedpn.engine.wg import SERVER_DIR as WG_SERVER_DIR
 
 NFTABLES_MODULE = "nf_tables"
+F2B_TABLE = "inet f2b-table"  # fail2ban builds it itself; without it a ban is bookkeeping
+F2B_JAIL = "sshd"  # the jail install.sh drops in from host/fail2ban/vibedpn-sshd.local
+F2B_CLIENT = "fail2ban-client"
+F2B_TIMEOUT = 5  # seconds: the client talks to a local socket, a slower answer means trouble
+UPDATE_TIMER = "apt-daily-upgrade.timer"
+UPDATE_CONF = Path("/etc/apt/apt.conf.d/52vibedpn-unattended-upgrades")
 IP_FORWARD_SYSCTL = Path("/proc/sys/net/ipv4/ip_forward")
 SS_ARGV = ["ss", "-H", "-lntup"]
 API_HOST = "127.0.0.1"
@@ -212,6 +220,47 @@ class DoctorFacts:
     # gateway mode: whether lan_address is configured on lan_interface; None: not checked
     lan_address_set: bool | None = None
     lan_wireless: bool | None = None  # network.wifi: lan_interface is a radio
+    fail2ban: Fail2banFact | None = None  # None: not gathered
+    updates: UpdatesFact | None = None
+
+
+@dataclass(frozen=True)
+class Fail2banFact:
+    """What fail2ban says about itself. ``installed`` false: the package is not on the host;
+    ``error`` set: it is there but could not be asked, which is a warn, never an ok."""
+
+    installed: bool
+    jails: list[str] = field(default_factory=list)
+    banned: int | None = None  # in F2B_JAIL; None: the jail is not there
+    table: bool | None = None  # F2B_TABLE loaded; None: nft could not tell
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class UpdatesFact:
+    """Unattended security upgrades: our drop-in, and the timer that actually fires it."""
+
+    conf: bool
+    timer: bool | None = None  # None: systemctl could not tell
+    error: str = ""
+
+
+def parse_fail2ban_jails(output: str) -> list[str]:
+    """Jail names from ``fail2ban-client status``: the line ``Jail list:\tsshd, nginx``."""
+    for line in output.splitlines():
+        _, sep, tail = line.partition("Jail list:")
+        if sep:
+            return [name.strip() for name in tail.split(",") if name.strip()]
+    return []
+
+
+def parse_fail2ban_banned(output: str) -> int | None:
+    """``Currently banned:`` of ``fail2ban-client status <jail>``; None when the line is absent."""
+    for line in output.splitlines():
+        _, sep, tail = line.partition("Currently banned:")
+        if sep and tail.strip().isdigit():
+            return int(tail.strip())
+    return None
 
 
 def parse_ss(output: str) -> list[Listener]:
@@ -305,6 +354,8 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
         _module_result("nf_tables", facts.nf_tables, "the router engine and Docker need it")
     )
     results.append(_ip_forward_result(facts.ip_forward))
+    results.append(_fail2ban_result(facts.fail2ban))
+    results.append(_updates_result(facts.updates))
     if config is not None and config.role is Role.VPS:
         results.extend(_firewall_results(config, facts))
         if facts.tunnel:
@@ -767,6 +818,56 @@ def _ssh_result(ssh_ports: list[int], listeners: list[Listener] | None) -> Check
     return CheckResult("ssh", Verdict.OK, f"sshd listens on {heard}, open in the firewall")
 
 
+def _fail2ban_result(fact: Fail2banFact | None) -> CheckResult:
+    """A jail that counts offenders and a table that holds them are two different facts: on a
+    host without nft fail2ban runs, reports bans and blocks nothing (its own set never lands)."""
+    hint = "re-run install.sh: it installs fail2ban with the ssh jail"
+    if fact is None or not fact.installed:
+        return CheckResult(
+            "fail2ban", Verdict.WARN, "not installed: ssh has nothing against guessing", hint
+        )
+    if fact.error:
+        return CheckResult("fail2ban", Verdict.WARN, fact.error, "systemctl status fail2ban")
+    if F2B_JAIL not in fact.jails:
+        return CheckResult(
+            "fail2ban",
+            Verdict.FAIL,
+            f"runs without the {F2B_JAIL} jail (jails: {', '.join(fact.jails) or 'none'})",
+            "journalctl -u fail2ban: a missing python3-systemd keeps the jail from starting",
+        )
+    if fact.table is False:
+        return CheckResult(
+            "fail2ban",
+            Verdict.FAIL,
+            f"jail {F2B_JAIL} counts offenders, but table {F2B_TABLE} is not loaded:"
+            " a ban does nothing",
+            "apt install nftables, then systemctl restart fail2ban",
+        )
+    banned = "" if fact.banned is None else f", {fact.banned} banned"
+    return CheckResult("fail2ban", Verdict.OK, f"jail {F2B_JAIL} is on{banned}")
+
+
+def _updates_result(fact: UpdatesFact | None) -> CheckResult:
+    """Security updates of the OS: the drop-in decides what, the timer decides whether at all."""
+    hint = "re-run install.sh: it installs unattended-upgrades and turns the apt timers on"
+    if fact is None:
+        return CheckResult("updates", Verdict.WARN, "could not be checked", hint)
+    if not fact.conf:
+        return CheckResult(
+            "updates", Verdict.WARN, f"{UPDATE_CONF.name} is missing: no security updates", hint
+        )
+    if fact.timer is None:
+        return CheckResult("updates", Verdict.WARN, fact.error or "systemctl is silent", hint)
+    if not fact.timer:
+        return CheckResult(
+            "updates",
+            Verdict.FAIL,
+            f"{UPDATE_TIMER} is off: the box installs no security updates",
+            f"systemctl enable --now {UPDATE_TIMER}",
+        )
+    return CheckResult("updates", Verdict.OK, f"security updates on, {UPDATE_TIMER} enabled")
+
+
 def _ip_forward_result(ip_forward: bool | None) -> CheckResult:
     if ip_forward is None:
         return CheckResult("ip_forward", Verdict.WARN, f"cannot read {IP_FORWARD_SYSCTL}")
@@ -927,6 +1028,8 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         secrets=secrets,
         wireguard=module_present(WIREGUARD_MODULE),
         nf_tables=module_present(NFTABLES_MODULE),
+        fail2ban=_fail2ban_fact(),
+        updates=_updates_fact(),
         ip_forward=_read_ip_forward(),
         listeners=listeners,
         is_root=os.geteuid() == 0,
@@ -1117,6 +1220,68 @@ def _chain_present(table: str, chain: str) -> bool | None:
     if probe.returncode == 0:
         return True
     return False if "No such file or directory" in probe.stderr else None
+
+
+def _find_tool(name: str) -> str | None:
+    """``fail2ban-client`` and friends live in bin, but a service PATH may be narrower."""
+    search = os.pathsep.join([*os.get_exec_path(), *SBIN_DIRS])
+    return shutil.which(name, path=search)
+
+
+def _fail2ban_fact() -> Fail2banFact:
+    """Asks the running fail2ban, not the config files: a jail can be absent although its file
+    is in place (a broken backend), and present although no file of ours is."""
+    client = _find_tool(F2B_CLIENT)
+    if client is None:
+        return Fail2banFact(installed=False)
+    try:
+        status = subprocess.run(
+            [client, "status"], check=False, capture_output=True, text=True, timeout=F2B_TIMEOUT
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return Fail2banFact(installed=True, error=f"cannot run {F2B_CLIENT}: {exc}")
+    if status.returncode != 0:
+        reason = status.stderr.strip() or status.stdout.strip() or "not root"
+        return Fail2banFact(installed=True, error=f"{F2B_CLIENT} status failed: {reason}")
+    jails = parse_fail2ban_jails(status.stdout)
+    if F2B_JAIL not in jails:
+        return Fail2banFact(installed=True, jails=jails)
+    banned = None
+    try:
+        jail = subprocess.run(
+            [client, "status", F2B_JAIL],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=F2B_TIMEOUT,
+        )
+        banned = parse_fail2ban_banned(jail.stdout) if jail.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        banned = None
+    table, _ = _table_present(F2B_TABLE)
+    return Fail2banFact(installed=True, jails=jails, banned=banned, table=table)
+
+
+def _updates_fact() -> UpdatesFact:
+    conf = UPDATE_CONF.is_file()
+    systemctl = _find_tool("systemctl")
+    if systemctl is None:
+        return UpdatesFact(conf=conf, error="systemctl not found on the host")
+    try:
+        probe = subprocess.run(
+            [systemctl, "is-enabled", UPDATE_TIMER],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=F2B_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return UpdatesFact(conf=conf, error=f"cannot run systemctl: {exc}")
+    state = probe.stdout.strip()
+    # `static` and `indirect` are enabled in effect: the unit runs, it just has no own symlink.
+    return UpdatesFact(
+        conf=conf, timer=state in {"enabled", "enabled-runtime", "static", "indirect"}
+    )
 
 
 def _table_present(table: str) -> tuple[bool | None, str]:
