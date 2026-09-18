@@ -35,6 +35,12 @@ WEB_PORT=8080
 VPS=e2e-vps
 VPS_IP=198.18.0.20
 VPS_PORT=51899
+# A second provider on the same fake internet: the named exit wg-<name> of an owner who brings a
+# ready WireGuard file. Its own address is what tells "through the named exit" from "through the VPS".
+EXIT=e2e-exit
+EXIT_IP=198.18.0.30
+EXIT_PORT=51898
+EXIT_NAME=stand
 LAN=lan0
 LAN_SUBNET=192.168.77.0/24
 BOX_LAN_IP=192.168.77.1
@@ -79,7 +85,7 @@ cleanup() {
   if [ -n "${PY:-}" ] && [ -x "$PY" ]; then
     sudo "$PY" -c "from vibedpn.engine.router import remove_router; remove_router()" >/dev/null 2>&1 || true
   fi
-  docker rm -f "$WEB" "$VPS" "$LISTENER" >/dev/null 2>&1 || true
+  docker rm -f "$WEB" "$VPS" "$EXIT" "$LISTENER" >/dev/null 2>&1 || true
   docker network rm "$INTERNET" >/dev/null 2>&1 || true
   sudo ip netns del "$NETNS" 2>/dev/null || true
   sudo ip netns del "$NETNS2" 2>/dev/null || true
@@ -520,6 +526,75 @@ fi
 # the same mode again goes through core as well and changes nothing
 sudo "$CLI" mode full --dir "$BOX" | grep -q "^routing: mode=full" || fail "a repeated vibedpn mode full failed"
 await_exit "$VPS_IP" "a repeated vibedpn mode full moved the device off the VPS"
+
+log "named exit wg-$EXIT_NAME: a ready WireGuard file becomes an uplink of its own"
+# The second provider of the stand, with its own way out: through it the echo service reports
+# $EXIT_IP, through the VPS $VPS_IP — so the path is an address, not a counter.
+exit_server_key="$(wg_tool genkey)"
+exit_client_key="$(wg_tool genkey)"
+exit_server_pub="$(printf '%s' "$exit_server_key" | wg_tool pubkey)"
+exit_client_pub="$(printf '%s' "$exit_client_key" | wg_tool pubkey)"
+mkdir -m 700 "$WORK/exit"
+cat >"$WORK/exit/wg0.conf" <<EOF
+[Interface]
+Address = 10.79.0.1/24
+ListenPort = 51820
+PrivateKey = $exit_server_key
+
+[Peer]
+PublicKey = $exit_client_pub
+AllowedIPs = 10.79.0.2/32
+EOF
+cat >"$WORK/exit-peer.conf" <<EOF
+[Interface]
+PrivateKey = $exit_client_key
+Address = 10.79.0.2/32
+
+[Peer]
+PublicKey = $exit_server_pub
+Endpoint = $INTERNET_GATEWAY:$EXIT_PORT
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+EOF
+chmod 600 "$WORK/exit/wg0.conf" "$WORK/exit-peer.conf"
+docker run -d --name "$EXIT" --network "$INTERNET" --ip "$EXIT_IP" --cap-add NET_ADMIN \
+  --sysctl net.ipv4.ip_forward=1 -p "$EXIT_PORT:51820/udp" \
+  -v "$WORK/exit:/etc/wireguard:ro" "$WG_IMAGE" server >/dev/null
+i=0
+until docker exec "$EXIT" /usr/local/bin/entrypoint.sh health >/dev/null 2>&1; do
+  i=$((i + 1))
+  [ "$i" -lt "$TIMEOUT" ] || fail "the second provider did not come up"
+  sleep 1
+done
+printf 'table ip e2e {\n  chain postrouting {\n    type nat hook postrouting priority srcnat;\n    oifname "eth0" masquerade\n  }\n}\n' |
+  docker exec -i "$EXIT" nft -f -
+
+sudo "$CLI" uplink add "$EXIT_NAME" "$WORK/exit-peer.conf" --dir "$BOX" | grep -q "uplink wg-$EXIT_NAME" ||
+  fail "vibedpn uplink add failed"
+sudo "$CLI" uplink show --dir "$BOX" | grep -q "wg-$EXIT_NAME" || fail "vibedpn uplink show does not list the named exit"
+sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up with the named exit failed"
+wait_healthy "vibedpn-wg-$EXIT_NAME-1"
+sudo "$CLI" upstream "wg-$EXIT_NAME" --dir "$BOX" | grep -q "wg-$EXIT_NAME" ||
+  fail "vibedpn upstream wg-$EXIT_NAME failed"
+await_exit "$EXIT_IP" "the device does not leave through the named exit wg-$EXIT_NAME"
+echo "named exit: the device leaves as $EXIT_IP"
+if [ "$OFFLINE" != 1 ]; then
+  named_report="$(sudo "$CLI" doctor --network --dir "$BOX" 2>&1 || true)"
+  printf '%s\n' "$named_report" | grep -q "\[ ok \] exit wg-$EXIT_NAME *$EXIT_IP" ||
+    fail "doctor --network does not see the named exit: $(printf '%s\n' "$named_report" | grep "exit wg-")"
+fi
+
+log "named exit: switching back to the VPS, and removing it takes its container away"
+sudo "$CLI" upstream vps --dir "$BOX" >/dev/null || fail "vibedpn upstream vps after the named exit failed"
+await_exit "$VPS_IP" "the device does not come back to the VPS after the named exit"
+sudo "$CLI" uplink rm "$EXIT_NAME" --dir "$BOX" | grep -q "removed" || fail "vibedpn uplink rm failed"
+[ -e "$BOX/secrets/wg-$EXIT_NAME.conf" ] && fail "the file of the removed exit is still on the box"
+sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up after uplink rm failed"
+if docker ps --format '{{.Names}}' | grep -q "vibedpn-wg-$EXIT_NAME-1"; then
+  fail "the container of the removed exit keeps running"
+fi
+await_exit "$VPS_IP" "the device lost the VPS after the named exit was removed"
+echo "named exit removed: file, container and uplink are gone"
 
 if [ "$OFFLINE" != 1 ]; then
   log "routing.mode smart: a domain rule through the VPS, everything else direct"
