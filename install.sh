@@ -25,6 +25,7 @@ MIN_DOCKER_ENGINE="28.0.0"  # before 28.0.0 ports published on 127.0.0.1 were re
 DOCKER_KEYRING="/etc/apt/keyrings/docker.asc"
 DOCKER_SOURCES="/etc/apt/sources.list.d/docker.sources"
 DOCKER_PACKAGES="docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+F2B_JAIL="sshd"  # the jail of host/fail2ban/vibedpn-sshd.local
 
 log() { printf '\033[1;34m[vibedpn]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[vibedpn] error:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -159,11 +160,36 @@ foreign_sshd_jail() {
   return 1
 }
 
-# In the chroot of an OS image no service manager runs: the packages enable their own units and
-# they start on the first boot of the box, so nothing is enabled or reloaded during the build.
+# True only where units can actually be managed: not in the chroot of an OS image and not in a
+# container. There the packages enable their own units and those start on the first boot.
+has_systemd() {
+  [ "$VIBEDPN_IMAGE_BUILD" != 1 ] && [ -d /run/systemd/system ]
+}
+
 manage_unit() {
-  [ "$VIBEDPN_IMAGE_BUILD" = 1 ] && return 0
+  has_systemd || return 0
   systemctl "$@"
+}
+
+# The file on disk says nothing about what the running fail2ban does: after a reload that
+# changes banaction the jail keeps counting offenders with no action at all (measured on
+# fail2ban 1.1.0), and only a restart brings the action back. So the effect is asked for, not
+# assumed — and a jail that stays mute after the restart is said out loud, not passed over.
+arm_jail() {
+  has_systemd || return 0
+  jail_is_armed && return 0
+  log "fail2ban: jail $F2B_JAIL has no action — restarting the service"
+  systemctl restart fail2ban
+  jail_is_armed || log "fail2ban: jail $F2B_JAIL still has no action; a ban would do nothing"
+}
+
+jail_is_armed() {
+  local listed
+  listed="$(fail2ban-client get "$F2B_JAIL" actions 2>/dev/null || true)"
+  case "$listed" in
+    "" | *"No actions"*) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 install_hardening() {
@@ -180,13 +206,10 @@ install_hardening() {
     else
       if install_file "$VIBEDPN_DIR/host/fail2ban/vibedpn-sshd.local" "$jail"; then
         log "fail2ban: ssh jail installed ($jail)"
-        # restart, not reload: a reload that changes banaction leaves the jail with no actions
-        # at all (fail2ban 1.1.0, measured — it logs "Flush ticket(s)" for both and adds none,
-        # while the service stays `active` and the jail keeps counting offenders).
-        manage_unit restart fail2ban
       fi
       manage_unit enable -q fail2ban
       manage_unit is-active -q fail2ban || manage_unit start fail2ban
+      arm_jail
     fi
   else
     log "fail2ban is not installed — ssh jail skipped"
