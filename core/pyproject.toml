@@ -1,6 +1,6 @@
 [project]
 name = "vibedpn"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "VibeDPN core: router engine, API and CLI of the DPN box"
 requires-python = ">=3.11"
 license = "MIT"
