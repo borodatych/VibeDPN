@@ -578,11 +578,11 @@ sudo "$CLI" upstream "wg-$EXIT_NAME" --dir "$BOX" | grep -q "wg-$EXIT_NAME" ||
   fail "vibedpn upstream wg-$EXIT_NAME failed"
 await_exit "$EXIT_IP" "the device does not leave through the named exit wg-$EXIT_NAME"
 echo "named exit: the device leaves as $EXIT_IP"
-if [ "$OFFLINE" != 1 ]; then
-  named_report="$(sudo "$CLI" doctor --network --dir "$BOX" 2>&1 || true)"
-  printf '%s\n' "$named_report" | grep -q "\[ ok \] exit wg-$EXIT_NAME *$EXIT_IP" ||
-    fail "doctor --network does not see the named exit: $(printf '%s\n' "$named_report" | grep "exit wg-")"
-fi
+# The same echo server as the other doctor check: against the real internet every path of this
+# stand leaves with the runner's own address, and every exit would look like a leak.
+named_report="$(sudo env VIBEDPN_EXIT_IP_URL="http://$WEB_IP:$WEB_PORT/" "$CLI" doctor --network --dir "$BOX" 2>&1 || true)"
+printf '%s\n' "$named_report" | grep -q "\[ ok \] exit wg-$EXIT_NAME *$EXIT_IP" ||
+  fail "doctor --network does not see the named exit: $(printf '%s\n' "$named_report" | grep "exit wg-")"
 
 log "named exit: switching back to the VPS, and removing it takes its container away"
 sudo "$CLI" upstream vps --dir "$BOX" >/dev/null || fail "vibedpn upstream vps after the named exit failed"
