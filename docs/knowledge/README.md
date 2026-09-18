@@ -99,6 +99,9 @@
 
 - [uiPassword.md](security/uiPassword.md) — `secrets/htpasswd` с bcrypt: почему bcrypt, проверка с
   nginx:alpine и грабля `return 200` до `auth_basic`; заменено панелью start0 (Stage 6)
+- [fail2ban.md](security/fail2ban.md) — служба `active` и джейл `sshd` ничего не говорят о том, что
+  бан работает: `reload` со сменой `banaction` оставляет джейл без действий, таблица `f2b-table`
+  появляется только с первым баном, сквозная проверка — с адреса контейнера, а не своего
 
 ## ci
 

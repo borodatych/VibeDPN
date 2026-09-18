@@ -30,7 +30,9 @@ curl -fsSL https://raw.githubusercontent.com/borodatych/VibeDPN/next/install.sh 
 ## Что делает скрипт
 
 1. Проверяет ОС, релиз и архитектуру
-2. Ставит `ca-certificates curl git python3 python3-venv`
+2. Ставит `ca-certificates curl git iproute2 nftables python3 python3-venv`, а к ним
+   `fail2ban`, `python3-systemd` и `unattended-upgrades` — защиту ssh от перебора и
+   обновления безопасности ОС
 3. Ставит Docker Engine и Compose из официального apt-репозитория Docker
    (`/etc/apt/sources.list.d/docker.sources`, ключ `/etc/apt/keyrings/docker.asc`);
    если `docker compose version` уже работает — шаг пропускается
@@ -42,7 +44,18 @@ curl -fsSL https://raw.githubusercontent.com/borodatych/VibeDPN/next/install.sh 
    `sudo`. Членство в этой группе равно root на коробке; коробка — выделенное устройство, и это
    осознанная плата за удобство
 
+7. Кладёт из `host/` два файла и включает то, ради чего они нужны:
+   `/etc/fail2ban/jail.d/vibedpn-sshd.local` (джейл ssh: пять промахов за 10 минут — час бана,
+   повтор удлиняет до недели) и `/etc/apt/apt.conf.d/52vibedpn-unattended-upgrades` (обновления
+   безопасности, без самовольной перезагрузки — коробка роутер).
+   Файлы переписываются, только если текст отличается. Свой джейл `[sshd]`, если он у вас уже
+   есть, скрипт не трогает и говорит об этом. Дальше он спрашивает у работающего fail2ban, есть
+   ли у джейла действие, и перезапускает службу, если действий нет: файл на месте о работающем
+   бане ничего не говорит (`docs/knowledge/security/fail2ban.md`)
+
 Скрипт идемпотентен: повторный запуск обновляет клон и CLI, ничего не ломая.
+Правка самого `install.sh` доезжает до коробки **со следующего прогона**: скрипт обновляет свой
+же файл, а работает всё ещё со старого.
 
 ## Переменные
 
@@ -313,6 +326,36 @@ sudo vibedpn backup
 Архив ляжет в `/opt/vibedpn/backups/vibedpn-<время>.tar.gz` (или туда, куда укажет `--out`).
 Коробка на несколько секунд остановится и поднимется сама.
 В архиве пароли и ключи нод: храните его как пароль, не в общей папке.
+
+Копия рядом с коробкой не спасает от самой коробки — сгорела она, сгорел и архив.
+Забрать копию себе (запускается **на вашей машине**, не на коробке):
+
+```bash
+VIBEDPN_BACKUP_DIR=~/vibedpn-backups scripts/pullBackup.sh
+```
+
+Скрипт просит у коробки свежий архив, забирает его потоком через ssh, кладёт с правами 600 в
+каталог 700, проверяет распаковкой и оставляет последние `VIBEDPN_BACKUP_KEEP` штук (по умолчанию
+14) и у себя, и на коробке.
+Ключей на коробке для этого не заводится: тянет ваша машина, коробка наружу не ходит.
+Переменные: `VIBEDPN_SSH_ALIAS` (по умолчанию `vibedpn`), `VIBEDPN_BACKUP_DIR`,
+`VIBEDPN_BACKUP_KEEP`.
+
+Раз в неделю ночью, на macOS — через launchd:
+
+```bash
+launchctl submit -l vibedpn.backup -- /bin/bash -lc \
+  'VIBEDPN_BACKUP_DIR=~/vibedpn-backups /path/to/VibeDPN/scripts/pullBackup.sh'
+```
+
+На Linux — строкой в `crontab -e`:
+
+```
+17 4 * * 0 VIBEDPN_BACKUP_DIR=$HOME/vibedpn-backups /path/to/VibeDPN/scripts/pullBackup.sh
+```
+
+Ночью не из вежливости: на время копии коробка останавливает сервисы, и сеть дома на эти секунды
+пропадает. Замер на коробке владельца — 40 секунд на архив в 36 МБ вместе с паузой.
 
 Восстановить на этой же или новой коробке после `install.sh`:
 
