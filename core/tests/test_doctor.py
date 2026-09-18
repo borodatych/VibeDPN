@@ -827,3 +827,36 @@ def test_updates_verdict_needs_the_timer_not_only_the_file() -> None:
 
     on = by_name(evaluate(facts(updates=doctor.UpdatesFact(conf=True, timer=True))))["updates"]
     assert on.verdict is Verdict.OK
+
+
+def test_exit_dpn_without_a_session_is_not_called_a_leak() -> None:
+    """The probe asks from inside the gateway, so it measures the node's own traffic — and the
+    node leaves direct by design. LAN traffic without a session is held by the kill switch."""
+    direct = doctor.ExitFact("direct", "203.0.113.7")
+    config = full_client()
+
+    def verdict(item: doctor.ExitFact, connection: str) -> CheckResult:
+        results = evaluate(facts(config=config, exits=[direct, item], dpn_connection=connection))
+        return by_name(results)["exit dpn"]
+
+    no_session = verdict(doctor.ExitFact("dpn", "203.0.113.7"), "NotConnected")
+    assert no_session.verdict is Verdict.WARN and "no session (NotConnected)" in no_session.detail
+
+    # The morning shape of the same state: a tunnel that carries nothing answers with silence.
+    silent = verdict(doctor.ExitFact("dpn", None, "download timed out"), "NotConnected")
+    assert silent.verdict is Verdict.WARN and "no session" in silent.detail
+
+    # The node cannot be asked: still not a leak, and the text says why it is unsure.
+    unknown = verdict(doctor.ExitFact("dpn", "203.0.113.7"), "")
+    assert unknown.verdict is Verdict.WARN and "does not answer" in unknown.detail
+
+    # Connected and still leaving with the box's own address — that one is a real leak.
+    leak = verdict(doctor.ExitFact("dpn", "203.0.113.7"), "Connected")
+    assert leak.verdict is Verdict.FAIL and "bypasses the tunnel" in leak.hint
+
+    through = verdict(doctor.ExitFact("dpn", "198.51.100.20"), "Connected")
+    assert through.verdict is Verdict.OK and through.detail == "198.51.100.20"
+
+    # A tunnel that works while the node calls itself disconnected is still a working tunnel.
+    early = verdict(doctor.ExitFact("dpn", "198.51.100.20"), "NotConnected")
+    assert early.verdict is Verdict.OK

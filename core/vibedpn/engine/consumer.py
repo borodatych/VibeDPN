@@ -26,6 +26,8 @@ CONSUMER_TEQUILAPI = tequilapi_url("10.77.0.20")  # the gateway address of dpn i
 # `GET /identities/{id}` asks the blockchain for registration and balance: seconds, not the
 # fraction of a second the provider statistics take (a 2 s timeout failed on the home stand).
 CONSUMER_TIMEOUT_SECONDS = 20.0
+# `GET /connection` asks the node about itself only: no blockchain, no discovery.
+STATE_TIMEOUT = 3.0
 SERVICE_TYPE = "wireguard"
 REGISTERED = "Registered"
 REGISTRATION_IN_PROGRESS = "InProgress"
@@ -47,6 +49,16 @@ class ConsumerState:
     error: str = ""
     balance_wei: str = "0"  # MYST in wei; before registration it is the MYST on channel_address
     channel_address: str = ""  # where MYST on Polygon tops the consumer up
+
+
+def connection_status(url: str = CONSUMER_TEQUILAPI, timeout: float = STATE_TIMEOUT) -> str:
+    """The word the node uses for its session: ``Connected``, ``NotConnected``, ``Connecting``…
+    Empty when the node cannot be asked — a caller must not read that as "no session"."""
+    try:
+        body = TequilaClient(base_url=url, timeout=timeout).get("/connection")
+    except MystError:
+        return ""
+    return _field(body, "status")
 
 
 def _field(body: object, name: str) -> str:

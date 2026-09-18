@@ -53,6 +53,7 @@ from vibedpn.detect import (
     module_present,
     parse_interface,
 )
+from vibedpn.engine.consumer import CONNECTED, connection_status
 from vibedpn.engine.myst import (
     NAT_OPEN,
     NAT_PUNCHABLE,
@@ -222,6 +223,8 @@ class DoctorFacts:
     lan_wireless: bool | None = None  # network.wifi: lan_interface is a radio
     fail2ban: Fail2banFact | None = None  # None: not gathered
     updates: UpdatesFact | None = None
+    # `GET /connection` of the consumer node; "" when it was not asked or did not answer.
+    dpn_connection: str = ""
 
 
 @dataclass(frozen=True)
@@ -654,7 +657,7 @@ def _lan_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
         if variant is not None:
             results.append(variant)
     if facts.exits is not None:
-        results.extend(_exit_results(config, facts.exits, facts.dns_uplink))
+        results.extend(_exit_results(config, facts.exits, facts.dns_uplink, facts.dpn_connection))
     return results
 
 
@@ -717,9 +720,10 @@ def parse_exit_address(text: str) -> str | None:
 
 
 def _exit_results(
-    config: Config, exits: list[ExitFact], dns_uplink: bool | None
+    config: Config, exits: list[ExitFact], dns_uplink: bool | None, dpn_connection: str
 ) -> list[CheckResult]:
-    """An uplink that answers with the direct address carries nothing through its tunnel."""
+    """An uplink that answers with the direct address carries nothing through its tunnel — with
+    one exception, uplink dpn without a session, which is told apart from a leak below."""
     direct = next((item for item in exits if item.name == DIRECT_EXIT), None)
     results = []
     if direct is not None:
@@ -739,6 +743,24 @@ def _exit_results(
             continue
         name = f"exit {item.name}"
         service = uplink_service(item.name)
+        tunnelled = item.address is not None and (direct is None or item.address != direct.address)
+        if not tunnelled and item.name == Upstream.DPN.value and dpn_connection != CONNECTED:
+            # The probe asks from inside the gateway, so it measures the node's OWN traffic — and
+            # that one goes direct by design: the node has to reach discovery, the blockchain and
+            # the exit node itself (tests/e2e/home.sh asserts exactly this). LAN traffic is the
+            # one that belongs in the tunnel, and without a session the gateway drops it: policy
+            # drop in the forward chain of table inet vibedpn_dpn. So this is an uplink without a
+            # session, not a leak — measured on the box 2026-09-18, knowledge myst/exitCheck.md.
+            session = dpn_connection or "the node does not answer"
+            results.append(
+                CheckResult(
+                    name,
+                    Verdict.WARN,
+                    f"no session ({session}): the node leaves direct, LAN traffic is held back",
+                    "register the consumer identity and connect it; vibedpn status shows dpn",
+                )
+            )
+            continue
         if item.address is None:
             results.append(
                 CheckResult(
@@ -1077,6 +1099,7 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         rp_filter=rp_filter,
         lan_ipv6=lan_ipv6,
         exits=_exits(box_dir, config, services) if network and config is not None else None,
+        dpn_connection=_dpn_connection(config) if network and config is not None else "",
         memory_bytes=HostProbe().memory_bytes(),
         **_nat_facts(config, network=network),
         lan_address_set=_lan_address_set(config),
@@ -1134,6 +1157,14 @@ def _egress_table_current(subnet: str) -> tuple[bool | None, str]:
     if listing.returncode != 0:
         return None, f"nft cannot list {EGRESS_TABLE}: {listing.stderr.strip()}"
     return f"ip saddr {subnet} " in listing.stdout, ""
+
+
+def _dpn_connection(config: Config) -> str:
+    """The session word of the consumer node, for telling "no session" from a leak. Empty when
+    uplink dpn is off or the node does not answer."""
+    if not config.upstreams.is_enabled(Upstream.DPN):
+        return ""
+    return connection_status()
 
 
 def _exits(box_dir: Path, config: Config, services: list[ServiceStatus]) -> list[ExitFact] | None:
