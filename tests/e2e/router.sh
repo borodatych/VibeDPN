@@ -761,6 +761,9 @@ log "uplink xray: a masking transport by a share link, and the device leaves thr
 # one checked here, so the box goes back to failopen false first.
 sudo sed -i 's/^  failopen: true$/  failopen: false/' "$BOX/config.yaml"
 sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up with failopen false before xray failed"
+# And back to mode full: in smart the default upstream carries nobody — every rule names its own
+# channel — so `upstream xray` would change nothing and the device would go direct.
+sudo "$CLI" mode full --dir "$BOX" >/dev/null || fail "vibedpn mode full before the xray checks failed"
 XRAY_UUID="$(cat /proc/sys/kernel/random/uuid)"
 mkdir -m 755 "$WORK/xray"  # the official image runs as nonroot and has to read this
 cat >"$WORK/xray/config.json" <<EOF
