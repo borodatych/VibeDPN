@@ -180,7 +180,10 @@ install_hardening() {
     else
       if install_file "$VIBEDPN_DIR/host/fail2ban/vibedpn-sshd.local" "$jail"; then
         log "fail2ban: ssh jail installed ($jail)"
-        manage_unit reload fail2ban 2>/dev/null || manage_unit restart fail2ban
+        # restart, not reload: a reload that changes banaction leaves the jail with no actions
+        # at all (fail2ban 1.1.0, measured — it logs "Flush ticket(s)" for both and adds none,
+        # while the service stays `active` and the jail keeps counting offenders).
+        manage_unit restart fail2ban
       fi
       manage_unit enable -q fail2ban
       manage_unit is-active -q fail2ban || manage_unit start fail2ban

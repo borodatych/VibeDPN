@@ -18,4 +18,7 @@ bantime.maxtime = 1w
 mode = normal
 ; The ban lands in the nftables table inet f2b-table, separate from the router's own tables.
 ; It filters input only: a banned address keeps being routed, it just cannot reach the box.
-banaction = nftables-multiport
+; nftables-multiport still exists in 1.1.0, but its own file calls itself obsolete and names
+; this form as its successor. The table and the rule appear at the first ban, not at jail
+; start: fail2ban starts an action on demand.
+banaction = nftables[type=multiport]

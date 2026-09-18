@@ -782,6 +782,18 @@ def test_parse_fail2ban_reads_jails_and_bans() -> None:
     assert doctor.parse_fail2ban_banned("Status for the jail: sshd\n") is None
 
 
+NFT = "nftables[type=multiport]"
+
+F2B_ACTIONS = f"""The jail sshd has the following actions:
+{NFT}
+"""
+
+
+def test_parse_fail2ban_actions_tells_none_from_some() -> None:
+    assert doctor.parse_fail2ban_actions(F2B_ACTIONS) == [NFT]
+    assert doctor.parse_fail2ban_actions("No actions for jail sshd\n") == []
+
+
 def test_fail2ban_verdict_separates_counting_from_banning() -> None:
     absent = by_name(evaluate(facts(fail2ban=doctor.Fail2banFact(installed=False))))["fail2ban"]
     assert absent.verdict is Verdict.WARN
@@ -789,12 +801,17 @@ def test_fail2ban_verdict_separates_counting_from_banning() -> None:
     no_jail = by_name(evaluate(facts(fail2ban=doctor.Fail2banFact(True, jails=["nginx"]))))
     assert no_jail["fail2ban"].verdict is Verdict.FAIL
 
-    # It runs, counts offenders and reports bans — with no table to put them in.
-    toothless = doctor.Fail2banFact(True, jails=["sshd"], banned=2, table=False)
+    # The state a reload leaves behind: the jail counts offenders and can do nothing to them.
+    mute = doctor.Fail2banFact(True, jails=["sshd"], actions=[], banned=0)
+    assert by_name(evaluate(facts(fail2ban=mute)))["fail2ban"].verdict is Verdict.FAIL
+
+    # It holds bans, with no table to keep them in — that is bookkeeping, not a ban.
+    toothless = doctor.Fail2banFact(True, jails=["sshd"], actions=[NFT], banned=2, table=False)
     assert by_name(evaluate(facts(fail2ban=toothless)))["fail2ban"].verdict is Verdict.FAIL
 
-    armed = doctor.Fail2banFact(True, jails=["sshd"], banned=0, table=True)
-    good = by_name(evaluate(facts(fail2ban=armed)))["fail2ban"]
+    # No table and no bans is the normal state: fail2ban starts its action on demand.
+    fresh = doctor.Fail2banFact(True, jails=["sshd"], actions=[NFT], banned=0, table=False)
+    good = by_name(evaluate(facts(fail2ban=fresh)))["fail2ban"]
     assert good.verdict is Verdict.OK and "0 banned" in good.detail
 
     asked = doctor.Fail2banFact(True, error="fail2ban-client status failed: not root")

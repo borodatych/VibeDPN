@@ -231,6 +231,7 @@ class Fail2banFact:
 
     installed: bool
     jails: list[str] = field(default_factory=list)
+    actions: list[str] = field(default_factory=list)  # of F2B_JAIL: empty means it cannot ban
     banned: int | None = None  # in F2B_JAIL; None: the jail is not there
     table: bool | None = None  # F2B_TABLE loaded; None: nft could not tell
     error: str = ""
@@ -252,6 +253,19 @@ def parse_fail2ban_jails(output: str) -> list[str]:
         if sep:
             return [name.strip() for name in tail.split(",") if name.strip()]
     return []
+
+
+def parse_fail2ban_actions(output: str) -> list[str]:
+    """``fail2ban-client get <jail> actions``: a header line, then the names. The answer
+    ``No actions for jail <jail>`` is the state where the jail counts offenders and can do
+    nothing to them — a reload that changes ``banaction`` leaves it exactly there."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines or lines[0].lower().startswith("no actions"):
+        return []
+    names: list[str] = []
+    for line in lines[1:]:
+        names.extend(name.strip() for name in line.split(",") if name.strip())
+    return names
 
 
 def parse_fail2ban_banned(output: str) -> int | None:
@@ -835,16 +849,24 @@ def _fail2ban_result(fact: Fail2banFact | None) -> CheckResult:
             f"runs without the {F2B_JAIL} jail (jails: {', '.join(fact.jails) or 'none'})",
             "journalctl -u fail2ban: a missing python3-systemd keeps the jail from starting",
         )
-    if fact.table is False:
+    if not fact.actions:
         return CheckResult(
             "fail2ban",
             Verdict.FAIL,
-            f"jail {F2B_JAIL} counts offenders, but table {F2B_TABLE} is not loaded:"
-            " a ban does nothing",
+            f"jail {F2B_JAIL} counts offenders but has no action: a ban would do nothing",
+            "systemctl restart fail2ban: a reload that changes banaction drops every action",
+        )
+    if fact.banned and fact.table is False:
+        return CheckResult(
+            "fail2ban",
+            Verdict.FAIL,
+            f"jail {F2B_JAIL} holds {fact.banned} ban(s), but table {F2B_TABLE} is not loaded",
             "apt install nftables, then systemctl restart fail2ban",
         )
+    # An empty table is not a defect: fail2ban starts its action on demand, so the table and
+    # the rule appear at the first ban and nowhere earlier.
     banned = "" if fact.banned is None else f", {fact.banned} banned"
-    return CheckResult("fail2ban", Verdict.OK, f"jail {F2B_JAIL} is on{banned}")
+    return CheckResult("fail2ban", Verdict.OK, f"jail {F2B_JAIL} is on ({fact.actions[0]}){banned}")
 
 
 def _updates_result(fact: UpdatesFact | None) -> CheckResult:
@@ -1246,7 +1268,7 @@ def _fail2ban_fact() -> Fail2banFact:
     jails = parse_fail2ban_jails(status.stdout)
     if F2B_JAIL not in jails:
         return Fail2banFact(installed=True, jails=jails)
-    banned = None
+    banned, actions = None, []
     try:
         jail = subprocess.run(
             [client, "status", F2B_JAIL],
@@ -1256,10 +1278,18 @@ def _fail2ban_fact() -> Fail2banFact:
             timeout=F2B_TIMEOUT,
         )
         banned = parse_fail2ban_banned(jail.stdout) if jail.returncode == 0 else None
+        listed = subprocess.run(
+            [client, "get", F2B_JAIL, "actions"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=F2B_TIMEOUT,
+        )
+        actions = parse_fail2ban_actions(listed.stdout) if listed.returncode == 0 else []
     except (OSError, subprocess.TimeoutExpired):
-        banned = None
+        banned, actions = None, []
     table, _ = _table_present(F2B_TABLE)
-    return Fail2banFact(installed=True, jails=jails, banned=banned, table=table)
+    return Fail2banFact(installed=True, jails=jails, actions=actions, banned=banned, table=table)
 
 
 def _updates_fact() -> UpdatesFact:
