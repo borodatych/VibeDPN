@@ -21,6 +21,7 @@ from vibedpn.api.journal import Journal, ignore_event, store_journal
 from vibedpn.api.lists import ListsStatus, watch_lists
 from vibedpn.api.smart import DnsJournal, SmartLoop, watch_querylog
 from vibedpn.api.state import BoxState
+from vibedpn.api.traffic import watch_traffic
 from vibedpn.api.tunnel import run_servers
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.api.wifi import watch_wifi
@@ -174,6 +175,7 @@ def main() -> None:
         devices=devices,
         extra=[
             *_consumer_task(config, box_state, consumer, secrets_dir),
+            *_traffic_task(config, data_dir),
             *([partial(serve_resolver, resolver)] if resolver is not None else []),
             *([partial(watch_querylog, smart)] if smart is not None else []),
             *_list_task(box_state, resolver, lists, data_dir),
@@ -181,6 +183,13 @@ def main() -> None:
             *([partial(watch_wifi, config, journal)] if events is not None else []),
         ],
     )
+
+
+def _traffic_task(config: Config, data_dir: Path) -> list[Callable[[], Coroutine[Any, Any, None]]]:
+    """Counting what the peers of a VPS use; a box without a tunnel server counts nobody."""
+    if config.wg_server is None:
+        return []
+    return [partial(watch_traffic, data_dir)]
 
 
 def _consumer_task(

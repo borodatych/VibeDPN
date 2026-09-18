@@ -14,6 +14,15 @@ class PeerCreate(BaseModel):
     tunnel_only: bool = False
 
 
+class PeerTraffic(BaseModel):
+    """How much one peer has used over the period asked for, kept across restarts of the tunnel."""
+
+    name: str  # empty when the peer is gone but its totals are still kept
+    public_key: str
+    rx_bytes: int
+    tx_bytes: int
+
+
 class PeerView(BaseModel):
     """A peer as ``GET /peers`` lists it — never with its private key.
 

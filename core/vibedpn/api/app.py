@@ -2,6 +2,7 @@
 
 import time
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,6 +39,7 @@ from vibedpn.api.models import (
     NetworkView,
     PeerCreate,
     PeerFile,
+    PeerTraffic,
     PeerView,
     RoutingUpdate,
     RoutingView,
@@ -113,6 +115,9 @@ from vibedpn.engine.router import (
     uplink_table,
     used_uplinks,
 )
+from vibedpn.engine.traffic import connect as traffic_connect
+from vibedpn.engine.traffic import forget as traffic_forget
+from vibedpn.engine.traffic import totals as traffic_totals
 from vibedpn.engine.wg import (
     Peer,
     PeerExistsError,
@@ -1124,6 +1129,19 @@ def create_app(
         ),
     )
 
+    _add_peer_routes(application, tunnel, link_source, data_dir)
+
+    return application
+
+
+def _add_peer_routes(
+    application: FastAPI,
+    tunnel: Callable[[], tuple[Config, Path]],
+    link_source: Callable[[], dict[str, PeerLink] | None],
+    data_dir: Path | None,
+) -> None:
+    """The peers of a VPS: who is registered, how much they used, and adding or removing one."""
+
     @application.get("/peers", response_model=list[PeerView])
     def peers() -> list[PeerView]:
         box, secrets = tunnel()
@@ -1133,6 +1151,27 @@ def create_app(
             raise _http_error(exc) from exc
         links = link_source() if registered else None
         return [_view(peer, links) for peer in registered]
+
+    @application.get("/peers/traffic", response_model=list[PeerTraffic])
+    def peers_traffic(since: str | None = None) -> list[PeerTraffic]:
+        """Totals per peer since a day (``YYYY-MM-DD``), or since the box started counting."""
+        box, secrets = tunnel()
+        try:
+            names = {peer.public_key: peer.name for peer in list_peers(box, secrets)}
+        except WgError as exc:
+            raise _http_error(exc) from exc
+        if data_dir is None:  # a box that keeps nothing on disk counts nothing either
+            return []
+        with closing(traffic_connect(data_dir)) as connection:
+            return [
+                PeerTraffic(
+                    name=names.get(total.public_key, ""),
+                    public_key=total.public_key,
+                    rx_bytes=total.rx_bytes,
+                    tx_bytes=total.tx_bytes,
+                )
+                for total in traffic_totals(connection, since)
+            ]
 
     @application.post("/peers", response_model=PeerFile, status_code=201)
     def create_peer(request: PeerCreate) -> PeerFile:
@@ -1158,9 +1197,13 @@ def create_app(
     def delete_peer(name: str) -> Response:
         box, secrets = tunnel()
         try:
+            peer = find_peer(box, secrets, name)
             remove_peer(box, secrets, name)
         except WgError as exc:
             raise _http_error(exc) from exc
+        # Its totals go with it: they are of no use to anyone, and a peer added under the same name
+        # later would inherit them.
+        if data_dir is not None:
+            with closing(traffic_connect(data_dir)) as connection:
+                traffic_forget(connection, peer.public_key)
         return Response(status_code=204)
-
-    return application

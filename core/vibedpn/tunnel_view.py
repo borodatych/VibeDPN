@@ -7,7 +7,7 @@ from collections.abc import Sequence
 
 import segno
 
-from vibedpn.api.models import PeerView
+from vibedpn.api.models import PeerTraffic, PeerView
 from vibedpn.engine.myst import human_bytes
 
 SECONDS_PER_MINUTE = 60
@@ -68,3 +68,30 @@ def qr_code(text: str) -> str:
     buffer = io.StringIO()
     segno.make(text, micro=False).terminal(out=buffer, compact=True)
     return buffer.getvalue()
+
+
+TRAFFIC_HEADER = ("PEER", "RECEIVED", "SENT", "TOTAL")
+
+
+def render_peer_traffic(totals: Sequence[PeerTraffic], since: str | None) -> list[str]:
+    """The traffic table, busiest peer first; a peer that was removed keeps its key as its name."""
+    if not totals:
+        return ["no traffic counted yet (core samples the tunnel once a minute)"]
+    rows = [
+        (
+            item.name or f"(gone) {item.public_key[:12]}…",
+            _bytes(item.rx_bytes),
+            _bytes(item.tx_bytes),
+            _bytes(item.rx_bytes + item.tx_bytes),
+        )
+        for item in totals
+    ]
+    table = [TRAFFIC_HEADER, *rows]
+    widths = [max(len(row[column]) for row in table) for column in range(len(TRAFFIC_HEADER))]
+    lines = [
+        "  ".join(cell.ljust(widths[column]) for column, cell in enumerate(row)).rstrip()
+        for row in table
+    ]
+    period = f" since {since}" if since else ""
+    everything = sum(item.rx_bytes + item.tx_bytes for item in totals)
+    return [*lines, f"total{period}: {_bytes(everything)}"]

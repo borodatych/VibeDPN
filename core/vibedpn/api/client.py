@@ -29,6 +29,7 @@ from vibedpn.api.models import (
     NetworkRuleView,
     PeerCreate,
     PeerFile,
+    PeerTraffic,
     PeerView,
     RoutingUpdate,
     RoutingView,
@@ -42,6 +43,7 @@ CORE_API_HOST = "127.0.0.1"
 CORE_API_TIMEOUT_SECONDS = STATS_DEADLINE_SECONDS + 2.0
 VERSION_HINT = "CLI and core versions differ?"
 PEER_LIST: TypeAdapter[list[PeerView]] = TypeAdapter(list[PeerView])
+TRAFFIC_LIST: TypeAdapter[list[PeerTraffic]] = TypeAdapter(list[PeerTraffic])
 DEVICE_LIST: TypeAdapter[list[DeviceView]] = TypeAdapter(list[DeviceView])
 
 
@@ -155,6 +157,19 @@ def _peer_file(response: httpx.Response) -> PeerFile:
     except (ValueError, ValidationError) as exc:
         raise PeerRequestError(
             f"core answered something that is not a peer file ({VERSION_HINT})"
+        ) from exc
+
+
+def list_peer_traffic(
+    port: int, since: str | None = None, transport: httpx.BaseTransport | None = None
+) -> list[PeerTraffic]:
+    path = "/peers/traffic" + (f"?since={since}" if since else "")
+    response = _peer_request(port, "GET", path, httpx.codes.OK, transport=transport)
+    try:
+        return TRAFFIC_LIST.validate_python(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise PeerRequestError(
+            f"core answered something that is not a traffic list ({VERSION_HINT})"
         ) from exc
 
 

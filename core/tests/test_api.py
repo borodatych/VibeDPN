@@ -106,12 +106,16 @@ def test_client_reports_missing_stats(response: httpx.Response, expected: str) -
 
 # --- tunnel peers ---------------------------------------------------------------------------
 
+from contextlib import closing  # noqa: E402
 from datetime import UTC, datetime  # noqa: E402
 from ipaddress import IPv4Address  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 from vibedpn.api import client as core_api  # noqa: E402
 from vibedpn.api.models import PeerFile, PeerView  # noqa: E402
+from vibedpn.engine.traffic import Sample  # noqa: E402
+from vibedpn.engine.traffic import connect as connect_traffic  # noqa: E402
+from vibedpn.engine.traffic import record as record_traffic  # noqa: E402
 from vibedpn.engine.wg import PeerLink  # noqa: E402
 
 PEER_LINK = PeerLink("203.0.113.7:40312", 1789236372, 15432, 9876)
@@ -248,3 +252,33 @@ def test_peer_list_tells_pending_from_unknown(tmp_path: Path) -> None:
     assert live == {"dacha": True, "flat": False}  # flat is registered, wg0 does not have it yet
     unreadable = tunnel_app(tmp_path, None).get("/peers").json()
     assert [p["applied"] for p in unreadable] == [None, None]
+
+
+def test_peer_traffic_is_named_and_forgotten_with_its_peer(tmp_path: Path) -> None:
+    """`GET /peers/traffic` joins the totals with the peers by key, and removing a peer takes its
+    totals with it: they are of no use to anyone and the next peer must not inherit them."""
+    api = TestClient(
+        create_app(
+            Config.model_validate(vps_config()),
+            stats_source=stats,
+            secrets_dir=tmp_path,
+            data_dir=tmp_path,
+        )
+    )
+    created = api.post("/peers", json={"name": "dacha"})
+    assert created.status_code == 201
+    key = PeerView.model_validate(api.get("/peers").json()[0]).public_key
+
+    with closing(connect_traffic(tmp_path)) as connection:
+        record_traffic(connection, [Sample(key, 4_000, 1_000)], 1_789_000_000.0)
+
+    counted = api.get("/peers/traffic")
+    assert counted.status_code == 200
+    assert counted.json() == [
+        {"name": "dacha", "public_key": key, "rx_bytes": 4_000, "tx_bytes": 1_000}
+    ]
+    # a day after the traffic: nothing falls into that period
+    assert api.get("/peers/traffic?since=2099-01-01").json() == []
+
+    assert api.delete("/peers/dacha").status_code == 204
+    assert api.get("/peers/traffic").json() == []

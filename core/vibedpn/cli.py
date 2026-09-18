@@ -125,7 +125,7 @@ from vibedpn.engine.hostapd import (
 from vibedpn.engine.myst import render_stats
 from vibedpn.engine.xray import XrayError, parse_share_link
 from vibedpn.event_view import client_line, event_line
-from vibedpn.tunnel_view import qr_code, render_peers
+from vibedpn.tunnel_view import qr_code, render_peer_traffic, render_peers
 
 EXIT_USER_ERROR = 1
 T = TypeVar("T")
@@ -1366,6 +1366,22 @@ def peer_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     config = _vps_box(box_dir)
     peers = _core_call(lambda: core_api.list_peers(config.api.port))
     for line in render_peers(peers, time.time()):
+        typer.echo(line)
+
+
+@peer_app.command("traffic")
+def peer_traffic(
+    since: Annotated[
+        str | None,
+        typer.Option("--since", help="Count from this day (YYYY-MM-DD); by default, all of it."),
+    ] = None,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """How much every peer has used. The totals survive restarts: the counters of the interface
+    start from zero at every boot, and core adds only what is new to a total of its own."""
+    config = _vps_box(box_dir)
+    totals = _core_call(lambda: core_api.list_peer_traffic(config.api.port, since))
+    for line in render_peer_traffic(totals, since):
         typer.echo(line)
 
 
