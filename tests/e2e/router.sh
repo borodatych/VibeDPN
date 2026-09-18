@@ -111,6 +111,8 @@ fail() {
     echo "# router table"; sudo nft list table inet vibedpn_router
     echo "# containers"; docker ps -a --format '{{.Names}} {{.Status}}'
     echo "# wg-client"; docker exec vibedpn-wg-client-1 wg show wg0
+    echo "# xray gateway"; docker logs --tail 15 vibedpn-xray-1 2>&1 || true
+    echo "# xray server of the stand"; docker logs --tail 15 "$XRAY" 2>&1 || true
     echo "# fake VPS"; docker exec "$VPS" wg show wg0
     echo "# core"; docker logs --tail 25 vibedpn-core-1
   } >&2 2>&1 || true
@@ -754,8 +756,13 @@ fi
 log "uplink xray: a masking transport by a share link, and the device leaves through it"
 # A server of our own on the stand's internet: VLESS over plain TCP is enough to prove the path,
 # and what Reality adds to the rendered configuration is covered by the unit tests of engine/xray.
+# The stand left failopen true a few checks ago, and with it a dead gateway means "go direct" by
+# design. The kill switch of a live gateway with a dead server is a different thing, and it is the
+# one checked here, so the box goes back to failopen false first.
+sudo sed -i 's/^  failopen: true$/  failopen: false/' "$BOX/config.yaml"
+sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up with failopen false before xray failed"
 XRAY_UUID="$(cat /proc/sys/kernel/random/uuid)"
-mkdir -m 700 "$WORK/xray"
+mkdir -m 755 "$WORK/xray"  # the official image runs as nonroot and has to read this
 cat >"$WORK/xray/config.json" <<EOF
 {"log": {"loglevel": "warning"},
  "inbounds": [{"port": 10443, "protocol": "vless",
