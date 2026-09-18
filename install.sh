@@ -260,4 +260,10 @@ main() {
   fi
 }
 
-main "$@"
+# The script updates its own file (clone_or_update), and bash reads a script by offset: after
+# main returned it would read whatever the new file now holds at that place. The brace group is
+# parsed in one piece before main runs, so the exit below comes from the text bash already read.
+{
+  main "$@"
+  exit 0
+}
