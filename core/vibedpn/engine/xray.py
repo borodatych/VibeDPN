@@ -21,6 +21,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 # The dokodemo-door inbound of the rendered configuration; images/xray/entrypoint.sh redirects the
 # TCP of the LAN to this port and the two numbers have to stay equal.
 REDIRECT_PORT = 12345
+# The user xray runs as in images/xray: the gateway is not root, so the configuration core
+# renders has to belong to it by number — the same way AdGuard gets its data.
+XRAY_UID = 7754
 SHARE_SCHEME = "vless"
 PORT_MAX = 65535
 NETWORKS = ("tcp", "ws", "grpc")

@@ -758,13 +758,13 @@ XRAY_UUID="$(cat /proc/sys/kernel/random/uuid)"
 mkdir -m 700 "$WORK/xray"
 cat >"$WORK/xray/config.json" <<EOF
 {"log": {"loglevel": "warning"},
- "inbounds": [{"port": 443, "protocol": "vless",
+ "inbounds": [{"port": 10443, "protocol": "vless",
    "settings": {"clients": [{"id": "$XRAY_UUID"}], "decryption": "none"},
    "streamSettings": {"network": "tcp"}}],
  "outbounds": [{"protocol": "freedom"}]}
 EOF
 docker run -d --name "$XRAY" --network "$INTERNET" --ip "$XRAY_IP" \
-  -p "$XRAY_PORT:443" -v "$WORK/xray:/usr/local/etc/xray:ro" "$XRAY_IMAGE" >/dev/null
+  -p "$XRAY_PORT:10443" -v "$WORK/xray:/usr/local/etc/xray:ro" "$XRAY_IMAGE" >/dev/null
 printf 'vless://%s@%s:%s?type=tcp&security=none#stand\n' "$XRAY_UUID" "$INTERNET_GATEWAY" "$XRAY_PORT" \
   >"$WORK/xray-link"
 sudo "$CLI" xray enable --link-file "$WORK/xray-link" --dir "$BOX" | grep -q "uplink xray enabled" ||

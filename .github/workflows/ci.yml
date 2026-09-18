@@ -287,7 +287,8 @@ jobs:
             grep -q "meta mark set 0x00000010" /tmp/router.nft
             grep -q "icmp type redirect drop" /tmp/router.nft
             # Device policies: eight sets load (empty ones too) and win over the mode.
-            test "$(grep -c "set devices_" /tmp/router.nft)" = 10
+            # two sets per policy with an uplink (mac and ip): vps, dpn, tor, xray, bypass, block
+            test "$(grep -c "set devices_" /tmp/router.nft)" = 12
             grep -q "ether saddr @devices_bypass_mac return" /tmp/router.nft
             # nat-unprotected leaves the gateway ports to us: the LAN reaches them only through a gateway.
             grep -q "iifname \"eth0\" ip daddr 10.77.0.0/24 drop" /tmp/router.nft

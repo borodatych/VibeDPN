@@ -7,6 +7,7 @@ Pure parts (argv building, precondition checks, ``ps`` parsing) are unit-tested;
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ from vibedpn.bootstrap import (
 )
 from vibedpn.config import Config, ConfigError, Profile, load_config
 from vibedpn.engine.router import country_uplinks, wg_uplinks
-from vibedpn.engine.xray import XrayError, config_from_link
+from vibedpn.engine.xray import XRAY_UID, XrayError, config_from_link
 
 COMPOSE_FILE = "compose.yaml"
 COUNTRIES_FILE = "compose.countries.yaml"
@@ -275,6 +276,9 @@ def refresh_xray_config(box_dir: Path, config: Config) -> Path | None:
     try:
         directory.mkdir(parents=True, exist_ok=True)
         write_file(path, rendered, SECRET_FILE_MODE)
+        # The gateway does not run as root, and the file keeps the mode of a secret: so it changes
+        # owner instead of mode, or xray cannot read what core just wrote for it.
+        os.chown(path, XRAY_UID, XRAY_UID)
     except OSError as exc:
         raise ComposeError(f"cannot write {path}: {exc.strerror}; run with sudo?") from exc
     return path
