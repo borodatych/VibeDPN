@@ -584,17 +584,9 @@ named_report="$(sudo env VIBEDPN_EXIT_IP_URL="http://$WEB_IP:$WEB_PORT/" "$CLI" 
 printf '%s\n' "$named_report" | grep -q "\[ ok \] exit wg-$EXIT_NAME *$EXIT_IP" ||
   fail "doctor --network does not see the named exit: $(printf '%s\n' "$named_report" | grep "exit wg-")"
 
-log "named exit: switching back to the VPS, and removing it takes its container away"
+log "named exit: back to the VPS (the exit stays for the smart-mode rule below)"
 sudo "$CLI" upstream vps --dir "$BOX" >/dev/null || fail "vibedpn upstream vps after the named exit failed"
 await_exit "$VPS_IP" "the device does not come back to the VPS after the named exit"
-sudo "$CLI" uplink rm "$EXIT_NAME" --dir "$BOX" | grep -q "removed" || fail "vibedpn uplink rm failed"
-[ -e "$BOX/secrets/wg-$EXIT_NAME.conf" ] && fail "the file of the removed exit is still on the box"
-sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up after uplink rm failed"
-if docker ps --format '{{.Names}}' | grep -q "vibedpn-wg-$EXIT_NAME-1"; then
-  fail "the container of the removed exit keeps running"
-fi
-await_exit "$VPS_IP" "the device lost the VPS after the named exit was removed"
-echo "named exit removed: file, container and uplink are gone"
 
 if [ "$OFFLINE" != 1 ]; then
   log "routing.mode smart: a domain rule through the VPS, everything else direct"
@@ -731,9 +723,37 @@ print(".".join(map(str, r[-4:])) if struct.unpack("!H", r[6:8])[0] else "")' "$S
   echo "CNAME: $CNAME_TARGET follows $CNAME_SITE through smart_vps"
   sudo "$CLI" rule rm "$CNAME_SITE" --dir "$BOX" | grep -q "rule removed" || fail "vibedpn rule rm of the CNAME site failed"
 
+  log "smart: a rule through the named exit wg-$EXIT_NAME"
+  # The same nip.io trick as the rule through the VPS: a real name for the address of the stand's
+  # web server, so the device asks AdGuard, the resolver puts the answer into the channel set and
+  # the path is proven by the address the echo service reports.
+  sudo "$CLI" rule add "$SMART_NAME" wg --uplink "$EXIT_NAME" --dir "$BOX" | grep -q "applied" ||
+    fail "vibedpn rule add via wg failed"
+  fresh_answers "$SMART_NAME" >/dev/null
+  i=0
+  until sudo nft list set inet vibedpn_router "smart_wg_$EXIT_NAME" 2>/dev/null | grep -q "198.18.0.10"; do
+    i=$((i + 2))
+    [ "$i" -lt 60 ] || fail "the resolver did not put the address of $SMART_NAME into smart_wg_$EXIT_NAME"
+    sleep 2
+  done
+  await_exit "$EXIT_IP" "in mode smart the rule via wg does not send the device through the named exit"
+  echo "smart: $SMART_NAME through wg-$EXIT_NAME ($EXIT_IP)"
+  sudo "$CLI" rule rm "$SMART_NAME" --dir "$BOX" | grep -q "rule removed" || fail "vibedpn rule rm of the wg rule failed"
+
   sudo "$CLI" lists rm "$LIST_URL" --dir "$BOX" | grep -q "list removed" || fail "vibedpn lists rm failed"
   kill "$LIST_SERVER" 2>/dev/null || true
   LIST_SERVER=""
 fi
+
+log "named exit: removing it takes its file, its container and its uplink away"
+sudo "$CLI" mode full --dir "$BOX" >/dev/null || fail "vibedpn mode full before removing the named exit failed"
+sudo "$CLI" uplink rm "$EXIT_NAME" --dir "$BOX" | grep -q "removed" || fail "vibedpn uplink rm failed"
+[ -e "$BOX/secrets/wg-$EXIT_NAME.conf" ] && fail "the file of the removed exit is still on the box"
+sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up after uplink rm failed"
+if docker ps --format '{{.Names}}' | grep -q "vibedpn-wg-$EXIT_NAME-1"; then
+  fail "the container of the removed exit keeps running"
+fi
+await_exit "$VPS_IP" "the device lost the VPS after the named exit was removed"
+echo "named exit removed: file, container and uplink are gone"
 
 log "E2E-ROUTER-OK"
