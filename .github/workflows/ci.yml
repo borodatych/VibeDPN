@@ -435,9 +435,17 @@ jobs:
           docker run -d --name ui --network host -e UI_LISTEN_HOST=127.0.0.1 -e PORT=8088 \
             -e SERVER_URL=$base -e CLIENT_URL=$base -e UI_HOST_NAME=vibedpn.lan -e CORE_API_PORT=4480 -e UI_DB_PORT=5480 \
             "${secrets[@]}" vibedpn-ui:ci >/dev/null
-          for _ in $(seq 60); do curl -fsS -o /dev/null $base/api/health && break; sleep 1; done
+          for _ in $(seq 60); do curl -fsS -o /dev/null $base/api/health 2>/dev/null && break; sleep 1; done
           code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
-          test "$(code $base/api/health)" = 200
+          # A panel that never came up used to fail here with sixty identical curl errors and
+          # nothing about the container itself: say what it did instead of leaving a mystery.
+          if [ "$(code $base/api/health)" != 200 ]; then
+            echo "the panel did not answer on $base/api/health"
+            docker ps -a
+            docker logs ui 2>&1 | tail -40
+            docker logs ui-db 2>&1 | tail -10
+            exit 1
+          fi
           # Listens on the given address only.
           if curl -s -o /dev/null --max-time 3 "http://$(hostname -I | awk '{print $1}'):8088/api/health"; then
             echo "the panel answers on a non-listen address"; exit 1
