@@ -66,12 +66,11 @@ write_torrc() {
     echo "User $TOR_USER"
     echo "Log notice stdout"
     echo "Log notice file $NOTICE_LOG"
-    # One listener on every address: binding 127.0.0.1 as well would clash with it. Who may use
-    # it is decided by SocksPolicy below and by the input chain of the firewall.
+    # One listener on every address: binding 127.0.0.1 as well would clash with it. Who may use it
+    # is decided by the input chain of the firewall, not by SocksPolicy: that one governs every
+    # client connection, TransPort included, so `SocksPolicy reject *` locks the LAN devices out
+    # of the gateway itself ("Denying socks connection from untrusted address <LAN device>").
     echo "SocksPort 0.0.0.0:$SOCKS_PORT"
-    echo "SocksPolicy accept 127.0.0.1"
-    echo "SocksPolicy accept $SOCKS_CLIENT"
-    echo "SocksPolicy reject *"
     echo "TransPort 0.0.0.0:$TRANS_PORT"
     echo "DNSPort 0.0.0.0:$DNS_PORT"
     echo "VirtualAddrNetworkIPv4 $VIRTUAL_NETWORK"
