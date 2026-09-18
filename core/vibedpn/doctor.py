@@ -102,6 +102,10 @@ SUDO_HINT = "sudo vibedpn doctor"
 EXIT_IP_URL = "https://api.ipify.org"
 EXIT_IP_URL_ENV = "VIBEDPN_EXIT_IP_URL"
 EXIT_IP_TIMEOUT_SECONDS = 8
+# Tor builds a circuit before the first byte, and right after `vibedpn up` its gateway is still
+# reconnecting to the bridges. Measured on the box: a settled gateway answers in 1-2 s, a fresh one
+# needs more than eight, and a doctor run straight after `up` called a working exit dead.
+TOR_EXIT_IP_TIMEOUT_SECONDS = 20
 DIRECT_EXIT = "direct"
 # The gateway containers (`uplink_service`) all carry busybox wget with TLS: `wg-client` and the
 # named exits `wg-<name>` share one image, `myst-consumer` is the official alpine one (verified).
@@ -1021,6 +1025,11 @@ def _exits(box_dir: Path, config: Config, services: list[ServiceStatus]) -> list
     return [_direct_exit(url), *(_gateway_exit(box_dir, url, name, running) for name in names)]
 
 
+def exit_timeout(name: str) -> int:
+    """How long the exit check waits for an uplink; Tor is slower than a tunnel by design."""
+    return TOR_EXIT_IP_TIMEOUT_SECONDS if name == Upstream.TOR.value else EXIT_IP_TIMEOUT_SECONDS
+
+
 def _gateway_exit(box_dir: Path, url: str, name: str, running: set[str]) -> ExitFact:
     """The public address seen from inside the gateway container of one uplink."""
     service = uplink_service(name)
@@ -1028,7 +1037,7 @@ def _gateway_exit(box_dir: Path, url: str, name: str, running: set[str]) -> Exit
         return ExitFact(name, None, f"{service} is not running")
     argv = compose_argv(
         box_dir, "exec", "-T", service,
-        "wget", "-qO-", "-T", str(EXIT_IP_TIMEOUT_SECONDS), url,
+        "wget", "-qO-", "-T", str(exit_timeout(name)), url,
     )  # fmt: skip
     try:
         answer = capture(argv)

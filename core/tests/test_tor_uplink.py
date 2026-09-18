@@ -11,6 +11,7 @@ from vibedpn import cli
 from vibedpn.compose import TOR_BRIDGES_FILE, TOR_CONFIG_DIR, refresh_tor_bridges
 from vibedpn.config import DEFAULT_TOR_BRIDGES, Config, Profile, Upstream
 from vibedpn.config_edit import set_tor_uplink
+from vibedpn.doctor import EXIT_IP_TIMEOUT_SECONDS, TOR_EXIT_IP_TIMEOUT_SECONDS, exit_timeout
 from vibedpn.engine.router import (
     UPLINKS,
     router_ruleset,
@@ -148,3 +149,10 @@ def test_cli_enable_show_and_disable(tmp_path: Path) -> None:
     assert "tor  enabled  2 bridges" in shown.output and "snowflake 192.0.2.3:80" in shown.output
     disabled = runner.invoke(cli.app, ["tor", "disable", "--dir", str(tmp_path)])
     assert disabled.exit_code == 0 and "disabled" in disabled.output
+
+
+def test_the_exit_check_waits_longer_for_tor_than_for_a_tunnel() -> None:
+    """Found on the box: right after `vibedpn up` the gateway is still reconnecting to its bridges,
+    and eight seconds called a working exit dead."""
+    assert exit_timeout("tor") == TOR_EXIT_IP_TIMEOUT_SECONDS == 20
+    assert exit_timeout("vps") == exit_timeout("wg-proton") == EXIT_IP_TIMEOUT_SECONDS
