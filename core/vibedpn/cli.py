@@ -630,7 +630,12 @@ def update(
         != 0
     ):
         raise _fail("install.sh failed; the box keeps running the previous version")
-    _compose(box_dir, "pull", "--ignore-buildable")
+    # --ignore-pull-failures, not --ignore-buildable: the latter skips every service that has
+    # a `build:` section, which is all of ours, so the box pulled only the third-party images
+    # and kept running its own containers on the code they were built with (measured on the
+    # box 2026-09-18, knowledge linux/boxBackup.md). A service whose image is not published
+    # is the failure this flag forgives.
+    _compose(box_dir, "pull", "--ignore-pull-failures")
     # the restart runs the freshly installed CLI, not this process with the old code loaded
     if run([sys.executable, "-m", "vibedpn", "restart", "--dir", str(box_dir)]) != 0:
         raise _fail("restart after the update failed; see `vibedpn doctor`")

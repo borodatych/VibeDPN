@@ -10,10 +10,25 @@ trixie — Python `3.13.5`, `tarfile.data_filter` есть.
 `install.sh` принимает Python от 3.11, значит защита распаковки не может держаться на фильтре: члены архива проверяются кодом (абсолютные пути, `..`, ссылки наружу, устройства), фильтр `tar` добавляется, где он есть.
 Фильтр `data` не годится и там, где есть: он отбрасывает владельца файлов, а каталог Postgres панели должен остаться за пользователем контейнера — распаковка идёт с `numeric_owner=True`.
 
-## [провайдер] `docker compose pull --ignore-buildable`
+## [провайдер] `docker compose pull`: `--ignore-buildable` пропускает ровно наши образы
 
-**Суть (исполнением, Docker Compose v5.1.4 на colima VM):** `docker compose pull --help` — `--ignore-buildable  Ignore images that can be built`, `--ignore-pull-failures`, `--policy string  Apply pull policy ("missing"|"always")`.
-У сервисов коробки с `build:` (`core`, `wg`, `dnsmasq`, `hostapd` и другие) `update` тянет опубликованные образы и не пытается собирать чужие.
+**Было записано неверно** (по тексту `--help`, без прогона): будто с `--ignore-buildable`
+«update тянет опубликованные образы и не пытается собирать чужие». Флаг делает обратное.
+
+**Измерено 2026-09-18 на коробке** (Docker Compose 5.5.1), после того как CI опубликовал свежие
+`core` и `tor`, а `vibedpn update` оставил контейнеры на старом коде:
+
+```
+docker compose --profile '*' pull --ignore-buildable      # подтянул adguard, postgres, myst — и всё
+docker compose --profile '*' pull --ignore-pull-failures  # подтянул vibedpn-core:next и vibedpn-tor:next
+```
+
+`Ignore images that can be built` значит «пропустить сервисы, у которых есть `build:`» — а он есть у
+всех наших. Поэтому коробка месяцами обновляла бы CLI из git и продолжала запускать контейнеры со
+старым кодом: на ней ретранслятор ещё писал в журнал формулировки прошлой версии.
+
+`update` пользуется `--ignore-pull-failures`: тянет всё, а сервис без опубликованного образа —
+это та самая ошибка, которую флаг прощает.
 
 ## [провайдер] Таймер systemd для автообновления
 

@@ -90,5 +90,5 @@ def test_update_runs_install_sh_pull_and_the_new_cli_restart(
     assert result.exit_code == 0, result.output
     flat = [" ".join(call) for call in recorder.calls]
     assert any("VIBEDPN_BRANCH=next" in call and call.endswith("install.sh") for call in flat)
-    assert any(call.endswith("pull --ignore-buildable") for call in flat)
+    assert any(call.endswith("pull --ignore-pull-failures") for call in flat)
     assert any(" -m vibedpn restart --dir " in call for call in flat)
