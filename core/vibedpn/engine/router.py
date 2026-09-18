@@ -350,6 +350,23 @@ def wg_key(name: str) -> str:
     return f"{WG_KEY_PREFIX}{name}"
 
 
+# Every slot a named exit can take, whether or not this box has one: the rules and the tables of
+# a slot are cleaned up by number, exactly as the country slots are, and a slot missing from that
+# list is a slot nothing ever adds a rule for (the named exits were missing here — a box switched
+# to wg-<name> lost its rule and left through the ISP).
+WG_SLOTS = [
+    Uplink(
+        mark=WG_MARK_BASE + index,
+        table=WG_TABLE_BASE + index,
+        gateway=f"10.77.0.{WG_GATEWAY_BASE + index}",
+    )
+    for index in range(MAX_WG_UPLINKS)
+]
+# The uplinks of every kind, by their fixed numbering: what `plan_rules` walks and what the
+# teardown flushes. Anything routable has to be here.
+ALL_SLOTS = (*UPLINKS.values(), *COUNTRY_SLOTS, *WG_SLOTS)
+
+
 def wg_uplinks(config: Config) -> dict[str, Uplink]:
     """Name → its uplink for every named WireGuard exit, in the sorted order of the names.
 
@@ -651,7 +668,7 @@ def plan_rules(listing: str, wanted: Collection[Uplink]) -> tuple[list[list[str]
     by_table = {uplink.table: uplink for uplink in wanted}
     delete: list[list[str]] = []
     add: list[Uplink] = []
-    for table in sorted({uplink.table for uplink in (*UPLINKS.values(), *COUNTRY_SLOTS)}):
+    for table in sorted({uplink.table for uplink in ALL_SLOTS}):
         needed = by_table.get(table)
         kept = False
         for entry in (item for item in entries if item.get("priority") == table):
@@ -723,7 +740,7 @@ def apply_router(config: Config) -> list[str]:
     apply_ruleset(ruleset)
     delete_rules(delete)
     in_use = {table[key].table for key in used}
-    for uplink in (*UPLINKS.values(), *COUNTRY_SLOTS):
+    for uplink in ALL_SLOTS:
         if uplink.table not in in_use:
             _ip(["route", "flush", "table", str(uplink.table)], missing_ok=True)
     sync_docker_user(router_docker_user_rules(config), ROUTER_COMMENT)
@@ -735,7 +752,7 @@ def remove_router() -> None:
     _nft(["-f", "-"], ROUTER_TEARDOWN)
     if find_ip() is not None:
         delete_rules(plan_rules(_ip(["-j", "rule", "show"]), ())[0])
-        for uplink in (*UPLINKS.values(), *COUNTRY_SLOTS):
+        for uplink in ALL_SLOTS:
             _ip(["route", "flush", "table", str(uplink.table)], missing_ok=True)
     if find_iptables():
         sync_docker_user([], ROUTER_COMMENT)

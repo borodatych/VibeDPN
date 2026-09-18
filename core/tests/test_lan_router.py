@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from ruamel.yaml import YAML
 
-from vibedpn.config import Config, Upstream
+from vibedpn.config import Config, Upstream, WgUplink
 from vibedpn.engine import router
 from vibedpn.engine.router import (
     EGRESS_COMMENT,
@@ -16,6 +16,7 @@ from vibedpn.engine.router import (
     UPLINKS,
     UPSTREAMS_BRIDGE,
     UPSTREAMS_SUBNET,
+    WG_SLOTS,
     active_uplink,
     apply_router,
     device_sets,
@@ -26,6 +27,7 @@ from vibedpn.engine.router import (
     router_ruleset,
     set_gateway_route,
     used_uplinks,
+    wg_uplinks,
 )
 
 COMPOSE = Path(__file__).resolve().parents[2] / "compose.yaml"
@@ -402,3 +404,31 @@ def test_a_country_rule_gets_its_own_uplink_and_a_gone_country_loses_its_rule() 
         [["priority", "7740", "fwmark", "0x40", "table", "7740"]],
         [UPLINKS[Upstream.DPN]],
     )
+
+
+def test_a_named_wireguard_exit_gets_its_rule_like_any_other_uplink() -> None:
+    """The slots of the named exits were missing from the walk of `plan_rules`: a box switched to
+    wg-<name> had the mark set in nftables and no rule for it, so its LAN left through the ISP.
+    Caught by the router stand (2026-09-18), and the fix is that ALL_SLOTS holds every kind."""
+    box = lan_box("full")
+    assert box.routing is not None
+    named = box.model_copy(
+        update={
+            "upstreams": box.upstreams.model_copy(update={"wg": {"stand": WgUplink(enabled=True)}}),
+            "routing": box.routing.model_copy(update={"default_upstream": "wg-stand"}),
+        }
+    )
+    stand = wg_uplinks(named)["stand"]
+    assert stand == WG_SLOTS[0]
+    assert used_uplinks(named) == ["wg-stand"]
+
+    vps_rule = ["priority", "7710", "fwmark", "0x10", "table", "7710"]
+    # switching from the VPS to the named exit: the old rule goes, the new one is added
+    assert plan_rules(RULES_WITH_VPS, [stand]) == ([vps_rule], [stand])
+    # and once it is there, a second apply changes nothing
+    listing = RULES_WITH_VPS.replace(
+        '{"priority":32766',
+        f'{{"priority":{stand.table},"src":"all","fwmark":"{hex(stand.mark)}",'
+        f'"table":"{stand.table}"}},{{"priority":32766',
+    )
+    assert plan_rules(listing, [stand]) == ([vps_rule], [])
