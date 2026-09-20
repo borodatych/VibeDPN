@@ -17,8 +17,21 @@ readonly DEFAULT_DIR="$HOME/vibedpn-backups"
 readonly DEFAULT_KEEP=14
 
 sshAlias="${VIBEDPN_SSH_ALIAS:-$DEFAULT_ALIAS}"
+# An ssh configuration of its own, when the caller has one. A background job on macOS cannot read
+# a personal ~/.ssh/config that includes a file on an external volume: ssh refuses to start at all
+# ("Operation not permitted", knowledge platform/launchdExternalVolume.md), so the timer hands the
+# job a small config with just this box in it.
+sshConfig="${VIBEDPN_SSH_CONFIG:-}"
 backupDir="${VIBEDPN_BACKUP_DIR:-$DEFAULT_DIR}"
 keep="${VIBEDPN_BACKUP_KEEP:-$DEFAULT_KEEP}"
+
+sshTo() {
+  if [ -n "$sshConfig" ]; then
+    ssh -F "$sshConfig" -o BatchMode=yes "$@"
+  else
+    ssh -o BatchMode=yes "$@"
+  fi
+}
 
 log() { printf '\033[1;34m[vibedpn]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[vibedpn] error:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -28,7 +41,7 @@ die() { printf '\033[1;31m[vibedpn] error:\033[0m %s\n' "$*" >&2; exit 1; }
 # The box answers with `wrote <path> (...)`; the path is what has to be fetched. A silent or
 # differently shaped answer stops the run: pulling the wrong file would look like a backup.
 log "Asking $sshAlias for a fresh backup (its services pause for the copy)"
-answer="$(ssh -o BatchMode=yes "$sshAlias" 'sudo -n vibedpn backup')" \
+answer="$(sshTo "$sshAlias" 'sudo -n vibedpn backup')" \
   || die "backup on $sshAlias failed; run it by hand: ssh $sshAlias 'sudo vibedpn backup'"
 remote="$(printf '%s\n' "$answer" | sed -n 's/^wrote \([^ ]*\) .*/\1/p' | tail -1)"
 [ -n "$remote" ] || die "cannot tell the archive from the answer: $answer"
@@ -38,7 +51,7 @@ chmod 700 "$backupDir"
 name="$(basename "$remote")"
 log "Fetching $name"
 # scp of a root-owned file needs the same sudo as the backup itself, so it is streamed instead.
-ssh -o BatchMode=yes "$sshAlias" "sudo -n cat '$remote'" > "$backupDir/$name.part"
+sshTo "$sshAlias" "sudo -n cat '$remote'" > "$backupDir/$name.part"
 mv "$backupDir/$name.part" "$backupDir/$name"
 chmod 600 "$backupDir/$name"
 [ -s "$backupDir/$name" ] || die "the archive arrived empty: $backupDir/$name"
@@ -55,7 +68,7 @@ ls -1t "$backupDir"/vibedpn-*.tar.gz 2>/dev/null | tail -n +$((keep + 1)) | whil
   rm -f -- "$old"
 done
 
-ssh -o BatchMode=yes "$sshAlias" \
+sshTo "$sshAlias" \
   "sudo -n sh -c 'ls -1t /opt/vibedpn/backups/vibedpn-*.tar.gz 2>/dev/null | tail -n +$((keep + 1)) | while read -r old; do rm -f \"\$old\"; done'" \
   || log "could not prune the archives on the box; do it there by hand"
 

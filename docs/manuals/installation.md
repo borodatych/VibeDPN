@@ -341,12 +341,23 @@ VIBEDPN_BACKUP_DIR=~/vibedpn-backups scripts/pullBackup.sh
 Переменные: `VIBEDPN_SSH_ALIAS` (по умолчанию `vibedpn`), `VIBEDPN_BACKUP_DIR`,
 `VIBEDPN_BACKUP_KEEP`.
 
-Раз в неделю ночью, на macOS — через launchd:
+Раз в неделю ночью, на macOS — одной командой:
 
 ```bash
-launchctl submit -l vibedpn.backup -- /bin/bash -lc \
-  'VIBEDPN_BACKUP_DIR=~/vibedpn-backups /path/to/VibeDPN/scripts/pullBackup.sh'
+scripts/installBackupTimer.sh
 ```
+
+Задание заводится на воскресенье 04:30, архивы складываются в `~/VibeDPN-backups`, журнал —
+`~/Library/Logs/vibedpn-backup.log`. Расписание и каталог меняются переменными
+(`VIBEDPN_BACKUP_WEEKDAY`, `VIBEDPN_BACKUP_HOUR`, `VIBEDPN_BACKUP_MINUTE`, `VIBEDPN_BACKUP_DIR`).
+Запустить сразу, не дожидаясь ночи: `launchctl kickstart -k gui/$(id -u)/com.vibedpn.backup`.
+Снять: `launchctl bootout gui/$(id -u)/com.vibedpn.backup && rm ~/Library/LaunchAgents/com.vibedpn.backup.plist`.
+
+**Почему задание целиком живёт в домашнем каталоге, а не на внешнем диске:** macOS не пускает
+фоновые задания на внешние тома вообще — ни читать, ни писать, ни запускать, и отказ приходит без
+объяснений. Поэтому установщик кладёт рядом с заданием и копию скрипта, и его собственный
+ssh-конфиг. Отсюда же правило: **обновили репозиторий — перезапустите установщик**, он обновит
+копию. Разбор — [knowledge/platform/launchdExternalVolume.md](../knowledge/platform/launchdExternalVolume.md).
 
 На Linux — строкой в `crontab -e`:
 
