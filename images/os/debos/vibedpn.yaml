@@ -4,6 +4,9 @@
 {{- $image := or .image (printf "vibedpn-%s.img" $architecture) -}}
 # VibeDPN OS image for UEFI machines (N100 and other amd64, arm64 boards with UEFI), Debian trixie.
 #   debos -t architecture:arm64 -t branch:next images/os/debos/vibedpn.yaml
+# Run from the repository root: fakemachine shares only the recipe directory and the working
+# directory with its VM, and the recipe reads ../common and ../../../install.sh; the image lands in
+# the working directory.
 # No secret inside: access comes from user-data on the CIDATA partition (docs/decisions.md, 15).
 architecture: {{ $architecture }}
 
@@ -34,22 +37,49 @@ actions:
       - python3-venv
       - systemd-resolved
       - systemd-timesyncd
+      # cloud-init configures the network through ifupdown (its first renderer); without a network
+      # stack the image booted with no address at all (tests/os/uefiBoot.sh, 2026-09-20)
+      - ifupdown
+      - dhcpcd-base
+      # what a Debian install has and minbase does not: the first boot grows the root filesystem
+      # to the disk (cloud-init growpart and resizefs), fsck of both partitions, ps for the CLI,
+      # an editor, a pager and ping for the owner
+      - cloud-guest-utils
+      - gdisk
+      - e2fsprogs
+      - dosfstools
+      - procps
+      - nano
+      - less
+      - iputils-ping
 
   - action: overlay
     source: ../common
-    destination: /tmp/vibedpn-image
+    destination: /var/tmp/vibedpn-image
 
   - action: run
     chroot: true
-    command: cp /tmp/vibedpn-image/99-vibedpn.cfg /etc/cloud/cloud.cfg.d/99-vibedpn.cfg
+    command: cp /var/tmp/vibedpn-image/99-vibedpn.cfg /etc/cloud/cloud.cfg.d/99-vibedpn.cfg
+
+  # debootstrap names the root filesystem after the build VM (fakemachine); user-data may rename it
+  - action: run
+    chroot: true
+    command: echo vibedpn >/etc/hostname && printf '127.0.0.1\tlocalhost\n127.0.1.1\tvibedpn\n' >/etc/hosts
 
   - action: run
     chroot: false
-    command: cp "${RECIPEDIR}/../../../install.sh" "${ROOTDIR}/tmp/vibedpn-image/install.sh"
+    command: cp "${RECIPEDIR}/../../../install.sh" "${ROOTDIR}/var/tmp/vibedpn-image/install.sh"
 
   - action: run
     chroot: true
-    command: env VIBEDPN_REPO={{ $repo }} VIBEDPN_BRANCH={{ $branch }} sh /tmp/vibedpn-image/provision.sh
+    command: env VIBEDPN_REPO={{ $repo }} VIBEDPN_BRANCH={{ $branch }} sh /var/tmp/vibedpn-image/provision.sh
+
+  # openssh-server generated host keys while it was installed: every box from the image would share
+  # them. cloud-init makes new ones on the first boot (ssh_deletekeys and ssh_genkeytypes defaults),
+  # before sshd starts.
+  - action: run
+    chroot: true
+    command: rm -f /etc/ssh/ssh_host_*
 
   - action: image-partition
     imagename: {{ $image }}
@@ -74,6 +104,11 @@ actions:
   - action: filesystem-deploy
     setup-fstab: true
     setup-kernel-cmdline: true
+
+  # the kernel talks to the screen and to the serial port: headless boxes, VMs and tests/os/uefiBoot.sh
+  - action: run
+    chroot: true
+    command: sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet console=tty0 console={{ if eq $architecture "amd64" }}ttyS0{{ else }}ttyAMA0{{ end }},115200"/' /etc/default/grub
 
   - action: run
     chroot: true

@@ -128,17 +128,38 @@ colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && VIBEDPN_TA
 Рецепты и скрипты — в `images/os`: общее (`common/`: `provision.sh`, скрипт первого входа, настройка cloud-init, образец `user-data`), `debos/vibedpn.yaml` для UEFI и `pi-gen/` для Raspberry Pi.
 Как ими пользоваться владельцу — [osImages.md](osImages.md).
 
-UEFI-образ arm64 собирается на colima VM нативно, без KVM — `debos` прямо в контейнере от root.
-На томе Mac (virtiofs) корень образа не создаётся (`Permission denied` у `tar`), поэтому рецепты копируются на диск VM:
+Собираются образы только на Linux: debos поднимает виртуальную машину fakemachine и требует `/dev/kvm`, pi-gen — привилегированный контейнер с loop-устройствами и binfmt.
+На colima это не работает (knowledge `platform/piGen.md`); проверенный хост сборки — коробка N100 (Debian 13, Docker 29).
+
+UEFI-образ — из корня репозитория: fakemachine отдаёт VM только каталог рецепта и рабочий каталог, а рецепт читает `images/os/common` и `install.sh`.
 
 ```bash
-colima ssh -- sh -c 'B=/var/tmp/vibedpn-os; sudo rm -rf $B && mkdir -p $B/images && cp -R /Volumes/Storage/Projects/VibeCode/VibeDPN/images/os $B/images/os && cp /Volumes/Storage/Projects/VibeCode/VibeDPN/install.sh $B/ && docker run --rm --privileged -v $B:/recipes -w /recipes/images/os/debos godebos/debos --disable-fakemachine -t architecture:arm64 -t branch:next vibedpn.yaml'
+docker run --rm --device /dev/kvm -v "$PWD:/recipes" -w /recipes godebos/debos --fakemachine-backend=kvm --cpus 2 --memory 4GB --scratchsize 8GB -t architecture:amd64 -t branch:next images/os/debos/vibedpn.yaml
 ```
 
-Готовый образ — `/var/tmp/vibedpn-os/images/os/debos/vibedpn-arm64.img` на диске VM.
+Результат — `vibedpn-amd64.img` (6 ГБ, разрежённый, 1.3 ГБ на диске) в корне репозитория; на N100 сборка занимает 5–6 минут, загрузочный тест — полторы минуты.
+`architecture:arm64` собирает образ для плат arm64 с UEFI: эмуляцию на хост ставить не нужно, VM регистрирует `qemu-user` из самого контейнера debos.
+
+Образ Raspberry Pi на amd64-хосте требует пакета `qemu-user-binfmt` (`build-docker.sh` pi-gen ищет `qemu-aarch64` в `PATH`), на arm64 — ничего сверх Docker:
+
+```bash
+VIBEDPN_BRANCH=next sh images/os/pi-gen/build.sh
+```
+
+Результат — `images/os/pi-gen/work/deploy/image_<дата>-vibedpn-arm64.img.xz` (около 700 МБ); нативно на раннере `ubuntu-24.04-arm` сборка идёт 11 минут, под эмуляцией на N100 — около 65 минут.
+
+Проверки собранных образов — `tests/os`:
+
+- `tests/os/uefiBoot.sh vibedpn-amd64.img` загружает копию образа в QEMU (OVMF; KVM для родной архитектуры, иначе эмуляция), кладёт `user-data` с ключом на раздел `CIDATA` через mtools и проверяет то, что увидит владелец: cloud-init завёл пользователя, ssh отвечает ключом, `vibedpn --version`, Docker работает, ключи хоста sshd сделаны при загрузке, первый интерактивный вход открывает мастер `vibedpn init`. Нужны `qemu-system-x86 ovmf` (для arm64 — `qemu-system-arm qemu-efi-aarch64`), `mtools`, ssh; на коробке без них — одноразовый контейнер `tests/os/Dockerfile`:
+
+```bash
+docker build -t vibedpn-qemu-test tests/os && docker run --rm --device /dev/kvm -v "$PWD:/repo" -w /repo vibedpn-qemu-test sh tests/os/uefiBoot.sh vibedpn-amd64.img
+```
+
+- `sudo tests/os/piImage.sh <image.img.xz>` монтирует образ Raspberry Pi через loop и проверяет содержимое (checkout, CLI, Docker, скрипт первого входа, seed cloud-init на загрузочном разделе, запертый пользователь, ни ключей хоста, ни секретов) и запускает `vibedpn --version`, `docker --version` и `git` в chroot корня; на не-arm64 хосте нужен binfmt `qemu-aarch64` (тот же `qemu-user-binfmt`).
 
 В CI образы собирает workflow `os-images` (`.github/workflows/os-images.yml`): вручную с выбором ветки или по тегу `v*`.
-debos идёт на `ubuntu-24.04` с KVM, образ Raspberry Pi — `pi-gen` на `ubuntu-24.04-arm`; результат — артефакты прогона.
+debos идёт на `ubuntu-24.04` с KVM и после сборки гоняет `uefiBoot.sh`, образ Raspberry Pi — `pi-gen` на `ubuntu-24.04-arm` с `piImage.sh`; результат — артефакты прогона.
 
 ## Что не проверить локально
 

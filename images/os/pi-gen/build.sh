@@ -1,7 +1,8 @@
 #!/bin/sh
 # Build the VibeDPN image for Raspberry Pi (arm64) with pi-gen in Docker.
 #   VIBEDPN_BRANCH=next sh images/os/pi-gen/build.sh
-# Needs: an arm64 Linux host (or binfmt + qemu-user-static), Docker, git, tens of GB of disk.
+# Needs: an arm64 Linux host, or an amd64 one with qemu-user-binfmt (pi-gen's build-docker.sh looks
+# for qemu-aarch64 in PATH and registers binfmt), Docker, git, tens of GB of disk.
 # The result: images/os/pi-gen/work/deploy/*.img.xz
 set -eu
 
@@ -19,6 +20,9 @@ if [ ! -d "$WORK/.git" ]; then
 fi
 git -C "$WORK" fetch -q origin "$PI_GEN_COMMIT"
 git -C "$WORK" checkout -q "$PI_GEN_COMMIT"
+# Only stage-vibedpn exports an image: without this file pi-gen also exports the plain Lite image
+# of stage2 (run 35373779695: 7 more minutes and a 578 MB file next to ours)
+touch "$WORK/stage2/SKIP_IMAGES"
 
 rm -rf "$WORK/stage-vibedpn"
 cp -R "$HERE/stage-vibedpn" "$WORK/stage-vibedpn"

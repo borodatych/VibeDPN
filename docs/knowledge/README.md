@@ -69,7 +69,7 @@
 - [debianPi.md](platform/debianPi.md) — ядра Debian 12/13 и Raspberry Pi с `CONFIG_WIREGUARD=m`,
   Raspberry Pi OS на trixie; системный Python 3.11/3.13 и установка Docker из deb822-репозитория
 - [imageArchitectures.md](platform/imageArchitectures.md) — Docker v28 последний для armhf, Bun только x64/arm64: полный образ только amd64 и arm64; инструменты сборки на VM
-- [piGen.md](platform/piGen.md) — ветки `pi-gen`, пользователь без пароля и переименование, своя стадия, `build-docker.sh`; cloud-init в Raspberry Pi OS trixie; действия debos и загрузчик через `run`
+- [piGen.md](platform/piGen.md) — ветки `pi-gen`, пользователь без пароля и переименование, своя стадия, `build-docker.sh`; cloud-init в Raspberry Pi OS trixie; действия debos и загрузчик через `run`; fakemachine видит только каталог рецепта и рабочий каталог, `/tmp` корня скрыт tmpfs nspawn, `--scratchsize`; `qemu-user` в trixie статический и pi-gen на amd64 требует `qemu-user-binfmt`; `stage2/SKIP_IMAGES` против лишнего образа Lite
 - [launchdExternalVolume.md](platform/launchdExternalVolume.md) — фоновому заданию macOS внешний том недоступен целиком (чтение, запись, запуск), отказ немой: журнал на том же томе не пишется; вторая мина — `Include` в личном `~/.ssh/config`, указывающий на внешний том, валит ssh до старта
 
 ## linux

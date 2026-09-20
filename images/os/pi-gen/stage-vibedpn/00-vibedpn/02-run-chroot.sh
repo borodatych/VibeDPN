@@ -3,6 +3,6 @@
 # The revision of VibeDPN comes from the file 01-run.sh wrote (variables of the build stay outside).
 set -a
 # shellcheck source=/dev/null  # written by 01-run.sh inside the image during the build
-. /tmp/vibedpn-image/env
+. /var/tmp/vibedpn-image/env
 set +a
-sh /tmp/vibedpn-image/provision.sh
+sh /var/tmp/vibedpn-image/provision.sh

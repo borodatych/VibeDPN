@@ -42,7 +42,17 @@ Imager запишет настройку cloud-init на загрузочный 
 
 ## 4. Собрать самому
 
-Образ Raspberry Pi — на arm64-машине с Docker, нужны десятки гигабайт диска:
+Нужен Linux с Docker и `/dev/kvm` — например, сама коробка N100; на macOS и в colima образы не собираются.
+
+UEFI-образ — из корня репозитория, на N100 около 6 минут:
+
+```bash
+docker run --rm --device /dev/kvm -v "$PWD:/recipes" -w /recipes godebos/debos --fakemachine-backend=kvm --memory 4GB --scratchsize 8GB -t architecture:amd64 -t branch:main images/os/debos/vibedpn.yaml
+```
+
+Готовый файл — `vibedpn-amd64.img` в корне репозитория (`architecture:arm64` даёт `vibedpn-arm64.img`).
+
+Образ Raspberry Pi — на arm64-машине с Docker или на amd64 с пакетом `qemu-user-binfmt`; нужны десятки гигабайт диска:
 
 ```bash
 VIBEDPN_BRANCH=main sh images/os/pi-gen/build.sh
@@ -50,15 +60,13 @@ VIBEDPN_BRANCH=main sh images/os/pi-gen/build.sh
 
 Готовый файл — `images/os/pi-gen/work/deploy/`.
 
-UEFI-образы — `debos` в контейнере:
-
-```bash
-docker run --rm --privileged -v "$PWD:/recipes" -w /recipes/images/os/debos godebos/debos --disable-fakemachine -t architecture:amd64 -t branch:main vibedpn.yaml
-```
+Проверить собранное можно без железа: `tests/os/uefiBoot.sh` загружает UEFI-образ в QEMU и проходит первый вход, `tests/os/piImage.sh` разбирает образ Raspberry Pi — подробности в [devSetup.md](devSetup.md).
 
 ---
 
 ## 5. Что проверено
 
-**Проверено сборкой:** пока ничего — статус каждого образа ведётся в `docs/roadmap.md`, Stage 12.
+**Проверено сборкой и загрузкой (2026-09-20, коробка N100):** `vibedpn-amd64.img` собирается за 5 минут и в QEMU с OVMF проходит `tests/os/uefiBoot.sh`: cloud-init читает `user-data` с раздела `CIDATA`, заводит пользователя и растягивает корень на весь диск, ssh отвечает через 25 секунд, при первом входе открывается `vibedpn init`, `vibedpn init --role vps` и `vibedpn doctor` работают.
+**Проверено сборкой и разбором:** образ Raspberry Pi собран нативно в CI (11 минут) и на N100 под эмуляцией (65 минут); `tests/os/piImage.sh` находит в нём Docker, VibeDPN, скрипт первого входа и seed cloud-init, а `vibedpn --version` и `docker --version` работают в chroot.
+**Не проверено:** загрузка на настоящем Raspberry Pi и на N100 с этого образа — коробка владельца живёт на обычной установке Debian; UEFI-образ arm64 собирается и загружается только в эмуляции.
 **Проверено по документации:** пользователь и стадии `pi-gen`, cloud-init в Raspberry Pi OS trixie, метка `CIDATA` у NoCloud — `docs/knowledge/platform/piGen.md`.

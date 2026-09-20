@@ -5,10 +5,11 @@
 # Nothing secret is written: no password, no key, no role (docs/decisions.md, decision 15).
 #
 # Needs in the environment: VIBEDPN_REPO and VIBEDPN_BRANCH (the revision the image is built from),
-# and /tmp/vibedpn-image/{install.sh,firstLogin.sh} copied in by the build.
+# and /var/tmp/vibedpn-image/{install.sh,firstLogin.sh} copied in by the build. Not /tmp: debos runs
+# chroot commands through systemd-nspawn, which hides /tmp of the root filesystem under a tmpfs.
 set -eu
 
-SOURCE=/tmp/vibedpn-image
+SOURCE=/var/tmp/vibedpn-image
 : "${VIBEDPN_REPO:?the git URL of VibeDPN}"
 : "${VIBEDPN_BRANCH:?the branch the image follows}"
 

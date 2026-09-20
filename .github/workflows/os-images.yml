@@ -33,21 +33,32 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Emulation of arm64 for the arm64 image
-        if: matrix.architecture == 'arm64'
-        run: docker run --rm --privileged tonistiigi/binfmt:qemu-v9.2.2 --install arm64
+      # fakemachine shares only the recipe directory and the working directory with its VM, and the
+      # recipe reads images/os/common and install.sh (run 35373779695 died on
+      # `stat /recipes/images/os/common`): the working directory is the repository root, and the
+      # image lands there. Scratch on disk: the root filesystem with Docker does not fit the tmpfs
+      # of the VM. The arm64 image needs no emulation on the runner: the VM registers the qemu-user
+      # binaries of the debos container itself.
       - name: Build
         env:
           BRANCH: ${{ inputs.branch || github.ref_name }}
         run: |
           docker run --rm --device /dev/kvm --group-add "$(getent group kvm | cut -d: -f3)" \
-            -v "$PWD:/recipes" -w /recipes/images/os/debos godebos/debos \
-            -t "architecture:${{ matrix.architecture }}" -t "branch:$BRANCH" vibedpn.yaml
-          xz -T0 -v "images/os/debos/vibedpn-${{ matrix.architecture }}.img"
+            -v "$PWD:/recipes" -w /recipes godebos/debos --fakemachine-backend=kvm \
+            --cpus 4 --memory 4GB --scratchsize 8GB \
+            -t "architecture:${{ matrix.architecture }}" -t "branch:$BRANCH" images/os/debos/vibedpn.yaml
+      - name: Tools for the boot test
+        run: |
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q mtools ${{ matrix.architecture == 'amd64' && 'qemu-system-x86 ovmf' || 'qemu-system-arm qemu-efi-aarch64' }}
+      - name: Boot test
+        run: sh tests/os/uefiBoot.sh "vibedpn-${{ matrix.architecture }}.img"
+      - name: Compress
+        run: xz -T0 -v "vibedpn-${{ matrix.architecture }}.img"
       - uses: actions/upload-artifact@v5
         with:
           name: vibedpn-uefi-${{ matrix.architecture }}
-          path: images/os/debos/vibedpn-${{ matrix.architecture }}.img.xz
+          path: vibedpn-${{ matrix.architecture }}.img.xz
           if-no-files-found: error
 
   raspberry-pi:
@@ -59,6 +70,11 @@ jobs:
         env:
           VIBEDPN_BRANCH: ${{ inputs.branch || github.ref_name }}
         run: sh images/os/pi-gen/build.sh
+      # no Raspberry Pi in CI: the image is mounted and its CLI and Docker run in a chroot
+      - name: Check the image
+        env:
+          VIBEDPN_OS_BRANCH: ${{ inputs.branch || github.ref_name }}
+        run: sudo --preserve-env=VIBEDPN_OS_BRANCH sh tests/os/piImage.sh images/os/pi-gen/work/deploy/*.img.xz
       - uses: actions/upload-artifact@v5
         with:
           name: vibedpn-raspberry-pi-arm64
