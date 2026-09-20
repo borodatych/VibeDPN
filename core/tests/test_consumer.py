@@ -281,11 +281,13 @@ class FakeTransactor(FakeNode):
     def routes(self) -> dict[tuple[str, str], Callable[[], httpx.Response]]:
         return {
             **super().routes(),
-            ("GET", f"/transactor/identities/{IDENTITY}/eligibility"): lambda: httpx.Response(
+            ("GET", f"/identities/{IDENTITY}/eligibility"): lambda: httpx.Response(
                 200, json={"eligible": self.eligible}
             ),
-            ("GET", "/transactor/fees"): lambda: httpx.Response(
-                200, json={"registration_tokens": {"wei": self.fee_wei, "human": "0.095"}}
+            # the shape node 1.39.5 really answers with, measured on the box
+            ("GET", "/v2/transactor/fees"): lambda: httpx.Response(
+                200,
+                json={"current": {"registration": {"wei": self.fee_wei, "ether": "0.1098"}}},
             ),
             ("POST", f"/identities/{IDENTITY}/register"): self.do_register,
         }

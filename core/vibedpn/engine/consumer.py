@@ -94,20 +94,29 @@ def eligibility(client: TequilaClient, identity: str) -> bool:
     A node that cannot answer is not a "no": the owner is told the eligibility is unknown rather
     than shown a fee that may not be charged.
     """
-    status, body = client.send("GET", f"/transactor/identities/{identity}/eligibility")
+    status, body = client.send("GET", f"/identities/{identity}/eligibility")
     if status != HTTP_OK or not isinstance(body, dict):
         raise MystError(f"TequilAPI eligibility: HTTP {status}")
     return bool(body.get("eligible"))
 
 
 def registration_fee(client: TequilaClient) -> str:
-    """The fee of the transactor in wei, as `GET /transactor/fees` reports it."""
-    status, body = client.send("GET", "/transactor/fees")
+    """The fee of the transactor in wei, as ``GET /v2/transactor/fees`` reports it.
+
+    Measured against node 1.39.5 on the box: the answer is
+    ``{"current": {"registration": {"wei": "109873200694950000", "ether": "0.1098…"}}}``.
+    The older flat shapes are read too, so a node that answers differently still gives a number.
+    """
+    status, body = client.send("GET", "/v2/transactor/fees")
     if status != HTTP_OK or not isinstance(body, dict):
-        raise MystError(f"TequilAPI /transactor/fees: HTTP {status}")
-    value = body.get("registration_tokens")
-    if isinstance(value, dict) and "wei" in value:
-        return str(value["wei"])
+        raise MystError(f"TequilAPI /v2/transactor/fees: HTTP {status}")
+    current = body.get("current")
+    registration = current.get("registration") if isinstance(current, dict) else None
+    if isinstance(registration, dict) and "wei" in registration:
+        return str(registration["wei"])
+    tokens = body.get("registration_tokens")
+    if isinstance(tokens, dict) and "wei" in tokens:
+        return str(tokens["wei"])
     return str(body.get("registration", "0"))
 
 
