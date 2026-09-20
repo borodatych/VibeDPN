@@ -138,7 +138,7 @@ docker run --rm --device /dev/kvm -v "$PWD:/recipes" -w /recipes godebos/debos -
 ```
 
 Результат — `vibedpn-amd64.img` (6 ГБ, разрежённый, 1.3 ГБ на диске) в корне репозитория; на N100 сборка занимает 5–6 минут, загрузочный тест — полторы минуты.
-`architecture:arm64` собирает образ для плат arm64 с UEFI: эмуляцию на хост ставить не нужно, VM регистрирует `qemu-user` из самого контейнера debos.
+`architecture:arm64` собирает образ для плат arm64 с UEFI: эмуляцию на хост ставить не нужно, VM регистрирует `qemu-user` из самого контейнера debos; на N100 это 32 минуты, а его загрузочный тест идёт без KVM ещё пять с половиной.
 
 Образ Raspberry Pi на amd64-хосте требует пакета `qemu-user-binfmt` (`build-docker.sh` pi-gen ищет `qemu-aarch64` в `PATH`), на arm64 — ничего сверх Docker:
 

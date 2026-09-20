@@ -74,10 +74,12 @@ if [ "$(uname -m)" = "$native" ] && [ -w /dev/kvm ]; then
   ACCEL=kvm
   CPU=host
   BOOT_TIMEOUT=300
+  WIZARD_WAIT=15
 else
   ACCEL=tcg
   CPU=max
   BOOT_TIMEOUT=1800
+  WIZARD_WAIT=120
   log "$ARCH is not the host architecture with KVM: emulating, this is slow"
 fi
 
@@ -129,9 +131,11 @@ vm "sudo -n find /etc/ssh -name 'ssh_host_*_key' -newer /usr/local/bin/vibedpn |
   fail "the SSH host keys are older than the build: the image ships them"
 
 log "$ARCH: the first interactive login opens the wizard"
-# a login shell on a pty runs /etc/profile.d; Ctrl+C leaves the wizard, then the shell exits
-{ sleep 8; printf '\003'; sleep 2; printf 'exit\n'; } |
-  timeout 60 ssh -tt -i "$WORK/key" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=no \
+# a login shell on a pty runs /etc/profile.d; Ctrl+C leaves the wizard, then the shell exits.
+# The wait before it is generous: under emulation the CLI is still importing its modules at 8 s,
+# and the interrupt would land on the import instead of the first question.
+{ sleep "$WIZARD_WAIT"; printf '\003'; sleep 3; printf 'exit\n'; } |
+  timeout "$((WIZARD_WAIT + 60))" ssh -tt -i "$WORK/key" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "$VM_USER@127.0.0.1" >"$WORK/login.log" 2>&1 || true
 grep -q "VibeDPN is installed but not set up yet" "$WORK/login.log" || {
   cat "$WORK/login.log" >&2

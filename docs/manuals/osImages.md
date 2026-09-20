@@ -68,5 +68,6 @@ VIBEDPN_BRANCH=main sh images/os/pi-gen/build.sh
 
 **Проверено сборкой и загрузкой (2026-09-20, коробка N100):** `vibedpn-amd64.img` собирается за 5 минут и в QEMU с OVMF проходит `tests/os/uefiBoot.sh`: cloud-init читает `user-data` с раздела `CIDATA`, заводит пользователя и растягивает корень на весь диск, ssh отвечает через 25 секунд, при первом входе открывается `vibedpn init`, `vibedpn init --role vps` и `vibedpn doctor` работают.
 **Проверено сборкой и разбором:** образ Raspberry Pi собран нативно в CI (11 минут) и на N100 под эмуляцией (65 минут); `tests/os/piImage.sh` находит в нём Docker, VibeDPN, скрипт первого входа и seed cloud-init, а `vibedpn --version` и `docker --version` работают в chroot.
-**Не проверено:** загрузка на настоящем Raspberry Pi и на N100 с этого образа — коробка владельца живёт на обычной установке Debian; UEFI-образ arm64 собирается и загружается только в эмуляции.
+**Проверено сборкой и загрузкой в эмуляции:** `vibedpn-arm64.img` собран (32 минуты) и прошёл тот же тест под QEMU без аппаратного ускорения: ssh через 55 секунд, мастер, `init` и `doctor`.
+**Не проверено:** загрузка на настоящем Raspberry Pi и на N100 с этого образа — коробка владельца живёт на обычной установке Debian.
 **Проверено по документации:** пользователь и стадии `pi-gen`, cloud-init в Raspberry Pi OS trixie, метка `CIDATA` у NoCloud — `docs/knowledge/platform/piGen.md`.
