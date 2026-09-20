@@ -27,6 +27,12 @@ DOCKER_SOURCES="/etc/apt/sources.list.d/docker.sources"
 DOCKER_PACKAGES="docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
 F2B_JAIL="sshd"  # the jail of host/fail2ban/vibedpn-sshd.local
 F2B_WAIT=10  # seconds to wait for the restarted server to answer its socket
+# One of the addresses GitHub answers on can be black-holed by a provider: the connection then
+# hangs for two minutes and the update fails, while the very next address works. Measured on the
+# box 2026-09-20 (knowledge linux/githubBlackholedAddress.md), so a git call is given a short
+# leash and a few tries — each one resolves the name again.
+GIT_TIMEOUT=30
+GIT_TRIES=3
 
 log() { printf '\033[1;34m[vibedpn]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[vibedpn] error:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -95,15 +101,28 @@ SOURCES
   log "Docker: $(docker --version), $(docker compose version --short)"
 }
 
+# Runs a git call under a short timeout and tries again: a name that resolves to a black-holed
+# address would otherwise hang the whole update, and the next attempt usually gets another one.
+with_retries() {
+  local attempt
+  for attempt in $(seq "$GIT_TRIES"); do
+    if timeout "$GIT_TIMEOUT" "$@"; then
+      return 0
+    fi
+    log "git did not get through in ${GIT_TIMEOUT}s (attempt $attempt of $GIT_TRIES)"
+  done
+  die "git could not reach $VIBEDPN_REPO: it stayed silent in $GIT_TRIES attempts"
+}
+
 clone_or_update() {
   if [ -d "$VIBEDPN_DIR/.git" ]; then
     log "Updating $VIBEDPN_DIR to $VIBEDPN_BRANCH"
-    git -C "$VIBEDPN_DIR" fetch -q origin "$VIBEDPN_BRANCH"
+    with_retries git -C "$VIBEDPN_DIR" fetch -q origin "$VIBEDPN_BRANCH"
     git -C "$VIBEDPN_DIR" checkout -q "$VIBEDPN_BRANCH"
     git -C "$VIBEDPN_DIR" merge -q --ff-only "origin/$VIBEDPN_BRANCH"
   else
     log "Cloning $VIBEDPN_REPO ($VIBEDPN_BRANCH) into $VIBEDPN_DIR"
-    git clone -q --branch "$VIBEDPN_BRANCH" "$VIBEDPN_REPO" "$VIBEDPN_DIR"
+    with_retries git clone -q --branch "$VIBEDPN_BRANCH" "$VIBEDPN_REPO" "$VIBEDPN_DIR"
   fi
 }
 
