@@ -1,7 +1,7 @@
 import { root } from '@/lib/root'
 import { authorizedOnlyPlugin } from '@/modules/auth/plugins'
 import { coreFetch, coreRequest } from '@/modules/core/client'
-import type { BoxStatus, DpnCountry, RoutingView } from '@/features/status/shared'
+import type { BoxStatus, DpnCountry, DpnRegistration, RoutingView } from '@/features/status/shared'
 import { z } from 'zod'
 
 // The uplink watchers of core probe every 5 s; polling faster shows nothing new.
@@ -55,6 +55,29 @@ export const dpnCountriesQuery = root.lets
     return answer.ok ? { countries: answer.body, reason: null } : { countries: [], reason: answer.detail }
   })
   .query({ staleTime: COUNTRIES_STALE_MS })
+
+/** What registering the consumer identity would cost: asking spends nothing (decision 4). */
+export const dpnRegistrationQuery = root.lets
+  .query()
+  .use(authorizedOnlyPlugin)
+  .loader(async () => {
+    const answer = await coreFetch<DpnRegistration>('/dpn/registration')
+    return answer.ok ? { registration: answer.body, reason: null } : { registration: null, reason: answer.detail }
+  })
+  .query({ staleTime: 0 })
+
+/** The registration itself: a transaction on the network, started only by the owner's click. */
+export const dpnRegisterMutation = root.lets
+  .mutation()
+  .use(authorizedOnlyPlugin)
+  .loader(async () => {
+    const done = await coreRequest<{ result: string; status: string }>('/dpn/registration', {
+      method: 'POST',
+      body: {},
+    })
+    return { result: done }
+  })
+  .mutation()
 
 export const dpnCountryMutation = root.lets
   .mutation()

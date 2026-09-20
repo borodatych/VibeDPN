@@ -81,3 +81,17 @@ export const summarizeStatus = (status: BoxStatus): { tone: StatusTone; headline
   }
   return { tone: 'ok', headline: { key: 'status.headline.through', params: { uplink } } }
 }
+
+/** `GET /dpn/registration` (core/vibedpn/api/models.py: DpnRegistrationView): the price before the click. */
+export type DpnRegistration = {
+  identity: string
+  status: string
+  free: boolean
+  fee_wei: string
+  balance_wei: string
+  channel_address: string
+  affordable: boolean
+}
+
+/** core/vibedpn/engine/consumer.py REGISTERED: the word the node uses for a done registration. */
+export const REGISTERED = 'Registered'

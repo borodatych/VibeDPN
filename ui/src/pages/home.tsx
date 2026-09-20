@@ -6,10 +6,13 @@ import {
   boxStatusQuery,
   dpnCountriesQuery,
   dpnCountryMutation,
+  dpnRegisterMutation,
+  dpnRegistrationQuery,
   routingUpdateMutation,
   vpsLanAccessMutation,
 } from '@/features/status/api'
 import { formatMyst } from '@/features/node/shared'
+import { REGISTERED } from '@/features/status/shared'
 import { summarizeStatus, type BoxStatus, type DpnStatus, type UplinkStatus } from '@/features/status/shared'
 import { eventListQuery } from '@/features/events/api'
 import { DROPS_WINDOW_HOURS, WIFI_DROPS_WARNING, wifiDrops } from '@/features/events/shared'
@@ -200,6 +203,43 @@ const CountryConsumerCard = ({ dpn }: { dpn: DpnStatus }) => {
   )
 }
 
+/** The one button on this box that may spend money: the box never registers by itself (decision 4). */
+const RegisterIdentity = ({ dpn }: { dpn: DpnStatus }) => {
+  const offer = dpnRegistrationQuery.useQuery().data?.registration
+  const start = dpnRegisterMutation.useMutation()
+  const t = useT()
+  if (!dpn.identity || dpn.registration === REGISTERED) {
+    return null
+  }
+  const go = async () => {
+    await start.mutateAsync({})
+    await boxStatusQuery.refetchQuery()
+    await dpnRegistrationQuery.refetchQuery()
+  }
+  const price = offer?.free
+    ? t('dpn.register.free')
+    : t('dpn.register.fee', { fee: formatMyst(offer?.fee_wei ?? '0') })
+  return (
+    <div className="mt-3 space-y-2 text-sm">
+      <p className="text-muted-foreground">{price}</p>
+      {offer && !offer.free && !offer.affordable && (
+        <p className="text-warning">{t('dpn.register.poor', { address: offer.channel_address })}</p>
+      )}
+      <Button
+        size="sm"
+        disabled={!offer || (!offer.free && !offer.affordable)}
+        loading={start.isPending}
+        confirm={offer?.free ? undefined : t('dpn.register.confirm', { fee: formatMyst(offer?.fee_wei ?? '0') })}
+        onClick={() => void go()}
+      >
+        {t('dpn.register.button')}
+      </Button>
+      {start.isError && <p className="text-destructive">{start.error.message}</p>}
+      {start.isSuccess && <p className="text-muted-foreground">{t('dpn.register.started')}</p>}
+    </div>
+  )
+}
+
 const DpnCard = ({ dpn }: { dpn: DpnStatus }) => {
   const countries = dpnCountriesQuery.useQuery()
   const mutation = dpnCountryMutation.useMutation()
@@ -239,6 +279,7 @@ const DpnCard = ({ dpn }: { dpn: DpnStatus }) => {
           )}
         </dd>
       </dl>
+      <RegisterIdentity dpn={dpn} />
       {dpn.error && <p className="mt-3 text-sm text-warning">{dpn.error}</p>}
       {mutation.isError && <p className="mt-3 text-sm text-destructive">{mutation.error.message}</p>}
     </Section>

@@ -27,6 +27,8 @@ from vibedpn.api.models import (
     DpnCountry,
     DpnCountryUpdate,
     DpnCountryView,
+    DpnRegistrationResult,
+    DpnRegistrationView,
     DpnStatus,
     EventView,
     HostInterface,
@@ -108,9 +110,13 @@ from vibedpn.engine.apply import ApplyError, apply_state, request_apply
 from vibedpn.engine.consumer import (
     CONSUMER_TEQUILAPI,
     CONSUMER_TIMEOUT_SECONDS,
+    REGISTERED,
     ConsumerState,
     CountryOffer,
     countries,
+    existing_identity,
+    register,
+    registration_offer,
 )
 from vibedpn.engine.devices import DeviceError, DeviceStore, SeenDevice
 from vibedpn.engine.events import DEFAULT_LIMIT, EventError, EventKind, EventStore
@@ -713,6 +719,12 @@ def _default_dpn_offers() -> list[CountryOffer]:
         client.close()
 
 
+def _default_consumer_client() -> TequilaClient:
+    """The TequilAPI of the consumer gateway; asking about money is slow enough to need the long
+    timeout of the consumer, not the short one of the provider."""
+    return TequilaClient(base_url=CONSUMER_TEQUILAPI, timeout=CONSUMER_TIMEOUT_SECONDS)
+
+
 def _add_dpn_routes(
     application: FastAPI,
     current: Callable[[], Config | None],
@@ -754,6 +766,65 @@ def _add_dpn_routes(
                 status_code=503, detail=f"router refused the change, config.yaml restored: {exc}"
             ) from exc
         return DpnCountryView(country=updated.upstreams.dpn.country)
+
+
+def _add_dpn_registration_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    consumer_client: Callable[[], TequilaClient],
+) -> None:
+    """``/dpn/registration``: what it would cost, and the registration itself.
+
+    The box never registers by itself (docs/decisions.md, 4): this is a transaction on the network
+    and the money is the owner's. Asking the price spends nothing and creates no identity.
+    """
+
+    def identity_of(client: TequilaClient) -> str:
+        box = current()
+        if box is None or not box.upstreams.dpn.enabled:
+            raise HTTPException(status_code=404, detail="uplink dpn is off on this box")
+        try:
+            identity = existing_identity(client)
+        except MystError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if identity is None:
+            raise HTTPException(status_code=503, detail="the node has no identity yet")
+        return identity
+
+    @application.get("/dpn/registration", response_model=DpnRegistrationView)
+    def dpn_registration() -> DpnRegistrationView:
+        client = consumer_client()
+        identity = identity_of(client)
+        try:
+            offer = registration_offer(client, identity)
+        except MystError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return DpnRegistrationView(
+            identity=offer.identity,
+            status=offer.status,
+            free=offer.free,
+            fee_wei=offer.fee_wei,
+            balance_wei=offer.balance_wei,
+            channel_address=offer.channel_address,
+            affordable=offer.affordable,
+        )
+
+    @application.post("/dpn/registration", response_model=DpnRegistrationResult)
+    def post_dpn_registration() -> DpnRegistrationResult:
+        client = consumer_client()
+        identity = identity_of(client)
+        try:
+            offer = registration_offer(client, identity)
+            if offer.status == REGISTERED:
+                return DpnRegistrationResult(result="registered", status=offer.status)
+            if not offer.affordable:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"not enough MYST for the fee: top up {offer.channel_address}",
+                )
+            return DpnRegistrationResult(result=register(client, identity), status=offer.status)
+        except MystError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 InterfacesSource = Callable[[], tuple[Interface | None, list[Interface]]]
@@ -1150,6 +1221,7 @@ def create_app(
     dns_mode: DnsModeSetter | None = None,
     consumer: ConsumerStatus | None = None,
     dpn_offers: DpnOffers | None = None,
+    consumer_client: Callable[[], TequilaClient] | None = None,
     interfaces_source: InterfacesSource = _host_interfaces,
     smart: SmartLoop | None = None,
     lists: ListsStatus | None = None,
@@ -1190,6 +1262,7 @@ def create_app(
         consumer,
     )
     _add_dpn_routes(application, current, state, dpn_offers or _default_dpn_offers)
+    _add_dpn_registration_routes(application, current, consumer_client or _default_consumer_client)
     _add_lan_routes(application, state, interfaces_source, smart, lists)
 
     @application.get("/health", response_model=Health)

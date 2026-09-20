@@ -328,6 +328,25 @@ class TorUplinkView(BaseModel):
     apply: ApplyView
 
 
+class DpnRegistrationView(BaseModel):
+    """What registering the consumer identity would cost, before anything is spent."""
+
+    identity: str
+    status: str  # Unregistered, InProgress, Registered…
+    free: bool
+    fee_wei: str
+    balance_wei: str
+    channel_address: str
+    affordable: bool
+
+
+class DpnRegistrationResult(BaseModel):
+    """What the node answered to the registration itself."""
+
+    result: str  # registered | started | in progress
+    status: str
+
+
 class XrayUplinkView(BaseModel):
     """Uplink xray as the panel shows it: where it goes and how, never with its credentials."""
 

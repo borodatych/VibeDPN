@@ -110,9 +110,13 @@ from contextlib import closing  # noqa: E402
 from datetime import UTC, datetime  # noqa: E402
 from ipaddress import IPv4Address  # noqa: E402
 from pathlib import Path  # noqa: E402
+from typing import cast  # noqa: E402
+from unittest.mock import patch  # noqa: E402
 
 from vibedpn.api import client as core_api  # noqa: E402
 from vibedpn.api.models import PeerFile, PeerView  # noqa: E402
+from vibedpn.engine.consumer import RegistrationOffer  # noqa: E402
+from vibedpn.engine.myst import TequilaClient  # noqa: E402
 from vibedpn.engine.traffic import Sample  # noqa: E402
 from vibedpn.engine.traffic import connect as connect_traffic  # noqa: E402
 from vibedpn.engine.traffic import record as record_traffic  # noqa: E402
@@ -282,3 +286,52 @@ def test_peer_traffic_is_named_and_forgotten_with_its_peer(tmp_path: Path) -> No
 
     assert api.delete("/peers/dacha").status_code == 204
     assert api.get("/peers/traffic").json() == []
+
+
+def test_the_price_of_registration_is_asked_before_the_money_is_spent(tmp_path: Path) -> None:
+    """`GET /dpn/registration` costs nothing and creates nothing; the POST refuses when the
+    identity cannot pay, because the box never registers by itself (decision 4)."""
+    offers = [
+        RegistrationOffer(
+            "0xabc",
+            "Unregistered",
+            free=False,
+            fee_wei="109873200694950000",
+            balance_wei="0",
+            channel_address="0xchannel",
+        )
+    ]
+    calls: list[str] = []
+
+    def fake_offer(_client: object, identity: str) -> RegistrationOffer:
+        calls.append(f"offer:{identity}")
+        return offers[0]
+
+    def fake_register(_client: object, identity: str) -> str:
+        calls.append(f"register:{identity}")
+        return "started"
+
+    home = Config.model_validate(home_config() | {"upstreams": {"dpn": {"enabled": True}}})
+    with (
+        patch("vibedpn.api.app.existing_identity", lambda _client: "0xabc"),
+        patch("vibedpn.api.app.registration_offer", fake_offer),
+        patch("vibedpn.api.app.register", fake_register),
+    ):
+        # the client itself is never used here: every call through it is patched above
+        def client() -> TequilaClient:
+            return cast(TequilaClient, object())
+
+        api = TestClient(create_app(home, stats_source=stats, consumer_client=client))
+        shown = api.get("/dpn/registration")
+        assert shown.status_code == 200, shown.text
+        assert shown.json()["fee_wei"] == "109873200694950000"
+        assert shown.json()["free"] is False and shown.json()["affordable"] is False
+
+        poor = api.post("/dpn/registration")
+        assert poor.status_code == 422 and "0xchannel" in poor.text
+        assert calls == ["offer:0xabc", "offer:0xabc"]  # nothing was registered
+
+        offers[0] = offers[0].__class__(**{**offers[0].__dict__, "balance_wei": "2" + "0" * 18})
+        done = api.post("/dpn/registration")
+        assert done.status_code == 200 and done.json()["result"] == "started"
+        assert calls[-1] == "register:0xabc"
