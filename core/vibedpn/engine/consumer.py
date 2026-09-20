@@ -36,6 +36,7 @@ NOT_CONNECTED = "NotConnected"
 HTTP_OK = 200
 HTTP_CREATED = 201
 HTTP_ACCEPTED = 202
+HTTP_UNPROCESSABLE = 422
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,108 @@ class ConsumerState:
     error: str = ""
     balance_wei: str = "0"  # MYST in wei; before registration it is the MYST on channel_address
     channel_address: str = ""  # where MYST on Polygon tops the consumer up
+
+
+def existing_identity(client: TequilaClient) -> str | None:
+    """The identity the node already has, or ``None``. Unlike the round, this creates nothing: a
+    command that only asks about money must not leave a new identity behind."""
+    status, body = client.send("GET", "/identities")
+    if status != HTTP_OK:
+        raise MystError(f"TequilAPI GET /identities: HTTP {status}")
+    items = body.get("identities") if isinstance(body, dict) else None
+    if not isinstance(items, list):
+        return None
+    for item in items:
+        identity = _field(item, "id")
+        if identity:
+            return identity
+    return None
+
+
+@dataclass(frozen=True)
+class RegistrationOffer:
+    """What registering this identity would cost, as the node answers before anything is spent."""
+
+    identity: str
+    status: str  # Unregistered, InProgress, Registered…
+    free: bool  # the node may register it without a fee (`canRegisterForFree`)
+    fee_wei: str = "0"  # what the transactor takes otherwise
+    balance_wei: str = "0"
+    channel_address: str = ""
+
+    @property
+    def affordable(self) -> bool:
+        """Whether the balance covers the fee; free registration needs no balance at all."""
+        try:
+            return self.free or int(self.balance_wei) >= int(self.fee_wei)
+        except ValueError:
+            return False
+
+
+def eligibility(client: TequilaClient, identity: str) -> bool:
+    """Whether the network registers this identity for free (knowledge myst/consumer.md).
+
+    A node that cannot answer is not a "no": the owner is told the eligibility is unknown rather
+    than shown a fee that may not be charged.
+    """
+    status, body = client.send("GET", f"/transactor/identities/{identity}/eligibility")
+    if status != HTTP_OK or not isinstance(body, dict):
+        raise MystError(f"TequilAPI eligibility: HTTP {status}")
+    return bool(body.get("eligible"))
+
+
+def registration_fee(client: TequilaClient) -> str:
+    """The fee of the transactor in wei, as `GET /transactor/fees` reports it."""
+    status, body = client.send("GET", "/transactor/fees")
+    if status != HTTP_OK or not isinstance(body, dict):
+        raise MystError(f"TequilAPI /transactor/fees: HTTP {status}")
+    value = body.get("registration_tokens")
+    if isinstance(value, dict) and "wei" in value:
+        return str(value["wei"])
+    return str(body.get("registration", "0"))
+
+
+def registration_offer(
+    client: TequilaClient, identity: str, state: ConsumerState | None = None
+) -> RegistrationOffer:
+    """Everything the owner needs before deciding: the status, whether it is free, what it costs
+    and what the identity holds. Nothing here spends anything."""
+    status = state.registration if state is not None else ""
+    balance = state.balance_wei if state is not None else "0"
+    channel = state.channel_address if state is not None else ""
+    if not status:
+        _, body = client.send("GET", f"/identities/{identity}")
+        status = _field(body, "registration_status") or "Unknown"
+        channel = _field(body, "channel_address")
+        tokens = body.get("balance_tokens") if isinstance(body, dict) else None
+        balance = _field(tokens, "wei") or "0"
+    free = eligibility(client, identity)
+    fee = "0" if free else registration_fee(client)
+    return RegistrationOffer(
+        identity=identity,
+        status=status,
+        free=free,
+        fee_wei=fee,
+        balance_wei=balance,
+        channel_address=channel,
+    )
+
+
+def register(client: TequilaClient, identity: str) -> str:
+    """Ask the node to register the identity. This spends money unless the identity registers for
+    free, so nothing calls it on its own — the owner does (docs/decisions.md, 4).
+
+    Returns the word to show: ``registered`` (the node says it already is), ``started`` (the
+    transactor took it) or ``in progress``.
+    """
+    status, body = client.send("POST", f"/identities/{identity}/register", {})
+    if status == HTTP_OK:
+        return "registered"
+    if status == HTTP_ACCEPTED:
+        return "started"
+    if status == HTTP_UNPROCESSABLE:
+        return "in progress"
+    raise MystError(f"TequilAPI register: HTTP {status}: {_field(body, 'message') or 'refused'}")
 
 
 def connection_status(url: str = CONSUMER_TEQUILAPI, timeout: float = STATE_TIMEOUT) -> str:

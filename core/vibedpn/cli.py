@@ -115,6 +115,14 @@ from vibedpn.engine.backup import (
     restore_archive,
     stamp,
 )
+from vibedpn.engine.consumer import (
+    CONSUMER_TEQUILAPI,
+    CONSUMER_TIMEOUT_SECONDS,
+    REGISTERED,
+    existing_identity,
+    register,
+    registration_offer,
+)
 from vibedpn.engine.hostapd import (
     PASSPHRASE_MAX,
     PASSPHRASE_MIN,
@@ -122,7 +130,7 @@ from vibedpn.engine.hostapd import (
     read_passphrase,
     write_passphrase,
 )
-from vibedpn.engine.myst import render_stats
+from vibedpn.engine.myst import MystError, TequilaClient, render_stats
 from vibedpn.engine.xray import XrayError, parse_share_link
 from vibedpn.event_view import client_line, event_line
 from vibedpn.tunnel_view import qr_code, render_peer_traffic, render_peers
@@ -1072,6 +1080,61 @@ def wifi_passphrase(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     # core renders hostapd.conf from secrets/ at its start, hostapd reads that file at its own
     _compose(box_dir, "up", "-d", "--force-recreate", "core", "hostapd")
     typer.echo(f"Wi-Fi {wifi.ssid!r}: the new passphrase is in use, devices join with it now")
+
+
+WEI_IN_MYST = 10**18
+
+
+def _myst(wei: str) -> str:
+    """Wei as the owner reads it: MYST with four decimals; an unusable value stays as it came."""
+    try:
+        return f"{int(wei) / WEI_IN_MYST:.4f} MYST"
+    except ValueError:
+        return f"{wei} wei"
+
+
+@dpn_app.command("register")
+def dpn_register(
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask for confirmation.")] = False,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Register the consumer identity in the Mysterium network — the step that may cost money.
+
+    The box never does this by itself (docs/decisions.md, 4): registration is a transaction on the
+    network, and paying is the owner's decision. The command shows what it would cost, asks, and
+    only then asks the node to register.
+    """
+    config = _prepare(box_dir, refresh=False)
+    if not config.upstreams.dpn.enabled:
+        raise _fail("uplink dpn is off: enable it in config.yaml and `vibedpn up` first")
+    client = TequilaClient(base_url=CONSUMER_TEQUILAPI, timeout=CONSUMER_TIMEOUT_SECONDS)
+    try:
+        identity = existing_identity(client)
+        if identity is None:
+            raise _fail("the node has no identity yet: `vibedpn up` and wait for its first round")
+        offer = registration_offer(client, identity)
+    except MystError as exc:
+        raise _fail(f"the consumer node did not answer: {exc}") from None
+
+    typer.echo(f"identity: {offer.identity}")
+    typer.echo(f"registration: {offer.status}")
+    if offer.status == REGISTERED:
+        typer.echo("already registered; nothing to pay and nothing to do")
+        return
+    if offer.free:
+        typer.echo("the network registers this identity for free")
+    else:
+        typer.echo(f"fee: {_myst(offer.fee_wei)}; balance: {_myst(offer.balance_wei)}")
+        if not offer.affordable:
+            typer.echo(f"top up {offer.channel_address} with MYST on Polygon first (see README)")
+            raise typer.Exit(EXIT_USER_ERROR)
+    if not yes and not typer.confirm("Register this identity now?"):
+        raise typer.Exit(EXIT_USER_ERROR)
+    try:
+        result = register(client, identity)
+    except MystError as exc:
+        raise _fail(str(exc)) from None
+    typer.echo(f"registration {result}; `vibedpn status` shows it when the network confirms")
 
 
 ANY_COUNTRY = "any"

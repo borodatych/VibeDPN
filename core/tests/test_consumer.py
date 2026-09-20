@@ -12,7 +12,16 @@ import pytest
 from vibedpn.api import consumer as consumer_module
 from vibedpn.api.consumer import ConsumerStatus, consumer_round, consumer_targets, watch_consumer
 from vibedpn.config import Config
-from vibedpn.engine.consumer import CONSUMER_TIMEOUT_SECONDS, ConsumerState, countries, reconcile
+from vibedpn.engine.consumer import (
+    CONSUMER_TIMEOUT_SECONDS,
+    ConsumerState,
+    RegistrationOffer,
+    countries,
+    existing_identity,
+    reconcile,
+    register,
+    registration_offer,
+)
 from vibedpn.engine.myst import TEQUILAPI_TIMEOUT_SECONDS, TequilaClient
 
 from .conftest import home_config
@@ -256,3 +265,90 @@ def test_the_round_asks_every_consumer_at_its_own_address(
     assert list(states) == ["dpn", "dpn-de", "dpn-ru"]
     assert "myst-consumer-ru-passphrase" in states["dpn-ru"].error
     assert "vibedpn up" in states["dpn-ru"].error
+
+
+class FakeTransactor(FakeNode):
+    """A node that also answers about money: eligibility, the fee, and the registration itself."""
+
+    def __init__(
+        self, *, eligible: bool, fee_wei: str = "95000000000000000", **kwargs: object
+    ) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.eligible = eligible
+        self.fee_wei = fee_wei
+        self.registered = False
+
+    def routes(self) -> dict[tuple[str, str], Callable[[], httpx.Response]]:
+        return {
+            **super().routes(),
+            ("GET", f"/transactor/identities/{IDENTITY}/eligibility"): lambda: httpx.Response(
+                200, json={"eligible": self.eligible}
+            ),
+            ("GET", "/transactor/fees"): lambda: httpx.Response(
+                200, json={"registration_tokens": {"wei": self.fee_wei, "human": "0.095"}}
+            ),
+            ("POST", f"/identities/{IDENTITY}/register"): self.do_register,
+        }
+
+    def do_register(self) -> httpx.Response:
+        self.registered = True
+        return httpx.Response(202)
+
+
+def transactor(node: FakeTransactor) -> TequilaClient:
+    return TequilaClient(base_url="http://consumer", transport=httpx.MockTransport(node))
+
+
+def test_what_registration_would_cost_is_asked_before_anything_is_spent() -> None:
+    node = FakeTransactor(
+        eligible=False,
+        identities=[IDENTITY],
+        registration="Unregistered",
+        connection="NotConnected",
+    )
+    client = transactor(node)
+    offer = registration_offer(client, IDENTITY)
+    assert offer.status == "Unregistered" and offer.free is False
+    assert offer.fee_wei == "95000000000000000"
+    # the identity holds 1.5 MYST against a fee of 0.095: it can pay
+    assert offer.balance_wei == "1500000000000000000" and offer.affordable is True
+    # nothing was registered by asking
+    assert node.registered is False
+    assert ("POST", f"/identities/{IDENTITY}/register", {}) not in node.calls
+
+
+def test_a_free_registration_needs_no_balance_at_all() -> None:
+    node = FakeTransactor(
+        eligible=True, identities=[IDENTITY], registration="Unregistered", connection="NotConnected"
+    )
+    offer = registration_offer(transactor(node), IDENTITY)
+    assert offer.free is True and offer.fee_wei == "0"
+    assert RegistrationOffer(IDENTITY, "Unregistered", free=True, balance_wei="0").affordable
+
+
+def test_an_empty_identity_cannot_pay_the_fee() -> None:
+    poor = RegistrationOffer(
+        IDENTITY, "Unregistered", free=False, fee_wei="95000000000000000", balance_wei="0"
+    )
+    assert poor.affordable is False
+
+
+def test_registering_says_what_the_node_answered() -> None:
+    node = FakeTransactor(
+        eligible=True, identities=[IDENTITY], registration="Unregistered", connection="NotConnected"
+    )
+    client = transactor(node)
+    assert register(client, IDENTITY) == "started"
+    assert node.registered is True
+
+
+def test_the_identity_is_read_and_never_created_by_the_question() -> None:
+    empty = FakeTransactor(
+        eligible=True, identities=[], registration="Unregistered", connection="NotConnected"
+    )
+    assert existing_identity(transactor(empty)) is None
+    assert empty.identities == []  # the round creates identities; this question does not
+    ready = FakeTransactor(
+        eligible=True, identities=[IDENTITY], registration="Registered", connection="NotConnected"
+    )
+    assert existing_identity(transactor(ready)) == IDENTITY
