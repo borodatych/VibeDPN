@@ -146,7 +146,7 @@ docker run --rm --device /dev/kvm -v "$PWD:/recipes" -w /recipes godebos/debos -
 VIBEDPN_BRANCH=next sh images/os/pi-gen/build.sh
 ```
 
-Результат — `images/os/pi-gen/work/deploy/image_<дата>-vibedpn-arm64.img.xz` (около 700 МБ); нативно на раннере `ubuntu-24.04-arm` сборка идёт 11 минут, под эмуляцией на N100 — около 65 минут.
+Результат — `images/os/pi-gen/work/deploy/image_<дата>-vibedpn-arm64.img.xz` (около 700 МБ); нативно на раннере `ubuntu-24.04-arm` вся задача идёт 8 минут, под эмуляцией на N100 — около 65 минут.
 
 Проверки собранных образов — `tests/os`:
 
@@ -160,6 +160,7 @@ docker build -t vibedpn-qemu-test tests/os && docker run --rm --device /dev/kvm 
 
 В CI образы собирает workflow `os-images` (`.github/workflows/os-images.yml`): вручную с выбором ветки или по тегу `v*`.
 debos идёт на `ubuntu-24.04` с KVM и после сборки гоняет `uefiBoot.sh`, образ Raspberry Pi — `pi-gen` на `ubuntu-24.04-arm` с `piImage.sh`; результат — артефакты прогона.
+Время задач в прогоне 35516308344: amd64 — 7 минут, Raspberry Pi — 8, arm64 — 30 (его загрузочный тест идёт без KVM).
 
 ## Что не проверить локально
 
