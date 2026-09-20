@@ -118,4 +118,12 @@ Debian minbase не тянет ни того, ни другого, а дейст
 Заодно из того, что есть в обычной установке Debian и нужно коробке: `procps` (`ps` зовёт CLI), `dosfstools` (fsck раздела `CIDATA`), `gdisk` (GPT для `growpart`), `nano`, `less`, `iputils-ping`.
 Тест теперь наращивает копию образа на 2 ГБ и требует корень больше 6.5 ГБ, а после мастера прогоняет `vibedpn init --role vps` и `vibedpn doctor` — так ловится любой инструмент, которого в образе нет.
 
+## [опыт] Проверка смонтированного образа: симлинк с абсолютной целью спрашивает хост
+
+**Суть (прогон `os-images` 35515721692, 2026-09-20):** `tests/os/piImage.sh` проверял CLI образа как `[ -x "$ROOT/usr/local/bin/vibedpn" ]`, и на коробке проверка проходила, а на раннере GitHub — нет.
+Причина не в образах: `/usr/local/bin/vibedpn` — симлинк на `/opt/vibedpn/venv/bin/vibedpn`, и цель абсолютная, то есть разрешается от корня **хоста**, а не смонтированного образа.
+Коробка сама работает на VibeDPN, этот путь у неё есть — проверка проходила по чужому файлу; у раннера его нет, и она честно упала.
+Правило общее: у смонтированного образа симлинки с абсолютной целью читаются `readlink` и проверяются как `"$ROOT$target"`, а всё исполняемое лучше проверять запуском в `chroot`.
+Там же: debos внутри контейнера работает от root, поэтому собранный образ принадлежит root — раннеру он отдаётся `chown`, иначе `xz` не может выставить группу своему выходному файлу и падает с кодом 2.
+
 **Источники:** https://docs.cloud-init.io/en/latest/reference/datasources/nocloud.html (NoCloud); https://www.raspberrypi.com/news/cloud-init-on-raspberry-pi-os/ (cloud-init); https://pkg.go.dev/github.com/go-debos/debos/actions (действия debos); https://github.com/go-debos/debos (fakemachine, KVM); https://github.com/RPi-Distro/pi-gen (ветки, методы сборки); https://raw.githubusercontent.com/RPi-Distro/pi-gen/arm64/README.md (переменные, стадии, Docker); https://docs.github.com/en/actions/reference/runners/github-hosted-runners (размеры раннеров); https://github.com/go-debos/debos/blob/master/cmd/debos/debos.go и https://github.com/go-debos/fakemachine/blob/master/machine.go (тома, память, scratch); https://github.com/systemd/systemd/blob/main/src/nspawn/nspawn-mount.c (tmpfs на `/tmp`); https://packages.debian.org/trixie/qemu-user-static (переходный пакет); https://salsa.debian.org/installer-team/debootstrap/-/blob/master/functions (`setup_etc`, копия `/etc/hostname`).

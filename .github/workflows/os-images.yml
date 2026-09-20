@@ -47,6 +47,9 @@ jobs:
             -v "$PWD:/recipes" -w /recipes godebos/debos --fakemachine-backend=kvm \
             --cpus 4 --memory 4GB --scratchsize 8GB \
             -t "architecture:${{ matrix.architecture }}" -t "branch:$BRANCH" images/os/debos/vibedpn.yaml
+          # debos runs as root in the container: the image belongs to root, and xz cannot set the
+          # group of its output for the runner user (run 35515721692)
+          sudo chown "$(id -u):$(id -g)" "vibedpn-${{ matrix.architecture }}.img"
       - name: Tools for the boot test
         run: |
           sudo apt-get update -q

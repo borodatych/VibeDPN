@@ -55,7 +55,14 @@ ROOT="$WORK/root"
 
 log "what the owner gets"
 [ -d "$ROOT/opt/vibedpn/.git" ] || fail "no checkout in /opt/vibedpn"
-[ -x "$ROOT/usr/local/bin/vibedpn" ] || fail "no CLI /usr/local/bin/vibedpn"
+# the CLI is a symlink with an absolute target: -x on it would ask the HOST for /opt/vibedpn
+# (on a box that runs VibeDPN the check then passes for the wrong reason). Resolve inside the image.
+[ -L "$ROOT/usr/local/bin/vibedpn" ] || fail "no CLI symlink /usr/local/bin/vibedpn"
+cli_target="$(readlink "$ROOT/usr/local/bin/vibedpn")"
+case "$cli_target" in
+  /*) [ -x "$ROOT$cli_target" ] || fail "the CLI symlink points at $cli_target, which the image does not have" ;;
+  *) fail "the CLI symlink is relative ($cli_target): install.sh writes an absolute one" ;;
+esac
 [ -f "$ROOT/etc/profile.d/vibedpn-first-login.sh" ] || fail "no first-login script"
 [ ! -e "$ROOT/opt/vibedpn/config.yaml" ] || fail "the image carries a config.yaml"
 grep -qx vibedpn "$ROOT/etc/hostname" || fail "hostname is not vibedpn"
