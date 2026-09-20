@@ -328,6 +328,29 @@ class TorUplinkView(BaseModel):
     apply: ApplyView
 
 
+class XrayUplinkView(BaseModel):
+    """Uplink xray as the panel shows it: where it goes and how, never with its credentials."""
+
+    enabled: bool
+    linked: bool  # whether secrets/ holds a share link at all
+    endpoint: str = ""  # host:port of the server, empty when there is no link
+    transport: str = ""  # "tcp/reality" and the like
+    remark: str = ""  # the name the link carries, if any
+    problem: str = ""  # why the link there cannot be used, in the owner's words
+    apply: ApplyView
+
+
+class XrayUplinkUpdate(BaseModel):
+    """``PUT /uplinks/xray``: turn the uplink on or off, and set its share link when one is given.
+
+    The link carries the credentials of the server and travels the same way a WireGuard file does
+    (decision 26): to core, into ``secrets/``, never back out.
+    """
+
+    enabled: bool
+    link: str | None = Field(default=None, max_length=4 * 1024)
+
+
 class WgUplinksView(BaseModel):
     uplinks: list[WgUplinkView]
     apply: ApplyView

@@ -244,3 +244,39 @@ def test_tor_the_lan_goes_through_is_not_turned_off(tmp_path: Path) -> None:
     assert answer.status_code == 422
     assert "not an enabled uplink" in answer.json()["detail"]
     assert load_config(path).upstreams.tor.enabled
+
+
+def test_the_masking_exit_is_set_up_from_the_panel_without_ssh(tmp_path: Path) -> None:
+    """The share link travels the same way a WireGuard file does (decision 26): into secrets/, and
+    never back out. Turning the uplink on before a link exists is refused, not half-done."""
+    client, path = box(tmp_path)
+    secrets = tmp_path / "secrets"
+
+    empty = client.get("/uplinks/xray").json()
+    assert empty == {
+        "enabled": False,
+        "linked": False,
+        "endpoint": "",
+        "transport": "",
+        "remark": "",
+        "problem": "",
+        "apply": empty["apply"],
+    }
+    refused = client.put("/uplinks/xray", json={"enabled": True})
+    assert refused.status_code == 422 and "no share link yet" in refused.text
+
+    bad = client.put("/uplinks/xray", json={"enabled": True, "link": "vless://u@host.example"})
+    assert bad.status_code == 422 and "port of the server" in bad.text
+    assert not (secrets / "xray-link").exists()
+
+    link = "vless://11111111-2222-3333-4444-555555555555@exit.example.org:443?security=reality&sni=a.example&pbk=key#Мой"
+    answer = client.put("/uplinks/xray", json={"enabled": True, "link": link})
+    assert answer.status_code == 200, answer.text
+    shown = answer.json()
+    assert shown["enabled"] is True and shown["linked"] is True
+    assert shown["endpoint"] == "exit.example.org:443" and shown["transport"] == "tcp/reality"
+    assert shown["remark"] == "Мой" and shown["apply"]["pending"] is True
+    # the credentials stay on the box: nothing of the link comes back through the API
+    assert "11111111-2222-3333-4444-555555555555" not in answer.text
+    assert (secrets / "xray-link").read_text(encoding="utf-8").strip() == link
+    assert load_config(path).upstreams.xray.enabled

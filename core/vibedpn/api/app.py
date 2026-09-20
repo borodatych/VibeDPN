@@ -52,12 +52,20 @@ from vibedpn.api.models import (
     WgUplinksView,
     WgUplinkView,
     WifiClientView,
+    XrayUplinkUpdate,
+    XrayUplinkView,
 )
 from vibedpn.api.smart import SmartLoop
 from vibedpn.api.state import BoxState
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.atomic import write_private
-from vibedpn.bootstrap import BootstrapError, check_peer_text, network_for
+from vibedpn.bootstrap import (
+    SECRET_DIR_MODE,
+    XRAY_LINK_FILE,
+    BootstrapError,
+    check_peer_text,
+    network_for,
+)
 from vibedpn.config import (
     WG_UPLINK_NAME,
     Config,
@@ -91,6 +99,7 @@ from vibedpn.config_edit import (
     set_tor_uplink,
     set_vps_lan_access,
     set_wg_uplink,
+    set_xray_uplink,
     unset_device,
 )
 from vibedpn.detect import DetectError, HostProbe, Interface
@@ -134,6 +143,7 @@ from vibedpn.engine.wg import (
     remove_peer,
 )
 from vibedpn.engine.wifi import HostapdControl, Station, WifiError
+from vibedpn.engine.xray import XrayError, parse_share_link
 
 StatsSource = Callable[[], ProviderStats]
 RoutingReader = Callable[[Config], RoutingFacts]
@@ -280,6 +290,7 @@ def _add_link_routes(
         application, current, sources.events, sources.device_store, sources.wifi_stations
     )
     _add_wg_uplink_routes(application, current, state, sources.secrets_dir, sources.data_dir)
+    _add_xray_uplink_routes(application, current, state, sources.secrets_dir, sources.data_dir)
     _add_tor_uplink_routes(application, current, state, sources.data_dir)
 
 
@@ -343,6 +354,82 @@ def _add_tor_uplink_routes(
             return view()
         _run_edit(box_state, lambda path: set_tor_uplink(path, request.enabled))
         _ask_host(data, "uplink tor " + ("enabled" if request.enabled else "disabled"))
+        return view()
+
+
+def _add_xray_uplink_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    state: BoxState | None,
+    secrets_dir: Path | None,
+    data_dir: Path | None,
+) -> None:
+    """``/uplinks/xray``: the masking exit turned on, off and pointed at a server from the panel
+    (decision 29). The share link travels the same way a WireGuard file does — to core, into
+    ``secrets/``, and never back out."""
+
+    def box_paths() -> tuple[Config, BoxState, Path, Path]:
+        box = current()
+        if box is None or box.network is None or state is None or secrets_dir is None:
+            raise HTTPException(status_code=404, detail=NO_PANEL_APPLY)
+        if data_dir is None:
+            raise HTTPException(status_code=404, detail=NO_PANEL_APPLY)
+        return box, state, secrets_dir, data_dir
+
+    def view() -> XrayUplinkView:
+        box, _state, secrets, data = box_paths()
+        link_path = secrets / XRAY_LINK_FILE
+        seen = XrayUplinkView(
+            enabled=box.upstreams.xray.enabled, linked=False, apply=_apply_view(data)
+        )
+        try:
+            link = link_path.read_text(encoding="utf-8")
+        except OSError:
+            return seen
+        try:
+            server = parse_share_link(link)
+        except XrayError as exc:
+            return seen.model_copy(update={"linked": True, "problem": str(exc)})
+        return seen.model_copy(
+            update={
+                "linked": True,
+                "endpoint": server.endpoint,
+                "transport": f"{server.network}/{server.security}",
+                "remark": server.remark,
+            }
+        )
+
+    @application.get("/uplinks/xray", response_model=XrayUplinkView)
+    def xray_uplink() -> XrayUplinkView:
+        return view()
+
+    @application.put("/uplinks/xray", response_model=XrayUplinkView)
+    def put_xray_uplink(request: XrayUplinkUpdate) -> XrayUplinkView:
+        box, box_state, secrets, data = box_paths()
+        if request.link is not None:
+            try:
+                parse_share_link(request.link)
+            except XrayError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from None
+            try:
+                secrets.mkdir(mode=SECRET_DIR_MODE, exist_ok=True)
+                write_private(secrets / XRAY_LINK_FILE, request.link.strip() + "\n")
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=500, detail=f"cannot write the link: {exc.strerror}"
+                ) from exc
+        # Turning it on without a link would start a gateway that leads nowhere.
+        if request.enabled and not (secrets / XRAY_LINK_FILE).is_file():
+            raise HTTPException(
+                status_code=422,
+                detail="uplink xray has no share link yet:"
+                " give one here or run `vibedpn xray enable` on the box",
+            )
+        changed = box.upstreams.xray.enabled != request.enabled
+        if changed:
+            _run_edit(box_state, lambda path: set_xray_uplink(path, request.enabled))
+        if changed or request.link is not None:
+            _ask_host(data, "uplink xray " + ("enabled" if request.enabled else "disabled"))
         return view()
 
 

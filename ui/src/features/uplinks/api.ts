@@ -2,7 +2,14 @@ import { root } from '@/lib/root'
 import { AppError } from '@/lib/error'
 import { authorizedOnlyPlugin } from '@/modules/auth/plugins'
 import { coreFetch, coreRequest } from '@/modules/core/client'
-import { MAX_WG_FILE_BYTES, WG_EXIT_NAME, type TorExit, type WgExits } from '@/features/uplinks/shared'
+import {
+  MAX_WG_FILE_BYTES,
+  MAX_XRAY_LINK_BYTES,
+  WG_EXIT_NAME,
+  type TorExit,
+  type WgExits,
+  type XrayExit,
+} from '@/features/uplinks/shared'
 import { z } from 'zod'
 
 // The host applies a change within seconds; the page follows it closely while it is open.
@@ -46,6 +53,31 @@ export const torExitMutation = root.lets
   .input(z.object({ enabled: z.boolean() }))
   .loader(async ({ input }) => {
     return { tor: await coreRequest<TorExit>('/uplinks/tor', { method: 'PUT', body: input }) }
+  })
+  .mutation()
+
+export const xrayExitQuery = root.lets
+  .query()
+  .use(authorizedOnlyPlugin)
+  .loader(async () => {
+    const answer = await coreFetch<XrayExit>('/uplinks/xray')
+    if (answer.ok) {
+      return { xray: answer.body, reason: null }
+    }
+    if (answer.status === NOT_HERE) {
+      return { xray: null, reason: answer.detail }
+    }
+    throw new AppError(answer.detail, { status: answer.status })
+  })
+  .query({ refetchInterval: EXITS_REFRESH_MS, staleTime: 0 })
+
+export const xrayExitMutation = root.lets
+  .mutation()
+  .use(authorizedOnlyPlugin)
+  // The link goes to core and stays there; `null` means "leave the one you have".
+  .input(z.object({ enabled: z.boolean(), link: z.string().max(MAX_XRAY_LINK_BYTES).nullable() }))
+  .loader(async ({ input }) => {
+    return { xray: await coreRequest<XrayExit>('/uplinks/xray', { method: 'PUT', body: input }) }
   })
   .mutation()
 

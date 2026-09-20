@@ -1,4 +1,9 @@
-import { missingWgParts, suggestExitName, WG_EXIT_NAME } from '@/features/uplinks/shared'
+import {
+  missingWgParts,
+  suggestExitName,
+  WG_EXIT_NAME,
+  xrayLinkProblem,
+} from '@/features/uplinks/shared'
 import { describe, expect, test } from 'bun:test'
 
 const PROVIDER_FILE =
@@ -20,5 +25,17 @@ describe('WireGuard exits', () => {
     expect(missingWgParts(PROVIDER_FILE)).toEqual([])
     expect(missingWgParts('hello')).toEqual(['[Interface]', 'PrivateKey', '[Peer]', 'PublicKey'])
     expect(missingWgParts('[Interface]\nPrivateKey = a\n')).toEqual(['[Peer]', 'PublicKey'])
+  })
+})
+
+describe('xrayLinkProblem', () => {
+  test('tells apart nothing typed, a wrong scheme and something core can parse', () => {
+    expect(xrayLinkProblem('')).toBe('empty')
+    expect(xrayLinkProblem('   ')).toBe('empty')
+    expect(xrayLinkProblem('https://example.org')).toBe('scheme')
+    // the panel only checks the shape: what the link carries is core's business, and it answers
+    // with the reason the owner reads
+    expect(xrayLinkProblem('vless://user@host.example:443?security=reality')).toBeNull()
+    expect(xrayLinkProblem('  vless://user@host.example:443  ')).toBeNull()
   })
 })

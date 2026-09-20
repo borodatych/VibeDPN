@@ -12,6 +12,35 @@ export type TorExit = { enabled: boolean; bridges: string[]; apply: ApplyView }
 /** The routing key of the exit through Tor, as core names it in `routing.default_upstream` and in `GET /status`. */
 export const TOR_KEY = 'tor'
 
+/** Uplink xray of `GET /uplinks/xray` (core/vibedpn/api/models.py: XrayUplinkView); the share link never comes back. */
+export type XrayExit = {
+  enabled: boolean
+  linked: boolean
+  endpoint: string
+  transport: string
+  remark: string
+  problem: string
+  apply: ApplyView
+}
+
+/** The routing key of the masking exit, as core names it in `routing.default_upstream`. */
+export const XRAY_KEY = 'xray'
+
+/** core/vibedpn/api/models.py XrayUplinkUpdate: the link is a credential, and a long one. */
+export const MAX_XRAY_LINK_BYTES = 4 * 1024
+
+/** What every usable share link starts with; core parses the rest and says what is wrong. */
+export const XRAY_LINK_PREFIX = 'vless://'
+
+/** Whether this text can be a share link at all — the full check belongs to core. */
+export const xrayLinkProblem = (text: string): 'empty' | 'scheme' | null => {
+  const value = text.trim()
+  if (!value) {
+    return 'empty'
+  }
+  return value.startsWith(XRAY_LINK_PREFIX) ? null : 'scheme'
+}
+
 /** The routing key of an exit, as core names it in `routing.default_upstream` and in `GET /status`. */
 export const exitKey = (name: string): string => `wg-${name}`
 

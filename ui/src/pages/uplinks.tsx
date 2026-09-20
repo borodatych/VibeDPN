@@ -8,6 +8,8 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   torExitMutation,
   torExitQuery,
+  xrayExitMutation,
+  xrayExitQuery,
   wgExitAddMutation,
   wgExitRemoveMutation,
   wgExitsQuery,
@@ -22,7 +24,11 @@ import {
   WG_EXIT_NAME,
   TOR_KEY,
   type ApplyView,
+  MAX_XRAY_LINK_BYTES,
+  XRAY_KEY,
+  xrayLinkProblem,
   type TorExit,
+  type XrayExit,
   type WgExit,
 } from '@/features/uplinks/shared'
 import { generalLayout } from '@/layouts/general'
@@ -117,6 +123,78 @@ const TorCard = ({ tor }: { tor: TorExit }) => {
         <p className="font-mono text-xs text-muted-foreground">
           {t('uplinks.tor.bridges', { bridges: tor.bridges.join(', ') })}
         </p>
+      </div>
+    </Section>
+  )
+}
+
+const XrayCard = ({ xray }: { xray: XrayExit }) => {
+  const save = xrayExitMutation.useMutation()
+  const [link, setLink] = useState('')
+  const t = useT()
+  const problem = link ? xrayLinkProblem(link) : null
+  const apply = async (enabled: boolean, withLink: boolean) => {
+    await save.mutateAsync({ enabled, link: withLink ? link.trim() : null })
+    await xrayExitQuery.refetchQuery()
+    if (withLink) {
+      setLink('')
+    }
+  }
+  return (
+    <Section h2={t('uplinks.xray.title')} description={t('uplinks.xray.description')}>
+      <div className="space-y-3 text-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <Badge variant={xray.enabled ? 'success' : 'secondary'}>
+            {xray.enabled ? t('uplinks.xray.on') : t('uplinks.xray.off')}
+          </Badge>
+          <span className="font-mono text-xs text-muted-foreground">{XRAY_KEY}</span>
+          <Button
+            variant={xray.enabled ? 'ghost' : 'default'}
+            size="sm"
+            disabled={!xray.linked && !xray.enabled}
+            loading={save.isPending}
+            confirm={xray.enabled ? t('uplinks.xray.confirmOff') : undefined}
+            onClick={() => void apply(!xray.enabled, false)}
+          >
+            {xray.enabled ? t('uplinks.xray.disable') : t('uplinks.xray.enable')}
+          </Button>
+        </div>
+        {xray.linked && !xray.problem && (
+          <p className="text-muted-foreground">
+            {t('uplinks.xray.server', { endpoint: xray.endpoint, transport: xray.transport })}
+            {xray.remark && ` — ${xray.remark}`}
+          </p>
+        )}
+        {xray.problem && <p className="text-destructive">{xray.problem}</p>}
+        {!xray.linked && <p className="text-muted-foreground">{t('uplinks.xray.noLink')}</p>}
+        <label className="block space-y-1">
+          <span>{t('uplinks.xray.link')}</span>
+          <Input
+            value={link}
+            maxLength={MAX_XRAY_LINK_BYTES}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => setLink(event.target.value)}
+          />
+          <span className="block text-xs text-muted-foreground">{t('uplinks.xray.linkHint')}</span>
+        </label>
+        <Button
+          size="sm"
+          disabled={problem !== null || !link}
+          loading={save.isPending}
+          onClick={() => void apply(xray.enabled, true)}
+        >
+          {t('uplinks.xray.save')}
+        </Button>
+        {problem && <p className="text-sm text-destructive">{t(`uplinks.xray.problem.${problem}`)}</p>}
+        {save.isError && <p className="text-destructive">{save.error.message}</p>}
+        <ApplyLine apply={xray.apply} />
+        <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+          <li>{t('uplinks.xray.limits.tcp')}</li>
+          <li>{t('uplinks.xray.limits.speed')}</li>
+          <li>{t('uplinks.xray.limits.down')}</li>
+        </ul>
+        <p className="text-muted-foreground">{t('uplinks.xray.use')}</p>
       </div>
     </Section>
   )
@@ -229,10 +307,12 @@ export const uplinksPage = generalLayout.lets
     const data = wgExitsQuery.useQuery().data
     const exits = data?.exits
     const tor = torExitQuery.useQuery().data?.tor
+    const xray = xrayExitQuery.useQuery().data?.xray
 
     return (
       <Sections gap="lg">
         {tor && <TorCard tor={tor} />}
+        {xray && <XrayCard xray={xray} />}
         <Section h1={t('uplinks.title')} description={t('uplinks.description')}>
           {data && !exits && <p className="text-sm text-muted-foreground">{data.reason}</p>}
           {exits && (
