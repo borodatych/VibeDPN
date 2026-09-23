@@ -52,12 +52,14 @@ DIGEST_HOSTAPD = "VIBEDPN_DIGEST_HOSTAPD"
 DIGEST_DNSMASQ = "VIBEDPN_DIGEST_DNSMASQ"
 DIGEST_ADGUARD = "VIBEDPN_DIGEST_ADGUARD"
 DIGEST_WG_SERVER = "VIBEDPN_DIGEST_WG_SERVER"
+DIGEST_ACCESS = "VIBEDPN_DIGEST_ACCESS"
 DIGEST_SERVICES = {
     DIGEST_CORE: "core",
     DIGEST_HOSTAPD: "hostapd",
     DIGEST_DNSMASQ: "dnsmasq",
     DIGEST_ADGUARD: "adguard",
     DIGEST_WG_SERVER: "wg-server",
+    DIGEST_ACCESS: "access",
 }
 DIGEST_LENGTH = 16
 
@@ -82,6 +84,11 @@ PORT_MIN = 1
 PORT_MAX = 65535
 DEFAULT_SSH_PORT = 22
 MIN_WG_SUBNET_ADDRESSES = 4  # network, server, at least one peer, broadcast
+# REALITY off 443 gets a warning from Xray itself: a TLS server on another port stands out.
+DEFAULT_ACCESS_PORT = 443
+# The site REALITY borrows its handshake from. Not every TLS 1.3 site works: www.microsoft.com
+# never completes one, dl.google.com always does (knowledge xray/realityServer.md).
+DEFAULT_ACCESS_TARGET = "dl.google.com"
 LAST_PREFIX_WITH_BROADCAST = 30  # /31 and /32 have no reserved network/broadcast addresses
 # Default DHCP pool of gateway mode: hosts from this offset up to this many before the last one
 # (a /24 hands out .100-.249), leaving the low addresses to the box and static devices.
@@ -115,6 +122,7 @@ class Profile(StrEnum):
     WIFI = "wifi"  # hostapd: gateway mode with network.wifi, the LAN interface is the radio
     DNS = "dns"
     UI = "ui"
+    ACCESS = "access"  # the access server: VLESS/REALITY for the owner's people (decision 30)
 
 
 class NetworkMode(StrEnum):
@@ -832,6 +840,39 @@ class FirewallConfig(StrictModel):
         return value
 
 
+class AccessConfig(StrictModel):
+    """The access server: VLESS over REALITY for the owner's people (docs/manuals/accessServer.md).
+
+    Every role may run it. On a box with a LAN a person outside gets what a device at home gets —
+    the mode, the rules, AdGuard; on a VPS they go straight out. ``address`` is what their links
+    name: a DNS name that follows the box (``ddns``) or the public address of a VPS, and a VPS
+    falls back to ``wg_server.endpoint``. ``target`` is the site REALITY borrows its handshake from.
+    """
+
+    enabled: bool = False
+    address: str | None = None
+    port: Port = DEFAULT_ACCESS_PORT
+    target: str = DEFAULT_ACCESS_TARGET
+
+    @field_validator("address")
+    @classmethod
+    def check_address(cls, value: str | None) -> str | None:
+        return None if value is None else check_endpoint(value)
+
+    @field_validator("target")
+    @classmethod
+    def check_target(cls, value: str) -> str:
+        return normalize_domain(value)
+
+
+class DdnsConfig(StrictModel):
+    """A DNS name that follows a changing public address: core calls the owner's update URL from
+    ``secrets/ddns-url`` every few minutes. The URL carries a token, so it is a secret and never
+    part of this file."""
+
+    enabled: bool = False
+
+
 # Sections that describe a LAN-side box and make no sense on a headless VPS.
 # Sections a VPS has no use for. `ui` is not among them since Stage 11: a VPS may run the panel
 # too, but only through the tunnel and only when the owner says so (see `_vps_panel_default`).
@@ -855,6 +896,8 @@ class Config(StrictModel):
     ui: UiConfig = Field(default_factory=UiConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
     firewall: FirewallConfig = Field(default_factory=FirewallConfig)
+    access: AccessConfig = Field(default_factory=AccessConfig)
+    ddns: DdnsConfig = Field(default_factory=DdnsConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -908,6 +951,11 @@ class Config(StrictModel):
         if self.role is Role.VPS:
             return self._vps_errors()
         errors = self._lan_box_errors()
+        if self.access.enabled and self.access.address is None:
+            errors.append(
+                "access.address: required for the access server of a box at home — the name"
+                " its people dial, one that follows the box (ddns)"
+            )
         if self.role is Role.HOME and self.upstreams.vps.enabled:
             errors.append(
                 "upstreams.vps: role 'home' has no VPS uplink; a box paired with a VPS is role"
@@ -1013,6 +1061,8 @@ class Config(StrictModel):
             profiles = [Profile.PROVIDER, Profile.WG_SERVER]
             if self.ui.enabled:
                 profiles.append(Profile.UI)
+            if self.access.enabled:
+                profiles.append(Profile.ACCESS)
             return profiles
         wanted = {
             Profile.PROVIDER: self.provider.enabled,
@@ -1028,8 +1078,16 @@ class Config(StrictModel):
             Profile.WIFI: self.network is not None and self.network.wifi is not None,
             Profile.DNS: self.dns.enabled,
             Profile.UI: self.ui.enabled,
+            Profile.ACCESS: self.access.enabled,
         }
         return [profile for profile in Profile if wanted.get(profile, False)]
+
+    def access_address(self) -> str | None:
+        """What the links of the access server name: ``access.address``, or on a VPS the public
+        address its home boxes already dial."""
+        if self.access.address is not None:
+            return self.access.address
+        return self.wg_server.endpoint if self.wg_server is not None else None
 
     def ui_address(self) -> IPv4Address | None:
         """The one address the panel listens on, or ``None`` when this box runs none.
@@ -1101,11 +1159,26 @@ class Config(StrictModel):
             DIGEST_WG_SERVER: (
                 self.wg_server.model_dump(mode="json") if self.wg_server is not None else None
             ),
+            # What the server itself reads: its port and cover site, and on a LAN box the
+            # AdGuard it resolves through. A server that is off reads nothing, and turning it on
+            # changes this value, so core renders its files. The address only goes into links.
+            DIGEST_ACCESS: (
+                {
+                    "port": self.access.port,
+                    "target": self.access.target,
+                    "dns": str(self.network.lan_address)
+                    if self.network is not None and self.dns.enabled
+                    else None,
+                }
+                if self.access.enabled
+                else None
+            ),
         }
         parts[DIGEST_CORE] = {
             **parts,
             "network": network,
             "firewall": self.firewall.model_dump(mode="json"),
+            "ddns": self.ddns.model_dump(mode="json"),  # the watcher that calls it lives in core
         }
         return {name: config_digest(payload) for name, payload in parts.items()}
 
@@ -1118,6 +1191,7 @@ class Config(StrictModel):
             "dnsmasq": Profile.DHCP,
             "adguard": Profile.DNS,
             "wg-server": Profile.WG_SERVER,
+            "access": Profile.ACCESS,
         }
         return {"core"} | {
             service for service, profile in by_profile.items() if profile in profiles

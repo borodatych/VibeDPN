@@ -14,20 +14,25 @@ from pathlib import Path
 FILE_MODE = 0o600
 
 
-def write_private(path: Path, content: str) -> bool:
+def write_private(path: Path, content: str, *, owner: int | None = None) -> bool:
     """Write ``content`` with mode 600; ``False`` when the file already says exactly that.
 
     The temporary file is created 600 in the same directory, flushed to disk and renamed over the
     target: an existing file is replaced, never truncated and rewritten in place, so its old mode
-    never applies to the new content.
+    never applies to the new content. ``owner`` hands the file to a service that is not root — the
+    temporary file changes owner before the rename, so that service never meets a file of root's.
     """
     if path.is_file() and not path.is_symlink() and path.read_text(encoding="utf-8") == content:
         path.chmod(FILE_MODE)
+        if owner is not None:
+            os.chown(path, owner, owner)
         return False
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             os.fchmod(handle.fileno(), FILE_MODE)
+            if owner is not None:
+                os.fchown(handle.fileno(), owner, owner)
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())

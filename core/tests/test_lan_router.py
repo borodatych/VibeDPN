@@ -99,7 +99,8 @@ def test_uplinks_match_compose() -> None:
     assert network["ipam"]["config"][0]["subnet"] == UPSTREAMS_SUBNET
 
 
-MODE_RULE = "routing.mode full: LAN traffic leaves through uplink"
+# steer is shared by the LAN and the access server: in full mode everything goes through the uplink
+MODE_RULE = "routing.mode full: everything leaves through uplink"
 
 
 def test_mode_full_marks_lan_traffic_for_its_uplink() -> None:
@@ -129,7 +130,7 @@ def test_no_router_without_a_lan_and_smart_has_no_mode_mark() -> None:
     assert router_ruleset(vps_box()) is None
     assert router_docker_user_rules(vps_box()) == []
     smart = router_ruleset(lan_box("smart")) or ""
-    assert "LAN traffic leaves through uplink" not in smart  # smart marks nothing by mode
+    assert MODE_RULE not in smart  # smart marks nothing by mode
 
 
 def test_rule_plan_from_a_real_listing() -> None:

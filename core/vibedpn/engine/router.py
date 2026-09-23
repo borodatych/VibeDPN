@@ -94,6 +94,7 @@ def firewall_ruleset(config: Config) -> str | None:
         .render(
             ssh_ports=config.firewall.ssh_ports,
             wg_port=config.wg_server.listen_port if config.wg_server else None,
+            access_port=config.access.port if config.access.enabled else None,
             provider=config.provider.enabled,
             udp_from=udp_from,
             udp_to=udp_to,
@@ -429,6 +430,9 @@ RULE_UPLINKS: dict[DomainVia, Upstream] = {
 # AdGuard Home runs as this user (compose.yaml `user:`), so its own DoH traffic can be told from
 # the host's and steered into the uplink of routing.mode full (docs/decisions.md, decision 14).
 ADGUARD_UID = 7753
+# The access server runs as this uid (compose.yaml, service access): on a box with a LAN its
+# outgoing traffic is steered like a device's, and the uid is how the router recognises it.
+ACCESS_UID = 7755
 
 
 def active_uplink(config: Config) -> str | None:
@@ -591,6 +595,8 @@ def router_ruleset(config: Config) -> str | None:
             if active and config.dns.enabled
             else "",
             adguard_uid=ADGUARD_UID,
+            # the access server: its people leave the box the way a device at home does
+            access_uid=ACCESS_UID if config.access.enabled else "",
             # gateway mode: the box is the router of its LAN, so the direct path is NATed here
             wan_interface=config.network.wan_interface or "",
         )

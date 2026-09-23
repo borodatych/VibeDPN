@@ -28,6 +28,9 @@ table inet vibedpn {
 {% if wg_port %}
     udp dport {{ wg_port }} accept comment "wireguard server"
 {% endif %}
+{% if access_port %}
+    tcp dport {{ access_port }} accept comment "access server"
+{% endif %}
 {% if provider %}
     udp dport @myst_udp accept comment "mysterium node"
 {% endif %}

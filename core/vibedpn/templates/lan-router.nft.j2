@@ -5,7 +5,8 @@
 # bridge {{ bridge }}; the host default route is never touched.
 #
 # Device policies from config.yaml win over routing.mode: a device with a MAC is matched by its
-# MAC only, a device without one by its address. The first match decides (return).
+# MAC only, a device without one by its address. The first match decides (return). Where the rest
+# goes is one chain, `steer`, which the LAN and the access server's own traffic both jump to.
 add table inet vibedpn_router
 delete table inet vibedpn_router
 table inet vibedpn_router {
@@ -46,6 +47,9 @@ table inet vibedpn_router {
     ether saddr @devices_{{ policy.name }}_mac meta mark set {{ policy.mark }} return comment "policy {{ policy.name }}: through uplink {{ policy.name }}"
     ip saddr @devices_{{ policy.name }}_ip meta mark set {{ policy.mark }} return comment "policy {{ policy.name }}: through uplink {{ policy.name }}"
 {% endfor %}
+    jump steer
+  }
+  chain steer {
 {% for net in smart_networks %}
 {% if net.mark %}
     ip daddr @{{ net.name }} meta mark set {{ net.mark }} return comment "routing.mode smart: a network rule through its uplink"
@@ -57,9 +61,20 @@ table inet vibedpn_router {
     ip daddr @{{ mark.name }} meta mark set {{ mark.mark }} return comment "routing.mode smart: a domain rule through its uplink"
 {% endfor %}
 {% if mode_mark %}
-    meta mark set {{ mode_mark }} comment "routing.mode full: LAN traffic leaves through uplink {{ mode_upstream }}"
+    meta mark set {{ mode_mark }} comment "routing.mode full: everything leaves through uplink {{ mode_upstream }}"
 {% endif %}
   }
+{% if access_uid %}
+  chain access_output {
+    type route hook output priority mangle; policy accept;
+    meta skuid != {{ access_uid }} return
+    ct direction reply return comment "answers to the people the access server serves stay on their way"
+    meta nfproto != ipv4 return
+    ip daddr { {{ lan_subnet }}, {{ upstreams_subnet }} } return
+    fib daddr type local return comment "the box itself"
+    jump steer comment "a person outside is steered like a device at home"
+  }
+{% endif %}
   chain forward {
     type filter hook forward priority filter; policy accept;
     iifname "{{ lan_interface }}" ip daddr {{ upstreams_subnet }} drop comment "the LAN never reaches gateway containers directly, only through them"
@@ -72,6 +87,9 @@ table inet vibedpn_router {
   chain output {
     type filter hook output priority filter; policy accept;
     oifname "{{ lan_interface }}" icmp type redirect drop comment "one port in and out: never tell a device to bypass the box"
+{% if access_uid %}
+    meta skuid {{ access_uid }} meta nfproto ipv6 ct direction original oifname != "lo" drop comment "the uplinks are IPv4: a person's IPv6 never leaves around them"
+{% endif %}
 {% if dns_mark %}
     meta skuid {{ adguard_uid }} meta nfproto ipv6 oifname != "lo" drop comment "AdGuard upstreams are IPv4 through the uplink: no IPv6 around it"
 {% endif %}

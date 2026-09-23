@@ -227,6 +227,27 @@ wg_server:
   subnet: {{ config.wg_server.subnet }}
   listen_port: {{ config.wg_server.listen_port }}
 {% endif %}
+
+# Сервер доступа: VLESS/REALITY для своих людей, ссылка на человека — `vibedpn access add <имя>`
+# (docs/manuals/accessServer.md). На коробке человек снаружи получает то же, что устройство дома:
+# режим, правила, AdGuard; на VPS выходит в интернет напрямую.
+# address — имя, по которому набирают коробку; на VPS без него берётся wg_server.endpoint.
+# port — 443: на другом порту REALITY заметнее. target — сайт, чьё рукопожатие одалживает REALITY;
+#   подходит не любой сайт с TLS 1.3 (www.microsoft.com — нет), проверка — `vibedpn doctor`.
+access:
+  enabled: {{ config.access.enabled | tojson }}
+{% if config.access.address %}
+  address: {{ config.access.address }}
+{% else %}
+  # address: myhome.duckdns.org
+{% endif %}
+  port: {{ config.access.port }}
+  target: {{ config.access.target }}
+
+# Имя, которое следует за меняющимся адресом дома: ядро раз в пять минут вызывает адрес обновления
+# сервиса DDNS из secrets/ddns-url (в нём токен, поэтому не здесь); задаётся `vibedpn ddns set`.
+ddns:
+  enabled: {{ config.ddns.enabled | tojson }}
 {% if not lan %}
 
 # Файрвол VPS (nftables, таблица inet vibedpn, на вход всё закрыто, кроме перечисленного):

@@ -39,6 +39,9 @@ services:
       - ./data/dnsmasq:/etc/vibedpn/dnsmasq
       # core renders hostapd.conf of the access point with its passphrase (engine/hostapd.py).
       - ./data/hostapd:/etc/vibedpn/hostapd
+      # core renders the configuration of the access server and its list of people there
+      # (engine/access.py); the directory belongs to the server's uid, the keys stay in secrets/.
+      - ./data/access:/etc/vibedpn/access
       # hostapd's control socket: core journals Wi-Fi events and lists clients (engine/wifi.py).
       # /run, not ./data: a socket is runtime state, gone at reboot, and never belongs in a backup.
       - /run/vibedpn/hostapd:/run/vibedpn/hostapd
@@ -417,6 +420,41 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # Access server (docs/manuals/accessServer.md, decision 30): VLESS over REALITY for the owner's
+  # people, on any role. Host network: it answers on the public side of the box, and on a box with
+  # a LAN the router steers its own outgoing traffic like a device's, by its uid (engine/router.py).
+  access:
+    image: ghcr.io/borodatych/vibedpn-xray:${VIBEDPN_TAG:-latest}
+    environment:
+      # The config.yaml sections this service's start-time files come from
+      # (Config.config_digests): a change recreates it at `vibedpn up`, and nothing else.
+      VIBEDPN_CONFIG_DIGEST: ${VIBEDPN_DIGEST_ACCESS:-}
+    build:
+      context: ./images/xray
+    profiles:
+      - access
+    restart: unless-stopped
+    network_mode: host
+    # The uid the router recognises the server's traffic by; keep equal to ACCESS_UID in
+    # core/vibedpn/engine/router.py. Port 443 comes from the file capability of the binary.
+    user: "7755:7755"
+    depends_on:
+      # core renders data/access from config.yaml and secrets/access before it reports healthy.
+      core:
+        condition: service_healthy
+    volumes:
+      - ./data/access:/etc/vibedpn-access:ro
+    command:
+      - serve
+    healthcheck:
+      # A real connection to itself as a service user: REALITY borrows the handshake of its cover
+      # site, and a site that does not fit fails here, not in the phone of a person.
+      test: ["CMD", "/usr/local/bin/entrypoint.sh", "serve-health"]
+      interval: 60s
+      timeout: 20s
+      retries: 3
+      start_period: 30s
 
   # AdGuard Home on port 53 of the LAN address. Host network (needed for DHCP later and for real
   # client IPs); core renders AdGuardHome.yaml into ./data/adguard/conf so the setup wizard on

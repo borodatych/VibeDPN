@@ -115,6 +115,23 @@ provider:
   udp_ports: "56000-56100"
   traversal: [manual, upnp, holepunching]
 
+# Сервер доступа: VLESS/REALITY для своих людей, ссылка на человека — `vibedpn access add <имя>`
+# (docs/manuals/accessServer.md). На коробке человек снаружи получает то же, что устройство дома:
+# режим, правила, AdGuard; на VPS выходит в интернет напрямую.
+# address — имя, по которому набирают коробку; на VPS без него берётся wg_server.endpoint.
+# port — 443: на другом порту REALITY заметнее. target — сайт, чьё рукопожатие одалживает REALITY;
+#   подходит не любой сайт с TLS 1.3 (www.microsoft.com — нет), проверка — `vibedpn doctor`.
+access:
+  enabled: false
+  # address: myhome.duckdns.org
+  port: 443
+  target: dl.google.com
+
+# Имя, которое следует за меняющимся адресом дома: ядро раз в пять минут вызывает адрес обновления
+# сервиса DDNS из secrets/ddns-url (в нём токен, поэтому не здесь); задаётся `vibedpn ddns set`.
+ddns:
+  enabled: false
+
 # DNS и адблок: AdGuard Home на порту 53 LAN-адреса; upstreams — DNS-over-HTTPS.
 dns:
   enabled: true
