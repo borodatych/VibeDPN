@@ -1140,6 +1140,9 @@ class Config(StrictModel):
         recreates exactly core and the services reading its files, and nothing else — a new
         Wi-Fi name does not restart DNS, a new DNS upstream does not drop the Wi-Fi clients.
         Routing, devices, rules and lists are applied live through core and are not part of it.
+        Anything else core reads belongs in its fingerprint, even what it only puts into an answer
+        (the address in the links): core keeps the config it started with, and a section the CLI
+        edits in the file reaches it through a restart alone.
         """
         network = self.network.model_dump(mode="json") if self.network is not None else None
         lan = {key: value for key, value in network.items() if key != "wifi"} if network else None
@@ -1161,7 +1164,7 @@ class Config(StrictModel):
             ),
             # What the server itself reads: its port and cover site, and on a LAN box the
             # AdGuard it resolves through. A server that is off reads nothing, and turning it on
-            # changes this value, so core renders its files. The address only goes into links.
+            # changes this value, so core renders its files. The address is core's alone (below).
             DIGEST_ACCESS: (
                 {
                     "port": self.access.port,
@@ -1179,6 +1182,8 @@ class Config(StrictModel):
             "network": network,
             "firewall": self.firewall.model_dump(mode="json"),
             "ddns": self.ddns.model_dump(mode="json"),  # the watcher that calls it lives in core
+            # core writes it into every link it hands out, and keeps the config it started with
+            "access_address": self.access.address,
         }
         return {name: config_digest(payload) for name, payload in parts.items()}
 

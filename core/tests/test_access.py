@@ -105,12 +105,15 @@ def test_the_profile_is_on_both_roles_only_when_enabled() -> None:
     assert "access" in home().digest_services()
 
 
-def test_the_digest_follows_what_the_server_reads_and_not_the_links() -> None:
+def test_the_digests_follow_what_the_server_and_core_read() -> None:
     before = home().config_digests()
     assert home(port=8443).config_digests()[DIGEST_ACCESS] != before[DIGEST_ACCESS]
     assert home(target="www.apple.com").config_digests()[DIGEST_ACCESS] != before[DIGEST_ACCESS]
-    # the address only goes into links: nothing restarts for it
-    assert home(address="other.example.org").config_digests() == before
+    # the address goes into the links core hands out: core restarts for it, the server does not
+    moved = home(address="other.example.org").config_digests()
+    assert moved[DIGEST_ACCESS] == before[DIGEST_ACCESS]
+    assert moved[DIGEST_CORE] != before[DIGEST_CORE]
+    assert {name for name in moved if moved[name] != before[name]} == {DIGEST_CORE}
     # turning the server on changes core's fingerprint too: core renders the server's files
     off = home(enabled=False, address="home.example.org").config_digests()
     assert off[DIGEST_ACCESS] != before[DIGEST_ACCESS]
