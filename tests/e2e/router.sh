@@ -495,8 +495,10 @@ if [ "$OFFLINE" != 1 ]; then
 fi
 
 log "failopen true: the gateway stops and the device goes direct ($INTERNET_GATEWAY)"
+# An edit of the file and `up`, no restart: nothing but the file changes failopen, so the
+# fingerprint of core carries it and up recreates core (decision 25).
 sudo sed -i 's/^  failopen: false$/  failopen: true/' "$BOX/config.yaml"
-sudo "$CLI" restart --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn restart failed"
+sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up after failopen true failed"
 wait_healthy vibedpn-core-1
 wait_healthy vibedpn-wg-client-1
 await_exit "$VPS_IP" "the device does not leave through the VPS after switching to failopen true"
@@ -518,7 +520,14 @@ await_exit "$INTERNET_GATEWAY" "the device does not go direct in mode off"
 "$CLI" status --dir "$BOX" | grep -q "^routing: mode=off" || fail "status does not show mode off"
 if [ "$OFFLINE" != 1 ]; then
   await_dns
-  [ "$(dns_answers 28)" -gt 0 ] || fail "AdGuard still hides AAAA in mode off"
+  # The DoH connections AdGuard opened through the uplink in full die when their path changes, and
+  # a query over one of them fails until AdGuard opens a new one (knowledge adguard/docker.md).
+  i=0
+  until [ "$(dns_answers 28 2>/dev/null || echo 0)" -gt 0 ]; do
+    i=$((i + 1))
+    [ "$i" -lt "$TIMEOUT" ] || fail "AdGuard still hides AAAA in mode off"
+    sleep 1
+  done
   echo "AAAA answered in mode off"
 fi
 
@@ -592,6 +601,20 @@ echo "named exit: the device leaves as $EXIT_IP"
 named_report="$(sudo env VIBEDPN_EXIT_IP_URL="http://$WEB_IP:$WEB_PORT/" "$CLI" doctor --network --dir "$BOX" 2>&1 || true)"
 printf '%s\n' "$named_report" | grep -q "\[ ok \] exit wg-$EXIT_NAME *$EXIT_IP" ||
   fail "doctor --network does not see the named exit: $(printf '%s\n' "$named_report" | grep "exit wg-")"
+
+log "named exit: a new peer file reaches the running gateway at the next up"
+# The file is bind-mounted on its own and replaced by rename, so the running container keeps the
+# old one; its fingerprint in .env is what makes up recreate the gateway (compose.file_digests).
+started="$(docker inspect -f '{{.State.StartedAt}}' "vibedpn-wg-$EXIT_NAME-1")"
+printf '# the provider moved the server\n' >>"$WORK/exit-peer.conf"
+sudo "$CLI" uplink add "$EXIT_NAME" "$WORK/exit-peer.conf" --dir "$BOX" >/dev/null ||
+  fail "vibedpn uplink add with a new file failed"
+sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up with a new peer file failed"
+wait_healthy "vibedpn-wg-$EXIT_NAME-1"
+[ "$(docker inspect -f '{{.State.StartedAt}}' "vibedpn-wg-$EXIT_NAME-1")" != "$started" ] ||
+  fail "a new peer file did not recreate the gateway of wg-$EXIT_NAME"
+await_exit "$EXIT_IP" "the device lost the named exit after its file was replaced"
+echo "named exit: a new file recreated its gateway, the device still leaves as $EXIT_IP"
 
 log "named exit: back to the VPS (the exit stays for the smart-mode rule below)"
 sudo "$CLI" upstream vps --dir "$BOX" >/dev/null || fail "vibedpn upstream vps after the named exit failed"
@@ -766,14 +789,19 @@ sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up with failopen fa
 # channel — so `upstream xray` would change nothing and the device would go direct.
 sudo "$CLI" mode full --dir "$BOX" >/dev/null || fail "vibedpn mode full before the xray checks failed"
 XRAY_UUID="$(cat /proc/sys/kernel/random/uuid)"
+XRAY_UUID2="$(cat /proc/sys/kernel/random/uuid)"  # the link the box moves to below
 mkdir -m 755 "$WORK/xray"  # the official image runs as nonroot and has to read this
-cat >"$WORK/xray/config.json" <<EOF
+# $1: the clients the stand's server lets in
+xray_server_config() {
+  cat >"$WORK/xray/config.json" <<EOF
 {"log": {"loglevel": "warning"},
  "inbounds": [{"port": 10443, "protocol": "vless",
-   "settings": {"clients": [{"id": "$XRAY_UUID"}], "decryption": "none"},
+   "settings": {"clients": [$1], "decryption": "none"},
    "streamSettings": {"network": "tcp"}}],
  "outbounds": [{"protocol": "freedom"}]}
 EOF
+}
+xray_server_config "{\"id\": \"$XRAY_UUID\"}, {\"id\": \"$XRAY_UUID2\"}"
 docker run -d --name "$XRAY" --network "$INTERNET" --ip "$XRAY_IP" \
   -p "$XRAY_PORT:10443" -v "$WORK/xray:/usr/local/etc/xray:ro" "$XRAY_IMAGE" >/dev/null
 printf 'vless://%s@%s:%s?type=tcp&security=none#stand\n' "$XRAY_UUID" "$INTERNET_GATEWAY" "$XRAY_PORT" \
@@ -795,6 +823,23 @@ docker stop "$XRAY" >/dev/null
 await_exit none "with the xray server stopped the device still reaches the internet"
 docker start "$XRAY" >/dev/null
 await_exit "$XRAY_IP" "the device does not come back through xray when its server returns"
+
+log "uplink xray: a new share link reaches the running gateway at the next up"
+# The gateway reads its configuration only at start; the fingerprint of the rendered file makes up
+# recreate it. Then the server forgets the first link, and only the new one gets the device out.
+started="$(docker inspect -f '{{.State.StartedAt}}' vibedpn-xray-1)"
+printf 'vless://%s@%s:%s?type=tcp&security=none#stand\n' "$XRAY_UUID2" "$INTERNET_GATEWAY" "$XRAY_PORT" \
+  >"$WORK/xray-link"
+sudo "$CLI" xray enable --link-file "$WORK/xray-link" --dir "$BOX" >/dev/null ||
+  fail "vibedpn xray enable with a new link failed"
+sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up with a new xray link failed"
+wait_healthy vibedpn-xray-1
+[ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-xray-1)" != "$started" ] ||
+  fail "a new share link did not recreate the xray gateway"
+xray_server_config "{\"id\": \"$XRAY_UUID2\"}"
+docker restart "$XRAY" >/dev/null
+await_exit "$XRAY_IP" "the gateway does not go out through the new share link"
+echo "xray: a new link recreated the gateway, and only that link gets the device out"
 sudo "$CLI" upstream vps --dir "$BOX" >/dev/null || fail "vibedpn upstream vps after xray failed"
 sudo "$CLI" xray disable --dir "$BOX" | grep -q "disabled" || fail "vibedpn xray disable failed"
 sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up after xray disable failed"
