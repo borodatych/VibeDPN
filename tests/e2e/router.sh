@@ -91,7 +91,7 @@ cleanup() {
   if [ -n "${PY:-}" ] && [ -x "$PY" ]; then
     sudo "$PY" -c "from vibedpn.engine.router import remove_router; remove_router()" >/dev/null 2>&1 || true
   fi
-  docker rm -f "$WEB" "$VPS" "$EXIT" "$XRAY" "$LISTENER" >/dev/null 2>&1 || true
+  docker rm -f "$WEB" "$VPS" "$EXIT" "$XRAY" "$LISTENER" e2e-person-anna e2e-person-boris >/dev/null 2>&1 || true
   docker network rm "$INTERNET" >/dev/null 2>&1 || true
   sudo ip netns del "$NETNS" 2>/dev/null || true
   sudo ip netns del "$NETNS2" 2>/dev/null || true
@@ -113,6 +113,7 @@ fail() {
     echo "# wg-client"; docker exec vibedpn-wg-client-1 wg show wg0
     echo "# xray gateway"; docker logs --tail 15 vibedpn-xray-1 2>&1 || true
     echo "# xray server of the stand"; docker logs --tail 15 "$XRAY" 2>&1 || true
+    echo "# access server"; docker logs --tail 20 vibedpn-access-1 2>&1 || true
     echo "# fake VPS"; docker exec "$VPS" wg show wg0
     echo "# core"; docker logs --tail 25 vibedpn-core-1
   } >&2 2>&1 || true
@@ -802,6 +803,146 @@ if docker ps --format '{{.Names}}' | grep -q vibedpn-xray-1; then
 fi
 await_exit "$VPS_IP" "the device lost the VPS after uplink xray was turned off"
 echo "xray off: the gateway is gone and the device is back on the VPS"
+
+log "access server: a person outside leaves the box the way a device of its LAN does"
+# A person dials the box on the stand's internet, where the web server that names the exit lives
+# too, so the path of a person is proved by an address like a device's. REALITY borrows the
+# handshake of a real site, so the scenario needs the internet like the DNS checks do.
+if [ "$OFFLINE" = 1 ]; then
+  echo "skipped: REALITY borrows the handshake of a real site (VIBEDPN_E2E_OFFLINE=1)"
+else
+  # A phone outside: the official xray, built from the very link the box handed out and read back
+  # the way engine/xray reads a link, with a socks port on the host for curl.
+  person_client() {
+    sudo cat "$WORK/$1.link" | "$PY" -c 'import json, sys
+from vibedpn.engine.xray import parse_share_link
+s = parse_share_link(sys.stdin.read())
+print(json.dumps({"log": {"loglevel": "warning"},
+ "inbounds": [{"listen": "0.0.0.0", "port": 1080, "protocol": "socks"}],
+ "outbounds": [{"protocol": "vless",
+  "settings": {"vnext": [{"address": s.host, "port": s.port,
+   "users": [{"id": s.uuid, "encryption": "none", "flow": s.flow}]}]},
+  "streamSettings": {"network": "raw", "security": s.security, "realitySettings": {
+   "serverName": s.sni, "fingerprint": s.fingerprint, "publicKey": s.public_key,
+   "shortId": s.short_id}}}]}))' >"$WORK/person-$1/config.json" || fail "cannot build the phone of $1 from its link"
+    docker run -d --name "e2e-person-$1" --network "$INTERNET" -p "127.0.0.1:$2:1080" \
+      -v "$WORK/person-$1:/usr/local/etc/xray:ro" "$XRAY_IMAGE" >/dev/null
+  }
+  person_exit() {
+    curl -s --max-time 6 -x "socks5h://127.0.0.1:$1" "http://$WEB_IP:$WEB_PORT/" 2>/dev/null || true
+  }
+  # $1: the socks port of a person; $2: the wanted exit address, or "none"; $3: what failed.
+  await_person() {
+    i=0
+    while :; do
+      seen="$(person_exit "$1")"
+      [ "$2" = none ] && [ -z "$seen" ] && return 0
+      [ "$seen" = "$2" ] && return 0
+      i=$((i + 1))
+      [ "$i" -lt "$TIMEOUT" ] || fail "$3 (the web server sees '${seen:-no connection}')"
+      sleep 1
+    done
+  }
+  mkdir -m 755 "$WORK/person-anna" "$WORK/person-boris"  # the official image runs as nonroot
+  ports="$(sudo "$PY" -c 'import sys, pathlib; from vibedpn.config import load_config
+config = load_config(pathlib.Path(sys.argv[1])); print(config.api.port, config.dns.web_port)' "$BOX/config.yaml")" ||
+    fail "cannot read the ports of the box"
+  api_port="${ports% *}"
+  web_port="${ports#* }"
+
+  sudo "$CLI" access enable --address "$INTERNET_GATEWAY" --dir "$BOX" | grep -q "access server enabled" ||
+    fail "vibedpn access enable failed"
+  sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up with the access server failed"
+  # healthy is a real REALITY handshake of the server to itself through its cover site
+  wait_healthy vibedpn-access-1
+  sudo nft list chain inet vibedpn_router access_output >/dev/null 2>&1 ||
+    fail "the router has no access_output chain: people would leave around its rules"
+  sudo "$CLI" access add anna --out "$WORK/anna.link" --dir "$BOX" >/dev/null || fail "vibedpn access add anna failed"
+  [ "$(sudo stat -c '%a' "$WORK/anna.link")" = 600 ] || fail "the link of a person is not written 600"
+  person_client anna 18080
+
+  sudo "$CLI" mode full --dir "$BOX" >/dev/null || fail "vibedpn mode full before the access checks failed"
+  await_person 18080 "$VPS_IP" "a person does not leave through the VPS in mode full"
+  echo "access, full: the person leaves as $VPS_IP"
+  sudo "$CLI" mode off --dir "$BOX" >/dev/null || fail "vibedpn mode off for the access checks failed"
+  await_person 18080 "$INTERNET_GATEWAY" "a person does not go direct in mode off"
+  echo "access, off: the person leaves as $INTERNET_GATEWAY"
+  sudo "$CLI" mode smart --dir "$BOX" >/dev/null || fail "vibedpn mode smart for the access checks failed"
+  sudo "$CLI" net add "$WEB_IP/32" vps --dir "$BOX" >/dev/null || fail "vibedpn net add of the web server failed"
+  await_person 18080 "$VPS_IP" "a network rule does not take a person through the VPS in mode smart"
+  sudo "$CLI" net rm "$WEB_IP/32" --dir "$BOX" >/dev/null || fail "vibedpn net rm of the web server failed"
+  await_person 18080 "$INTERNET_GATEWAY" "without the rule a person does not go direct in mode smart"
+  echo "access, smart: the network rule takes the person through the VPS, without it direct"
+
+  log "access server: the box and its LAN are closed to a person"
+  # Each target answers the host first: a refusal to the person is then the block, not a dead port.
+  # core trusts its loopback: its API answers there without a session.
+  curl -s --max-time 5 "http://127.0.0.1:$api_port/health" | grep -q status ||
+    fail "core does not answer on its loopback: the loopback check would prove nothing"
+  if curl -s --max-time 5 -x "socks5h://127.0.0.1:18080" "http://127.0.0.1:$api_port/health" | grep -q status; then
+    fail "a person reaches the API of core on the loopback of the box"
+  fi
+  # AdGuard answers on the LAN address of the box: the LAN is where the person must not go.
+  lan_web="http://$BOX_LAN_IP:$web_port/"
+  [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$lan_web")" != 000 ] ||
+    fail "AdGuard does not answer on the LAN address: the LAN check would prove nothing"
+  [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -x "socks5h://127.0.0.1:18080" "$lan_web")" = 000 ] ||
+    fail "a person reaches the LAN of the box"
+  echo "access: loopback and LAN closed (both answer the host)"
+
+  log "access server: people come and go on the fly, and nobody else is dropped"
+  sudo "$CLI" access add boris --out "$WORK/boris.link" --dir "$BOX" >/dev/null || fail "vibedpn access add boris failed"
+  person_client boris 18081
+  await_person 18081 "$INTERNET_GATEWAY" "a person added to the running server does not get in"
+  sudo "$CLI" access rm anna --yes --dir "$BOX" | grep -q "removed anna" || fail "vibedpn access rm anna failed"
+  await_person 18080 none "a removed person still gets through"
+  await_person 18081 "$INTERNET_GATEWAY" "removing one person dropped another"
+  [ "$(docker inspect -f '{{.RestartCount}}' vibedpn-access-1)" = 0 ] ||
+    fail "the access server restarted to add or remove a person"
+  echo "access: boris added and anna removed without a restart"
+
+  log "access server: what a person used is counted, and doctor sees the server"
+  i=0
+  until curl -s "http://127.0.0.1:$api_port/access" | "$PY" -c 'import json, sys
+people = {p["name"]: p for p in json.load(sys.stdin)["people"]}
+sys.exit(0 if people.get("boris", {}).get("tx_bytes", 0) > 0 else 1)'; do
+    i=$((i + 1))
+    [ "$i" -lt 45 ] || fail "the traffic of a person is not counted (core samples once a minute)"
+    person_exit 18081 >/dev/null
+    sleep 2
+  done
+  sudo "$CLI" doctor --dir "$BOX" | grep -E '^\[ ok \] access +links name' >/dev/null ||
+    fail "doctor does not see the access server steered by the router"
+  echo "access: traffic counted, doctor ok"
+
+  log "access server: a new address goes into the links, and only core restarts for it"
+  # core hands out links from the config it started with, so up must recreate it; the server
+  # does not read the address and keeps its people connected
+  started="$(docker inspect -f '{{.State.StartedAt}}' vibedpn-access-1)"
+  sudo "$CLI" access enable --address box.e2e.test --dir "$BOX" >/dev/null ||
+    fail "vibedpn access enable with a new address failed"
+  sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up after a new access address failed"
+  wait_healthy vibedpn-core-1
+  sudo "$CLI" access link boris --dir "$BOX" | grep -q "@box.e2e.test:" ||
+    fail "the links still name the old address after vibedpn up"
+  [ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-access-1)" = "$started" ] ||
+    fail "a new address in the links restarted the access server"
+  await_person 18081 "$INTERNET_GATEWAY" "a new address in the links dropped a person"
+  echo "access: the links name the new address, the server kept running"
+
+  log "access server: turned off, the server and its chain are gone"
+  sudo "$CLI" access disable --dir "$BOX" | grep -q "disabled" || fail "vibedpn access disable failed"
+  sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up after access disable failed"
+  if docker ps --format '{{.Names}}' | grep -q vibedpn-access-1; then
+    fail "the disabled access server keeps running"
+  fi
+  sudo nft list chain inet vibedpn_router access_output >/dev/null 2>&1 &&
+    fail "the chain of the disabled access server is still in the router"
+  await_person 18081 none "a person still gets through a disabled access server"
+  docker rm -f e2e-person-anna e2e-person-boris >/dev/null 2>&1 || true
+  sudo "$CLI" mode full --dir "$BOX" >/dev/null || fail "vibedpn mode full after the access checks failed"
+  echo "access off: container and chain gone"
+fi
 
 log "named exit: removing it takes its file, its container and its uplink away"
 sudo "$CLI" mode full --dir "$BOX" >/dev/null || fail "vibedpn mode full before removing the named exit failed"

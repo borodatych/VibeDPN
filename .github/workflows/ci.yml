@@ -502,7 +502,7 @@ jobs:
           VIBEDPN_WG_IMAGE=ghcr.io/borodatych/vibedpn-wg:test tests/wg/tunnel.sh
 
   e2e:
-    name: e2e · box + fake VPS + LAN device — exit address, kill switch, modes, DNS
+    name: e2e · box + fake VPS + LAN device — exit address, kill switch, modes, DNS, access server
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
