@@ -53,6 +53,10 @@ from vibedpn.api.models import (
     PeerView,
     RoutingUpdate,
     RoutingView,
+    TelegramReportView,
+    TelegramToken,
+    TelegramUpdate,
+    TelegramView,
     TorUplinkUpdate,
     TorUplinkView,
     UplinkStatus,
@@ -67,6 +71,7 @@ from vibedpn.api.models import (
 )
 from vibedpn.api.smart import SmartLoop
 from vibedpn.api.state import BoxState
+from vibedpn.api.telegram import TelegramBot, link_url
 from vibedpn.api.traffic import ACCESS_TRAFFIC_DIR
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.atomic import write_private
@@ -110,6 +115,7 @@ from vibedpn.config_edit import (
     set_network,
     set_network_rule,
     set_routing,
+    set_telegram,
     set_tor_uplink,
     set_vps_lan_access,
     set_wg_uplink,
@@ -159,6 +165,7 @@ from vibedpn.engine.router import (
     uplink_table,
     used_uplinks,
 )
+from vibedpn.engine.telegram import TelegramError, check_token
 from vibedpn.engine.traffic import connect as traffic_connect
 from vibedpn.engine.traffic import forget as traffic_forget
 from vibedpn.engine.traffic import totals as traffic_totals
@@ -956,10 +963,12 @@ def _lan_state(state: BoxState | None) -> BoxState:
     return state
 
 
-def _run_edit(box_state: BoxState, change: Callable[[Path], tuple[Config, bool]]) -> Config:
+def _run_edit(
+    box_state: BoxState, change: Callable[[Path], tuple[Config, bool]], *, route: bool = True
+) -> Config:
     """A rule or list edit of config.yaml applied live; core's refusals become HTTP answers."""
     try:
-        return box_state.edit(change)
+        return box_state.edit(change, route=route)
     except (
         RuleNotFoundError,
         ListNotFoundError,
@@ -1259,6 +1268,7 @@ def create_app(
     data_dir: Path | None = None,
     access_dir: Path | None = None,
     access_owner: int | None = ACCESS_UID,
+    telegram: TelegramBot | None = None,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -1328,6 +1338,7 @@ def create_app(
         AccessPaths(secrets_dir, data_dir, access_dir, access_owner),
     )
     _add_ddns_routes(application, current, state, secrets_dir, data_dir)
+    _add_telegram_routes(application, current, state, telegram)
 
     return application
 
@@ -1519,6 +1530,134 @@ def _add_ddns_routes(
         if edited.ddns != box.ddns:
             _ask_host(data, "ddns " + ("enabled" if request.enabled else "disabled"))
         return view()
+
+
+NO_TELEGRAM = "this core runs no Telegram bot"
+
+
+def _telegram_error(exc: TelegramError) -> HTTPException:
+    if exc.rejected:
+        return HTTPException(
+            status_code=422, detail=f"Telegram does not know this token ({exc}): check it"
+        )
+    return HTTPException(status_code=503, detail=str(exc))
+
+
+def _add_telegram_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    state: BoxState | None,
+    bot: TelegramBot | None,
+) -> None:
+    """``/telegram``: the bot of the box (decision 31) — its settings in config.yaml, applied
+    live; its token, which goes into ``secrets/`` and never back out; the link that links a chat,
+    with its QR code; a test message."""
+
+    def box_bot() -> tuple[Config, BoxState, TelegramBot]:
+        box = current()
+        if box is None or state is None or bot is None:
+            raise HTTPException(status_code=404, detail=NO_TELEGRAM)
+        return box, state, bot
+
+    def view() -> TelegramView:
+        box, _state, telegram = box_bot()
+        status = telegram.status()
+        offer = status.offer
+        link = link_url(status.bot, offer.code) if offer is not None and status.bot else None
+        settings = box.telegram
+        return TelegramView(
+            enabled=settings.enabled,
+            token_set=status.token_set,
+            bot=status.bot,
+            linked=status.linked,
+            chat=status.chat,
+            linked_at=status.linked_at,
+            link=link,
+            qr_svg=_qr_svg(link) if link is not None else None,
+            link_expires_at=offer.expires_at if link is not None and offer is not None else None,
+            alert_after_seconds=settings.alert_after_seconds,
+            timezone=settings.timezone,
+            report=TelegramReportView(
+                enabled=settings.report.enabled,
+                weekday=settings.report.weekday,
+                hour=settings.report.hour,
+            ),
+            last_ok=status.delivery.last_ok,
+            last_at=status.delivery.last_at,
+            message=status.delivery.message,
+            via=status.delivery.via,
+            waiting=status.waiting,
+        )
+
+    def enable(box_state: BoxState) -> None:
+        _run_edit(box_state, lambda path: set_telegram(path, enabled=True), route=False)
+
+    @application.get("/telegram", response_model=TelegramView)
+    def telegram_bot() -> TelegramView:
+        return view()
+
+    @application.put("/telegram", response_model=TelegramView)
+    def put_telegram_bot(request: TelegramUpdate) -> TelegramView:
+        _box, box_state, telegram = box_bot()
+        if request.enabled and not telegram.status().token_set:
+            raise HTTPException(
+                status_code=422, detail="the bot has no token yet: vibedpn telegram set"
+            )
+        _run_edit(
+            box_state,
+            lambda path: set_telegram(
+                path,
+                enabled=request.enabled,
+                alert_after_seconds=request.alert_after_seconds,
+                timezone=request.timezone,
+                report_enabled=request.report_enabled,
+                report_weekday=request.report_weekday,
+                report_hour=request.report_hour,
+            ),
+            route=False,
+        )
+        return view()
+
+    @application.post("/telegram/token", response_model=TelegramView)
+    def put_telegram_token(request: TelegramToken) -> TelegramView:
+        """Check the token with Telegram, keep it, turn the bot on and offer a link."""
+        _box, box_state, telegram = box_bot()
+        try:
+            token = check_token(request.token)
+        except TelegramError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            telegram.set_token(token)
+        except TelegramError as exc:
+            raise _telegram_error(exc) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"cannot keep the token: {exc.strerror or exc}"
+            ) from exc
+        enable(box_state)
+        return view()
+
+    @application.post("/telegram/link", response_model=TelegramView)
+    def telegram_link() -> TelegramView:
+        _box, _state, telegram = box_bot()
+        try:
+            telegram.offer_link()
+        except TelegramError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return view()
+
+    @application.post("/telegram/test", status_code=204, response_class=Response)
+    def telegram_test() -> Response:
+        _box, _state, telegram = box_bot()
+        if not telegram.status().linked:
+            raise HTTPException(
+                status_code=409, detail="no chat is linked yet: vibedpn telegram link"
+            )
+        try:
+            telegram.test()
+        except TelegramError as exc:
+            raise _telegram_error(exc) from exc
+        return Response(status_code=204)
 
 
 def _add_peer_routes(

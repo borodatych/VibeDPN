@@ -16,6 +16,7 @@ from enum import StrEnum
 from ipaddress import IPv4Address, IPv4Network
 from pathlib import Path
 from typing import Annotated, Literal, Self
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from ruamel.yaml import YAML
@@ -92,6 +93,14 @@ DEFAULT_ACCESS_PORT = 443
 # never completes one, dl.google.com always does (knowledge xray/realityServer.md).
 DEFAULT_ACCESS_TARGET = "dl.google.com"
 LAST_PREFIX_WITH_BROADCAST = 30  # /31 and /32 have no reserved network/broadcast addresses
+# The Telegram bot: an exit or the access point silent this long is worth a message. The uplink
+# watcher probes every 5 s, so a shorter threshold would report every flap.
+DEFAULT_ALERT_AFTER_SECONDS = 60
+MIN_ALERT_AFTER_SECONDS = 15
+MAX_ALERT_AFTER_SECONDS = 24 * 3600
+DEFAULT_TELEGRAM_TIMEZONE = "Europe/Moscow"
+DEFAULT_REPORT_HOUR = 10
+LAST_HOUR = 23
 # Default DHCP pool of gateway mode: hosts from this offset up to this many before the last one
 # (a /24 hands out .100-.249), leaving the low addresses to the box and static devices.
 DHCP_POOL_FIRST_OFFSET = 100
@@ -875,6 +884,52 @@ class DdnsConfig(StrictModel):
     enabled: bool = False
 
 
+class Weekday(StrEnum):
+    """The day of the weekly report, in the order of ``datetime.weekday()``."""
+
+    MONDAY = "monday"
+    TUESDAY = "tuesday"
+    WEDNESDAY = "wednesday"
+    THURSDAY = "thursday"
+    FRIDAY = "friday"
+    SATURDAY = "saturday"
+    SUNDAY = "sunday"
+
+
+class TelegramReport(StrictModel):
+    """The weekly report of the Telegram bot: the day and the hour in ``telegram.timezone``."""
+
+    enabled: bool = True
+    weekday: Weekday = Weekday.MONDAY
+    hour: int = Field(default=DEFAULT_REPORT_HOUR, ge=0, le=LAST_HOUR)
+
+
+class TelegramConfig(StrictModel):
+    """The Telegram bot of the box: alerts and a weekly report to the owner's chat
+    (docs/manuals/telegramBot.md). The bot token and the linked chat live in
+    ``secrets/telegram.json``, never here; ``vibedpn telegram set`` puts them there."""
+
+    enabled: bool = False
+    alert_after_seconds: int = Field(
+        default=DEFAULT_ALERT_AFTER_SECONDS, ge=MIN_ALERT_AFTER_SECONDS, le=MAX_ALERT_AFTER_SECONDS
+    )
+    # The clock of every message and of the report: the box may stand in another zone than its
+    # owner, and its own clock is not theirs to set.
+    timezone: str = DEFAULT_TELEGRAM_TIMEZONE
+    report: TelegramReport = Field(default_factory=TelegramReport)
+
+    @field_validator("timezone")
+    @classmethod
+    def check_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError(
+                f"{value!r} is not a time zone of the tz database, such as Europe/Moscow"
+            ) from None
+        return value
+
+
 # Sections that describe a LAN-side box and make no sense on a headless VPS.
 # Sections a VPS has no use for. `ui` is not among them since Stage 11: a VPS may run the panel
 # too, but only through the tunnel and only when the owner says so (see `_vps_panel_default`).
@@ -900,6 +955,7 @@ class Config(StrictModel):
     firewall: FirewallConfig = Field(default_factory=FirewallConfig)
     access: AccessConfig = Field(default_factory=AccessConfig)
     ddns: DdnsConfig = Field(default_factory=DdnsConfig)
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -1187,6 +1243,9 @@ class Config(StrictModel):
             "network": network,
             "firewall": self.firewall.model_dump(mode="json"),
             "ddns": self.ddns.model_dump(mode="json"),  # the watcher that calls it lives in core
+            # the bot lives in core too, and writes its messages in the language of the panel
+            "telegram": self.telegram.model_dump(mode="json"),
+            "ui_language": self.ui.language,
             # core writes it into every link it hands out, and keeps the config it started with
             "access_address": self.access.address,
             # the kill switch: nothing but an edit of the file changes it

@@ -7,6 +7,7 @@ node panel, on the tunnel address (``vibedpn.api.tunnel``).
 
 import os
 import sys
+from collections import deque
 from collections.abc import Callable, Coroutine, Sequence
 from functools import partial
 from pathlib import Path
@@ -17,10 +18,11 @@ from pydantic import ValidationError
 
 from vibedpn.api.app import create_app
 from vibedpn.api.consumer import ConsumerStatus, consumer_round, watch_consumer
-from vibedpn.api.journal import Journal, ignore_event, store_journal
+from vibedpn.api.journal import Journal, fan_out, ignore_event, store_journal
 from vibedpn.api.lists import ListsStatus, watch_lists
 from vibedpn.api.smart import DnsJournal, SmartLoop, watch_querylog
 from vibedpn.api.state import BoxState
+from vibedpn.api.telegram import TelegramBot
 from vibedpn.api.traffic import ACCESS_TRAFFIC_DIR, access_samples, watch_traffic
 from vibedpn.api.tunnel import run_servers
 from vibedpn.api.uplink import UplinkWatchers
@@ -40,7 +42,8 @@ from vibedpn.engine.devices import DB_FILE, DeviceError, DeviceStore
 from vibedpn.engine.dnsmasq import DnsmasqError, core_dir, ensure_dnsmasq
 from vibedpn.engine.domainlists import LISTS_DIR, ListCache, http_fetch, list_client
 from vibedpn.engine.events import DB_FILE as EVENTS_FILE
-from vibedpn.engine.events import EventError, EventStore
+from vibedpn.engine.events import Event, EventError, EventStore
+from vibedpn.engine.i18n import LOCALES_DIR, load_catalog
 from vibedpn.engine.learned import LEARNED_FILE, LearnedError, LearnedStore
 from vibedpn.engine.resolver import (
     UPSTREAM_TIMEOUT_SECONDS,
@@ -60,6 +63,7 @@ from vibedpn.engine.router import (
     apply_tunnel_egress,
     uplink_table,
 )
+from vibedpn.engine.telegram import TelegramError, resolver_lookup, system_lookup
 from vibedpn.engine.wg import WgError, ensure_server
 
 EGRESS_MESSAGES = {
@@ -157,10 +161,16 @@ def main() -> None:
             )
     access_dir = Path(os.environ.get(ACCESS_DIR_ENV, DEFAULT_ACCESS_DIR))
     _render_access(config, secrets_dir, access_dir)
-    devices, events, journal = _lan_stores(config, data_dir)
+    devices, events, stored = _lan_stores(config, data_dir)
+    # the Telegram bot hears every event the store keeps; it drains them on its own loop
+    inbox: deque[Event] = deque()
+    journal = fan_out(stored, inbox.append)
     watchers = _watchers(config, uplinks, journal)
     box_state, resolver, smart, lists = _box_state(
         config, config_path, watchers, secrets_dir, data_dir
+    )
+    bot = _telegram_bot(
+        config, config_path, box_state, resolver, watchers, inbox, secrets_dir, data_dir
     )
     consumer = ConsumerStatus()
     application = create_app(
@@ -175,6 +185,7 @@ def main() -> None:
         events=events,
         data_dir=data_dir,
         access_dir=access_dir,
+        telegram=bot,
     )
     run_servers(
         config,
@@ -186,6 +197,7 @@ def main() -> None:
             *_traffic_task(config, data_dir),
             *_access_traffic_task(config, secrets_dir, data_dir),
             *_ddns_task(config, box_state, secrets_dir, data_dir),
+            bot.run,
             *([partial(serve_resolver, resolver)] if resolver is not None else []),
             *([partial(watch_querylog, smart)] if smart is not None else []),
             *_list_task(box_state, resolver, lists, data_dir),
@@ -238,6 +250,34 @@ def _ddns_task(
     if not config.ddns.enabled:
         return []
     return [partial(watch_ddns, lambda: box_state.config, secrets_dir, data_dir / DDNS_STATE_FILE)]
+
+
+def _telegram_bot(
+    config: Config,
+    config_path: Path,
+    box_state: BoxState,
+    resolver: Resolver | None,
+    watchers: UplinkWatchers,
+    inbox: deque[Event],
+    secrets_dir: Path,
+    data_dir: Path,
+) -> TelegramBot:
+    """The Telegram bot runs on every box and speaks once ``telegram.enabled`` and a linked chat
+    say so; it finds Telegram where AdGuard finds names, when the box has AdGuard, and speaks the
+    language of the panel."""
+    try:
+        return TelegramBot(
+            lambda: box_state.config,
+            secrets_dir=secrets_dir,
+            data_dir=data_dir,
+            catalog=load_catalog(config_path.parent / LOCALES_DIR, config.ui.language),
+            lookup=resolver_lookup(resolver) if resolver is not None else system_lookup(),
+            inbox=inbox,
+            watchers=watchers,
+        )
+    except TelegramError as exc:  # VIBEDPN_TELEGRAM_API of a test stand that is not a URL
+        sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
+        raise SystemExit(os.EX_CONFIG) from None
 
 
 def _consumer_task(

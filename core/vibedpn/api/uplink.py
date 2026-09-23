@@ -155,6 +155,11 @@ class UplinkWatchers:
     def watched(self) -> list[str]:
         return list(self._tasks)
 
+    def wanted(self) -> list[str]:
+        """The uplinks in use now, whether or not their watcher has started yet: read from any
+        thread, the mapping is replaced whole and never changed in place."""
+        return list(self._wanted)
+
     def states(self) -> dict[str, UplinkState]:
         """The last round of every watched uplink; an uplink not probed yet is absent."""
         return dict(self._states)

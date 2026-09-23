@@ -28,6 +28,7 @@ from vibedpn.config import (
     NetworkConfig,
     NetworkRule,
     RoutingMode,
+    Weekday,
     normalize_domain,
     normalize_mac,
     parse_yaml,
@@ -213,8 +214,42 @@ def set_ddns(path: Path, enabled: bool) -> tuple[Config, bool]:
     return _edit(path, mutate)
 
 
+def set_telegram(
+    path: Path,
+    *,
+    enabled: bool | None = None,
+    alert_after_seconds: int | None = None,
+    timezone: str | None = None,
+    report_enabled: bool | None = None,
+    report_weekday: Weekday | None = None,
+    report_hour: int | None = None,
+) -> tuple[Config, bool]:
+    """Change the Telegram bot; a field left ``None`` stays as it is. Its token and its chat are
+    secrets and never enter config.yaml."""
+
+    def mutate(data: CommentedMap) -> None:
+        section = _section(data, "telegram", path)
+        fields = (
+            ("enabled", enabled),
+            ("alert_after_seconds", alert_after_seconds),
+            ("timezone", timezone),
+        )
+        for key, value in fields:
+            if value is not None:
+                section[key] = value
+        weekday = None if report_weekday is None else report_weekday.value
+        report = (("enabled", report_enabled), ("weekday", weekday), ("hour", report_hour))
+        if any(value is not None for _key, value in report):
+            nested = _section(section, "report", path)
+            for key, value in report:
+                if value is not None:
+                    nested[key] = value
+
+    return _edit(path, mutate)
+
+
 def _section(data: CommentedMap, name: str, path: Path) -> CommentedMap:
-    """A top-level section, added when a box set up before it existed has none."""
+    """A section, added when a box set up before it existed has none."""
     section = data.get(name)
     if section is None:
         section = CommentedMap()

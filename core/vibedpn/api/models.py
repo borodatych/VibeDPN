@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from vibedpn.config import DevicePolicy
+from vibedpn.config import DevicePolicy, Weekday
 
 
 class PeerCreate(BaseModel):
@@ -439,3 +439,48 @@ class DdnsUpdate(BaseModel):
 
     enabled: bool
     url: str | None = None
+
+
+class TelegramReportView(BaseModel):
+    enabled: bool
+    weekday: Weekday
+    hour: int
+
+
+class TelegramView(BaseModel):
+    """The Telegram bot as the panel shows it: whose it is and where it writes, never its token."""
+
+    enabled: bool
+    token_set: bool
+    bot: str  # the bot's username; empty before a token was checked
+    linked: bool
+    chat: str  # how the linked chat names itself; empty before one is linked
+    linked_at: float | None
+    link: str | None  # the link that links a chat, while it waits to be opened
+    qr_svg: str | None  # the same link as a QR code
+    link_expires_at: float | None
+    alert_after_seconds: int
+    timezone: str
+    report: TelegramReportView
+    last_ok: bool | None  # the last message: None before the first one
+    last_at: float | None
+    message: str
+    via: str  # the exit of the last attempt: "via tor", "direct"
+    waiting: int  # messages not sent yet
+
+
+class TelegramUpdate(BaseModel):
+    """``PUT /telegram``: a field left out stays as it is."""
+
+    enabled: bool | None = None
+    alert_after_seconds: int | None = None
+    timezone: str | None = None
+    report_enabled: bool | None = None
+    report_weekday: Weekday | None = None
+    report_hour: int | None = None
+
+
+class TelegramToken(BaseModel):
+    """``POST /telegram/token``: the token goes into ``secrets/`` and never back out."""
+
+    token: str

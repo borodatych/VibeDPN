@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 import segno
 
-from vibedpn.api.models import AccessView, DdnsView, PeerTraffic, PeerView
+from vibedpn.api.models import AccessView, DdnsView, PeerTraffic, PeerView, TelegramView
 from vibedpn.engine.myst import human_bytes
 
 SECONDS_PER_MINUTE = 60
@@ -143,4 +143,30 @@ def render_ddns(view: DdnsView) -> list[str]:
         result = "ok" if view.last_ok else "failed"
         when = datetime.fromtimestamp(view.last_at, UTC).strftime("%Y-%m-%d %H:%M UTC")
         lines.append(f"last call {when}: {result}, {view.message}")
+    return lines
+
+
+def render_telegram(view: TelegramView) -> list[str]:
+    """The bot in a few lines: whose it is, where it writes, how the last message went — never
+    its token."""
+    state = "on" if view.enabled else "off"
+    bot = f"@{view.bot}" if view.bot else "no token yet: vibedpn telegram set"
+    lines = [f"telegram {state}: {bot}"]
+    lines.append(
+        f"chat: {view.chat}" if view.linked else "no chat linked yet: vibedpn telegram link"
+    )
+    if view.link is not None:
+        lines.append(f"a link waits to be opened: {view.link}")
+    report = view.report
+    schedule = (
+        f"{report.weekday.value} {report.hour:02d}:00 {view.timezone}" if report.enabled else "off"
+    )
+    lines.append(f"alerts after {view.alert_after_seconds} s of silence; weekly report: {schedule}")
+    if view.last_at is not None:
+        when = datetime.fromtimestamp(view.last_at, UTC).strftime("%Y-%m-%d %H:%M UTC")
+        result = "sent" if view.last_ok else f"not sent: {view.message}"
+        way = f" {view.via}" if view.via else ""
+        lines.append(f"last message {when}{way}: {result}")
+    if view.waiting:
+        lines.append(f"messages waiting: {view.waiting}")
     return lines

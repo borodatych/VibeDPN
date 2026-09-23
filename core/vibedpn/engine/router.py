@@ -17,6 +17,7 @@ import subprocess
 from collections.abc import Collection
 from dataclasses import dataclass
 from enum import StrEnum
+from ipaddress import IPv4Address, IPv4Network
 from itertools import takewhile
 
 from vibedpn.config import (
@@ -454,12 +455,9 @@ def used_uplinks(config: Config) -> list[str]:
         wanted.add(active)
     if config.routing is not None and config.routing.mode is RoutingMode.SMART:
         for item in config.routing.channels():
-            if item.via is DomainVia.DPN and item.country:
-                wanted.add(country_key(item.country))
-            elif item.via is DomainVia.WG and item.uplink:
-                wanted.add(wg_key(item.uplink))
-            elif item.via in RULE_UPLINKS:
-                wanted.add(RULE_UPLINKS[item.via].value)
+            key = channel_uplink(item)
+            if key is not None:
+                wanted.add(key)
     if config.network is not None:
         wanted.update(
             POLICY_UPLINKS[device.policy].value
@@ -504,15 +502,22 @@ class UplinkPolicy:
     mark: str
 
 
-def _channel_mark(item: DomainChannel, table: dict[str, Uplink]) -> str | None:
-    """The mark of a channel's uplink; ``None`` for direct. A country takes its own consumer's."""
+def channel_uplink(item: DomainChannel) -> str | None:
+    """The key of the uplink a channel leaves through; ``None`` for direct. A country has its own
+    consumer, a named WireGuard exit its own gateway."""
     if item.via is DomainVia.DPN and item.country:
-        return hex(table[country_key(item.country)].mark)
+        return country_key(item.country)
     if item.via is DomainVia.WG and item.uplink:
-        return hex(table[wg_key(item.uplink)].mark)
+        return wg_key(item.uplink)
     if item.via in RULE_UPLINKS:
-        return hex(UPLINKS[RULE_UPLINKS[item.via]].mark)
+        return RULE_UPLINKS[item.via].value
     return None
+
+
+def _channel_mark(item: DomainChannel, table: dict[str, Uplink]) -> str | None:
+    """The mark of a channel's uplink; ``None`` for direct."""
+    key = channel_uplink(item)
+    return None if key is None else hex(table[key].mark)
 
 
 def smart_marks(config: Config) -> list[UplinkPolicy]:
@@ -555,6 +560,27 @@ def smart_networks(config: Config) -> list[NetworkSet]:
         (NetworkSet(name, marks[name], sorted(values)) for name, values in elements.items()),
         key=lambda item: (item.mark != "", item.name),
     )
+
+
+def exit_for(config: Config, rule_set: str | None, address: IPv4Address) -> str | None:
+    """The uplink a device at home without a policy of its own leaves through to ``address``, the
+    address of a name under the channel set ``rule_set`` (``None``: under no rule); ``None`` means
+    direct. The order is the one of the chain ``steer``: routing.mode full takes everything; in
+    smart a network rule comes first, a direct one before the others, then the rule of the name.
+
+    Core's own traffic is never steered, so what core sends on behalf of the owner as a device at
+    home would (the Telegram bot) carries the mark of this uplink itself."""
+    active = active_uplink(config)
+    if active is not None:
+        return active
+    routing = config.routing
+    if config.network is None or routing is None or routing.mode is not RoutingMode.SMART:
+        return None
+    keys = {channel_set(item): channel_uplink(item) for item in routing.channels()}
+    for net in smart_networks(config):
+        if any(address in IPv4Network(element) for element in net.elements):
+            return keys[net.name.removesuffix(NETWORK_SET_SUFFIX)]
+    return keys.get(rule_set) if rule_set is not None else None
 
 
 def router_ruleset(config: Config) -> str | None:

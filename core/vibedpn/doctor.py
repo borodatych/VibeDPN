@@ -14,6 +14,7 @@ import socket
 import subprocess
 import urllib.request
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from enum import StrEnum
 from ipaddress import IPv4Address
 from pathlib import Path
@@ -72,6 +73,9 @@ from vibedpn.engine.myst import (
     TequilaClient,
     nat_type,
 )
+from vibedpn.engine.notices import STATE_FILE as TELEGRAM_STATE_FILE
+from vibedpn.engine.notices import BotState
+from vibedpn.engine.notices import load_state as load_bot_state
 from vibedpn.engine.resolver import RESOLVER_HOST, RESOLVER_PORT
 from vibedpn.engine.router import (
     EGRESS_COMMENT,
@@ -92,6 +96,9 @@ from vibedpn.engine.router import (
     uplink_table,
     used_uplinks,
 )
+from vibedpn.engine.telegram import SECRETS_FILE as TELEGRAM_SECRETS_FILE
+from vibedpn.engine.telegram import TelegramSecrets
+from vibedpn.engine.telegram import load_secrets as load_telegram_secrets
 from vibedpn.engine.wg import SERVER_CONF_FILE, SERVER_KEY_FILE, server_address
 from vibedpn.engine.wg import SERVER_DIR as WG_SERVER_DIR
 
@@ -199,6 +206,15 @@ class AccessFacts:
 
 
 @dataclass(frozen=True)
+class TelegramFacts:
+    """The Telegram bot, when it is on."""
+
+    present: bool | None = None  # secrets/telegram.json is there; None: root-only, cannot tell
+    secrets: TelegramSecrets | None = None  # None: absent, unreadable or broken
+    state: BotState | None = None  # what core last wrote; None: nothing yet
+
+
+@dataclass(frozen=True)
 class DoctorFacts:
     config: Config | None
     config_error: str
@@ -245,6 +261,7 @@ class DoctorFacts:
     # `GET /connection` of the consumer node; "" when it was not asked or did not answer.
     dpn_connection: str = ""
     access: AccessFacts = field(default_factory=AccessFacts)
+    telegram: TelegramFacts = field(default_factory=TelegramFacts)
 
 
 @dataclass(frozen=True)
@@ -414,6 +431,8 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
     results.extend(_gateway_results(facts))
     results.extend(_wifi_results(facts))
     results.extend(_access_results(facts))
+    if config is not None and config.telegram.enabled:
+        results.append(_telegram_result(facts.telegram))
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -1132,6 +1151,7 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         lan_address_set=_lan_address_set(config),
         lan_wireless=_lan_wireless(config),
         access=_access_facts(box_dir, config, router_table, network=network),
+        telegram=_telegram_facts(box_dir, config),
     )
 
 
@@ -1164,6 +1184,27 @@ def _access_facts(
         state_path = box_dir / BOX_DATA_DIR / DDNS_STATE_FILE
         ddns_state = load_ddns_state(state_path) if state_path.exists() else None
     return AccessFacts(chain, resolved, resolve_error, ddns_url, ddns_state)
+
+
+def _telegram_facts(box_dir: Path, config: Config | None) -> TelegramFacts:
+    """What the check of the bot reads; nothing while the bot is off."""
+    if config is None or not config.telegram.enabled:
+        return TelegramFacts()
+    secrets_dir = box_dir / SECRETS_DIR
+    try:
+        present: bool | None = (secrets_dir / TELEGRAM_SECRETS_FILE).is_file()
+    except PermissionError:
+        present = None
+    state_path = box_dir / BOX_DATA_DIR / TELEGRAM_STATE_FILE
+    try:
+        kept = state_path.exists()
+    except PermissionError:
+        kept = False
+    return TelegramFacts(
+        present=present,
+        secrets=load_telegram_secrets(secrets_dir) if present else None,
+        state=load_bot_state(state_path) if kept else None,
+    )
 
 
 def tunnel_files(box_dir: Path) -> dict[str, FileFact]:
@@ -1668,6 +1709,40 @@ def _ddns_result(facts: DoctorFacts) -> CheckResult:
             "vibedpn ddns show",
         )
     return CheckResult("ddns", Verdict.OK, f"the service has {state.told_ip}, the box's address")
+
+
+def _telegram_result(facts: TelegramFacts) -> CheckResult:
+    if facts.present is None:
+        return CheckResult("telegram", Verdict.WARN, "cannot read secrets/ as this user", SUDO_HINT)
+    if not facts.present:
+        return CheckResult("telegram", Verdict.FAIL, "no bot token", "vibedpn telegram set")
+    known = facts.secrets
+    if known is None:
+        return CheckResult(
+            "telegram", Verdict.FAIL, "secrets/telegram.json is broken", "vibedpn telegram set"
+        )
+    if known.chat_id is None:
+        return CheckResult(
+            "telegram", Verdict.WARN, f"@{known.bot}: no chat linked yet", "vibedpn telegram link"
+        )
+    return _telegram_delivery(known, facts.state)
+
+
+def _telegram_delivery(known: TelegramSecrets, state: BotState | None) -> CheckResult:
+    """A linked bot: how its last message went."""
+    whose = f"@{known.bot} → {known.chat_name}"
+    delivery = state.delivery if state is not None else None
+    if state is None or delivery is None or delivery.last_at is None:
+        return CheckResult("telegram", Verdict.OK, f"{whose}; nothing sent yet")
+    if delivery.last_ok is False:
+        return CheckResult(
+            "telegram",
+            Verdict.FAIL,
+            f"{len(state.outbox)} message(s) wait: {delivery.message}",
+            "vibedpn telegram show",
+        )
+    when = datetime.fromtimestamp(delivery.last_at, UTC).strftime("%Y-%m-%d %H:%M UTC")
+    return CheckResult("telegram", Verdict.OK, f"{whose}; last message {when} {delivery.via}")
 
 
 def _lan_wireless(config: Config | None) -> bool | None:

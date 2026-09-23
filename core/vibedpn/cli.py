@@ -24,6 +24,7 @@ from vibedpn.api.client import (
     DeviceRequestError,
     PeerRequestError,
     StatsUnavailableError,
+    TelegramRequestError,
     fetch_provider_stats,
 )
 from vibedpn.api.models import (
@@ -34,6 +35,8 @@ from vibedpn.api.models import (
     JournalEntryView,
     NetworkRuleUpdate,
     PeerFile,
+    TelegramUpdate,
+    TelegramView,
 )
 from vibedpn.atomic import write_private
 from vibedpn.bootstrap import (
@@ -149,6 +152,7 @@ from vibedpn.tunnel_view import (
     render_ddns,
     render_peer_traffic,
     render_peers,
+    render_telegram,
 )
 
 EXIT_USER_ERROR = 1
@@ -1416,6 +1420,7 @@ def _core_call(call: Callable[[], T]) -> T:
         core_api.RuleRequestError,
         core_api.EventRequestError,
         core_api.AccessRequestError,
+        TelegramRequestError,
     ) as exc:
         raise _fail(str(exc)) from None
 
@@ -1740,6 +1745,111 @@ def _set_ddns(box_dir: Path, enabled: bool) -> Config:
     except ConfigEditError as exc:
         raise _fail(str(exc)) from None
     return config
+
+
+telegram_app = typer.Typer(
+    help="The Telegram bot of the box: alerts and a weekly report (docs/manuals/telegramBot.md).",
+    no_args_is_help=True,
+)
+app.add_typer(telegram_app, name="telegram")
+# How often a waiting `telegram set` asks core whether the chat is linked.
+LINK_POLL_SECONDS = 2.0
+
+
+@telegram_app.command("set")
+def telegram_set(
+    token_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--token-file", help="File with the bot token from @BotFather; without it, asked here."
+        ),
+    ] = None,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Give the box the token of your bot, turn the bot on and link your chat.
+
+    The token is never an argument: an argument lands in the shell history and in `ps` for every
+    user of the box. Core checks it with Telegram through the exit the bot will use.
+    """
+    config = _any_box(box_dir)
+    if token_file is not None:
+        try:
+            token = token_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise _fail(f"cannot read {token_file}: {exc.strerror}") from None
+    else:
+        token = typer.prompt("Bot token from @BotFather", hide_input=True)
+    view = _core_call(lambda: core_api.set_telegram_token(config.api.port, token))
+    typer.echo(f"telegram on: @{view.bot}")
+    _await_link(config, view)
+
+
+@telegram_app.command("link")
+def telegram_link(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """A new link for your chat: open it in Telegram and press Start; the old link stops working."""
+    config = _any_box(box_dir)
+    view = _core_call(lambda: core_api.offer_telegram_link(config.api.port))
+    _await_link(config, view)
+
+
+def _await_link(config: Config, view: TelegramView) -> None:
+    """Print the link with its QR code and wait until a chat opens it or it expires."""
+    if view.link is None:
+        raise _fail("core offered no link to the bot")
+    started = time.time()
+    typer.echo(view.link)
+    typer.echo(qr_code(view.link), nl=False)
+    typer.echo(
+        "Open the link in Telegram on your phone and press Start. Waiting; Ctrl+C stops waiting,"
+        " the link keeps working until it expires."
+    )
+    now = view
+    try:
+        while now.link is not None:
+            time.sleep(LINK_POLL_SECONDS)
+            now = _core_call(lambda: core_api.get_telegram(config.api.port))
+    except KeyboardInterrupt:
+        typer.echo("stopped waiting; `vibedpn telegram show` tells when the chat is linked")
+        return
+    if now.linked_at is None or now.linked_at < started:
+        raise _fail("the link expired before a chat opened it: vibedpn telegram link")
+    typer.echo(f"linked: {now.chat}; the bot says so in the chat")
+
+
+@telegram_app.command("show")
+def telegram_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Whose bot, which chat, when the report comes and how the last message went."""
+    config = _any_box(box_dir)
+    view = _core_call(lambda: core_api.get_telegram(config.api.port))
+    for line in render_telegram(view):
+        typer.echo(line)
+
+
+@telegram_app.command("test")
+def telegram_test(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Send a test message now, through the exit the bot uses."""
+    config = _any_box(box_dir)
+    _core_call(lambda: core_api.send_telegram_test(config.api.port))
+    typer.echo("sent: look at the chat")
+
+
+@telegram_app.command("on")
+def telegram_on(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Turn the bot on again with the token and the chat it has; at once, no restart."""
+    _switch_telegram(box_dir, enabled=True)
+
+
+@telegram_app.command("off")
+def telegram_off(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Turn the bot off; its token and chat are kept for `vibedpn telegram on`."""
+    _switch_telegram(box_dir, enabled=False)
+
+
+def _switch_telegram(box_dir: Path, *, enabled: bool) -> None:
+    config = _any_box(box_dir)
+    update = TelegramUpdate(enabled=enabled)
+    view = _core_call(lambda: core_api.update_telegram(config.api.port, update))
+    typer.echo(f"telegram {'on' if view.enabled else 'off'}")
 
 
 def _lan_box(box_dir: Path) -> Config:

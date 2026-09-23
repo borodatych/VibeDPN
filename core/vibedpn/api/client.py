@@ -38,6 +38,9 @@ from vibedpn.api.models import (
     PeerView,
     RoutingUpdate,
     RoutingView,
+    TelegramToken,
+    TelegramUpdate,
+    TelegramView,
     WifiClientView,
 )
 from vibedpn.config import DevicePolicy, RoutingMode
@@ -74,6 +77,10 @@ class AccessRequestError(RuntimeError):
     ``detail``."""
 
 
+class TelegramRequestError(RuntimeError):
+    """``core`` refused or failed a request about the Telegram bot; the text is its ``detail``."""
+
+
 class DeviceRequestError(RuntimeError):
     """``core`` refused or failed a device request; the text is its ``detail``."""
 
@@ -91,7 +98,7 @@ def _send(
     method: str,
     path: str,
     *,
-    body: dict[str, str | bool | None] | None = None,
+    body: dict[str, str | int | bool | None] | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> httpx.Response:
     url = f"http://{CORE_API_HOST}:{port}{path}"
@@ -137,7 +144,7 @@ def _peer_request(
     path: str,
     expected: int,
     *,
-    body: dict[str, str | bool | None] | None = None,
+    body: dict[str, str | int | bool | None] | None = None,
     transport: httpx.BaseTransport | None = None,
     error: type[RuntimeError] = PeerRequestError,
 ) -> httpx.Response:
@@ -578,3 +585,62 @@ def _parse(model: type[ModelT], response: httpx.Response, what: str) -> ModelT:
         raise AccessRequestError(
             f"core answered something that is not a {what} ({VERSION_HINT})"
         ) from exc
+
+
+def _telegram(
+    port: int,
+    method: str,
+    path: str,
+    *,
+    body: dict[str, str | int | bool | None] | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> TelegramView:
+    response = _peer_request(
+        port,
+        method,
+        path,
+        httpx.codes.OK,
+        body=body,
+        transport=transport,
+        error=TelegramRequestError,
+    )
+    try:
+        return TelegramView.model_validate(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise TelegramRequestError(
+            f"core answered something that is not the state of the bot ({VERSION_HINT})"
+        ) from exc
+
+
+def get_telegram(port: int, transport: httpx.BaseTransport | None = None) -> TelegramView:
+    return _telegram(port, "GET", "/telegram", transport=transport)
+
+
+def set_telegram_token(
+    port: int, token: str, transport: httpx.BaseTransport | None = None
+) -> TelegramView:
+    """Core checks the token with Telegram through the exit of the box and keeps it."""
+    body = TelegramToken(token=token).model_dump()
+    return _telegram(port, "POST", "/telegram/token", body=body, transport=transport)
+
+
+def offer_telegram_link(port: int, transport: httpx.BaseTransport | None = None) -> TelegramView:
+    return _telegram(port, "POST", "/telegram/link", transport=transport)
+
+
+def update_telegram(
+    port: int, update: TelegramUpdate, transport: httpx.BaseTransport | None = None
+) -> TelegramView:
+    body = update.model_dump(mode="json", exclude_none=True)
+    return _telegram(port, "PUT", "/telegram", body=body, transport=transport)
+
+
+def send_telegram_test(port: int, transport: httpx.BaseTransport | None = None) -> None:
+    _peer_request(
+        port,
+        "POST",
+        "/telegram/test",
+        httpx.codes.NO_CONTENT,
+        transport=transport,
+        error=TelegramRequestError,
+    )

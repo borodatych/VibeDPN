@@ -244,10 +244,26 @@ access:
   port: {{ config.access.port }}
   target: {{ config.access.target }}
 
-# Имя, которое следует за меняющимся адресом дома: ядро раз в пять минут вызывает адрес обновления
-# сервиса DDNS из secrets/ddns-url (в нём токен, поэтому не здесь); задаётся `vibedpn ddns set`.
+# Имя, которое следует за меняющимся адресом дома: ядро раз в пять минут смотрит внешний адрес и
+# вызывает адрес обновления сервиса DDNS из secrets/ddns-url при его смене и раз в сутки (в адресе
+# токен, поэтому не здесь); задаётся `vibedpn ddns set`.
 ddns:
   enabled: {{ config.ddns.enabled | tojson }}
+
+# Telegram-бот: тревоги — выход или точка Wi-Fi молчат дольше alert_after_seconds, коробка снова
+# в сети после выключения, DDNS, неприменённая правка из панели — и недельный отчёт. Токен бота и
+# чат — в secrets/telegram.json, не здесь; привязка — `vibedpn telegram set`
+# (docs/manuals/telegramBot.md). В Telegram бот ходит как устройство дома без своей политики.
+# timezone — часы сообщений и отчёта из базы tz: часы самой коробки могут стоять в другом поясе.
+telegram:
+  enabled: {{ config.telegram.enabled | tojson }}
+  alert_after_seconds: {{ config.telegram.alert_after_seconds }}
+  timezone: {{ config.telegram.timezone }}
+  # weekday — monday … sunday, hour — 0-23 по timezone
+  report:
+    enabled: {{ config.telegram.report.enabled | tojson }}
+    weekday: {{ config.telegram.report.weekday.value }}
+    hour: {{ config.telegram.report.hour }}
 {% if not lan %}
 
 # Файрвол VPS (nftables, таблица inet vibedpn, на вход всё закрыто, кроме перечисленного):

@@ -1,6 +1,6 @@
 import { baseStrings } from '@/modules/i18n/base'
 import { loadCatalog } from '@/modules/i18n/catalog.server'
-import { BASE_LANGUAGE, pickLanguage, placeholders, translate } from '@/modules/i18n/shared'
+import { BASE_LANGUAGE, CORE_KEY_PREFIX, pickLanguage, placeholders, translate } from '@/modules/i18n/shared'
 import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -12,6 +12,10 @@ const shipped = readdirSync(LOCALES)
   .filter((name) => name.endsWith('.json'))
   .map((name) => ({ name, strings: JSON.parse(readFileSync(join(LOCALES, name), 'utf8')) as Record<string, string> }))
 
+/** The keys of a language file the panel reads: core's own are checked by core. */
+const panelKeys = (strings: Record<string, string>): string[] =>
+  Object.keys(strings).filter((key) => !key.startsWith(CORE_KEY_PREFIX))
+
 describe('i18n catalog', () => {
   test('the base language is not shipped as a file: a seeded copy would freeze its wording', () => {
     expect(shipped.map((item) => item.name)).not.toContain(`${BASE_LANGUAGE}.json`)
@@ -19,7 +23,11 @@ describe('i18n catalog', () => {
   })
 
   test.each(shipped)('$name has every key of the base and no other', ({ strings }) => {
-    expect(Object.keys(strings).sort()).toEqual(Object.keys(baseStrings).sort())
+    expect(panelKeys(strings).sort()).toEqual(Object.keys(baseStrings).sort())
+  })
+
+  test("no key of the panel takes core's prefix: the two gates never check the same key", () => {
+    expect(Object.keys(baseStrings).filter((key) => key.startsWith(CORE_KEY_PREFIX))).toEqual([])
   })
 
   test.each(shipped)('$name keeps the placeholders of every string', ({ strings }) => {

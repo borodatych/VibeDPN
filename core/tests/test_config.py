@@ -505,3 +505,29 @@ def test_smart_dpn_rules_may_leave_in_other_countries(home: dict[str, Any]) -> N
         {"domain": "zdf.de", "via": "dpn", "country": "DE"},
     ]
     assert Config.model_validate(home).routing is not None
+
+
+@pytest.mark.parametrize(
+    ("telegram", "message"),
+    [
+        ({"timezone": "Mars/Base"}, "not a time zone"),
+        ({"timezone": "../../etc/passwd"}, "not a time zone"),
+        ({"alert_after_seconds": 5}, "greater than or equal to 15"),
+        ({"report": {"weekday": "someday"}}, "'monday'"),
+        ({"report": {"hour": 24}}, "less than or equal to 23"),
+        ({"token": "123:abc"}, "Extra inputs are not permitted"),  # the token is a secret
+    ],
+)
+def test_a_wrong_telegram_section_is_refused_with_its_reason(
+    home: dict[str, Any], telegram: dict[str, Any], message: str
+) -> None:
+    assert message in errors_of({**home, "telegram": telegram})
+
+
+def test_every_role_may_run_the_telegram_bot(
+    home: dict[str, Any], vps: dict[str, Any], client: dict[str, Any]
+) -> None:
+    section = {"enabled": True, "timezone": "Asia/Yekaterinburg", "report": {"weekday": "friday"}}
+    for raw in (home, vps, client):
+        config = Config.model_validate({**raw, "telegram": section})
+        assert config.telegram.enabled and config.telegram.report.hour == 10

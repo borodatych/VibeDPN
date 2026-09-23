@@ -172,7 +172,7 @@ REACH = {
     "ui.port": CORE,
     "ui.variant": ENV,
     "ui.host_name": CORE,
-    "ui.language": ENV,
+    "ui.language": CORE,  # the panel reads it from its environment, the Telegram bot of core too
     "api": CORE,
     "firewall": CORE,
     "access.enabled": CORE,
@@ -180,6 +180,7 @@ REACH = {
     "access.port": CORE,
     "access.target": CORE,
     "ddns": CORE,
+    "telegram": CORE,
 }
 
 
@@ -329,6 +330,7 @@ CHANGES: dict[str, tuple[Box, str, object]] = {
     "access.port": (rich_home, "access.port", 8443),
     "access.target": (rich_home, "access.target", "www.apple.com"),
     "ddns": (rich_home, "ddns.enabled", False),
+    "telegram": (rich_home, "telegram.alert_after_seconds", 120),
 }
 
 

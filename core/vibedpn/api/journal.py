@@ -19,6 +19,17 @@ def ignore_event(_event: Event) -> None:
     return None
 
 
+def fan_out(*journals: Journal) -> Journal:
+    """One journal that hands every event to each of ``journals`` in turn: the store of the box
+    and the Telegram bot hear the same events."""
+
+    def journal(event: Event) -> None:
+        for target in journals:
+            target(event)
+
+    return journal
+
+
 def store_journal(store: EventStore) -> Journal:
     logged = ""
 

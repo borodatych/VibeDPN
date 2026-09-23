@@ -61,8 +61,10 @@ class BoxState:
             self._saved = config if config.network != self._config.network else None
             return config
 
-    def edit(self, change: Change) -> Config:
-        """Run ``change`` on config.yaml and make the host follow; one edit at a time."""
+    def edit(self, change: Change, *, route: bool = True) -> Config:
+        """Run ``change`` on config.yaml and make the host follow; one edit at a time. ``route``
+        false: the change is of nothing the router reads (the Telegram bot), and rebuilding its
+        table would only empty the sets of smart for a moment."""
         with self._lock:
             before = self.path.read_text(encoding="utf-8")
             written, changed = change(self.path)
@@ -71,17 +73,19 @@ class BoxState:
             if not changed:
                 self._config = config
                 return config
-            try:
-                uplinks = self._apply(config)
-            except RouterError:
-                write_like(self.path, before)
-                with suppress(RouterError):
-                    self._apply(self._config)
-                raise
+            uplinks: Sequence[str] | None = None
+            if route:
+                try:
+                    uplinks = self._apply(config)
+                except RouterError:
+                    write_like(self.path, before)
+                    with suppress(RouterError):
+                        self._apply(self._config)
+                    raise
             self._config = config
             if self._saved is not None:
                 self._saved = written
-            if self._watchers is not None:
+            if uplinks is not None and self._watchers is not None:
                 table = uplink_table(config)
                 self._watchers.sync({key: table[key] for key in uplinks})
             return config

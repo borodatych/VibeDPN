@@ -16,6 +16,11 @@ export const BASE_LANGUAGE = 'en'
 export const LANGUAGE_CODE = /^[a-z]{2}$/
 /** The key a language file names itself with, shown in the language switcher. */
 export const LANGUAGE_NAME_KEY = 'language.name'
+/**
+ * Keys of a language file that are core's, not the panel's: the messages of the Telegram bot. The panel ignores them;
+ * core's gate checks them (core/tests/test_core_i18n.py).
+ */
+export const CORE_KEY_PREFIX = 'bot.'
 
 const PLACEHOLDER = /\{(\w+)\}/g
 

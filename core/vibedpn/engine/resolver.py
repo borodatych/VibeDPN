@@ -246,6 +246,13 @@ class Resolver:
             self.nft(fill_script(set_name, wanted, ttl + SET_MARGIN_SECONDS))
         return response
 
+    def lookup(self, name: str) -> list[str]:
+        """The IPv4 addresses of ``name`` for core itself, asked the way AdGuard asks: through the
+        DoH upstreams and into the channel set of the name's rule. A sinkhole or a local answer is
+        no destination (``steerable``)."""
+        query = dns.message.make_query(name, dns.rdatatype.A)
+        return steerable(answer_facts(self.resolve(query)).addresses)
+
     def learn(self, name: str, parent: str) -> bool:
         """A CDN follows ``parent``: route it like the parent, and fill the set from what the
         resolver saw for it lately. ``False`` when the parent is under no rule."""

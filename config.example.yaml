@@ -127,10 +127,26 @@ access:
   port: 443
   target: dl.google.com
 
-# Имя, которое следует за меняющимся адресом дома: ядро раз в пять минут вызывает адрес обновления
-# сервиса DDNS из secrets/ddns-url (в нём токен, поэтому не здесь); задаётся `vibedpn ddns set`.
+# Имя, которое следует за меняющимся адресом дома: ядро раз в пять минут смотрит внешний адрес и
+# вызывает адрес обновления сервиса DDNS из secrets/ddns-url при его смене и раз в сутки (в адресе
+# токен, поэтому не здесь); задаётся `vibedpn ddns set`.
 ddns:
   enabled: false
+
+# Telegram-бот: тревоги — выход или точка Wi-Fi молчат дольше alert_after_seconds, коробка снова
+# в сети после выключения, DDNS, неприменённая правка из панели — и недельный отчёт. Токен бота и
+# чат — в secrets/telegram.json, не здесь; привязка — `vibedpn telegram set`
+# (docs/manuals/telegramBot.md). В Telegram бот ходит как устройство дома без своей политики.
+# timezone — часы сообщений и отчёта из базы tz: часы самой коробки могут стоять в другом поясе.
+telegram:
+  enabled: false
+  alert_after_seconds: 60
+  timezone: Europe/Moscow
+  # weekday — monday … sunday, hour — 0-23 по timezone
+  report:
+    enabled: true
+    weekday: monday
+    hour: 10
 
 # DNS и адблок: AdGuard Home на порту 53 LAN-адреса; upstreams — DNS-over-HTTPS.
 dns:
