@@ -324,6 +324,27 @@ def test_the_weekly_report_comes_once_at_its_moment(tmp_path: Path) -> None:
     assert len(box.texts()) == 1
 
 
+def test_a_stage_that_fails_leaves_the_others_their_turn_and_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """core starts the loop as a task nobody awaits: an exception must neither stop the bot nor
+    keep the alerts from going out, and its text — it could quote the token — stays out of the
+    log."""
+
+    def broken() -> ProviderStats:
+        raise RuntimeError(f"the node quoted {TOKEN}")
+
+    last_monday = datetime(2026, 9, 14, 10, 0, tzinfo=MOSCOW).timestamp()
+    state = BotState(heartbeat=START, reported_slot=last_monday, period_since=last_monday)
+    box = Box(tmp_path, smart_home(), linked=True, state=state, stats=broken)
+    box.inbox.append(silent("dpn", box.clock.now))
+    box.run(120)  # from 10:00 on the report fails in every round
+    assert box.texts() == ["Exit dpn has not answered since 09:59."]
+    log = capsys.readouterr().err
+    assert "the report failed: RuntimeError at test_telegram_bot.py:" in log
+    assert TOKEN not in log
+
+
 def test_a_box_that_was_off_says_so_when_it_is_back(tmp_path: Path) -> None:
     box = Box(tmp_path, smart_home(), linked=True, state=BotState(heartbeat=START - 3600))
     box.run(15)

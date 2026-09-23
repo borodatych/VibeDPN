@@ -26,7 +26,7 @@ from ipaddress import AddressValueError, IPv4Address
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
 
 from vibedpn.atomic import write_private
 from vibedpn.config import Config
@@ -75,6 +75,14 @@ class TelegramSecrets(BaseModel):
     chat_id: int | None = None
     chat_name: str = ""  # how the linked chat names itself: @username or a first name
     linked_at: float | None = None
+
+    @field_validator("token")
+    @classmethod
+    def check_form(cls, value: str) -> str:
+        """A file edited by hand never brings a token that could bend the URL it goes into."""
+        if TOKEN_PATTERN.fullmatch(value) is None:
+            raise ValueError("not a bot token")
+        return value
 
 
 def check_token(text: str) -> str:

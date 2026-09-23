@@ -20,9 +20,10 @@ import sqlite3
 import sys
 import threading
 import time
+import traceback
 from collections import deque
-from collections.abc import Awaitable, Callable
-from contextlib import closing
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -138,6 +139,13 @@ def _log(message: str) -> None:
     sys.stderr.write(f"vibedpn-core: telegram: {message}\n")
 
 
+def _failure(exc: BaseException) -> str:
+    """An unexpected exception as the log may show it: the class and where it was raised."""
+    frames = traceback.extract_tb(exc.__traceback__)
+    where = f" at {Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else ""
+    return f"{exc.__class__.__name__}{where}"
+
+
 class TelegramBot:
     """The bot of this box: its secrets, its state and the loop that keeps both."""
 
@@ -174,6 +182,7 @@ class TelegramBot:
         self._state = load_state(data_dir / STATE_FILE)
         self._saved_text = ""
         self._offer: LinkOffer | None = None
+        self._listener: asyncio.Task[None] | None = None
         self._was_active = False
         self._looked_at = float("-inf")
         self._logged = ""
@@ -253,23 +262,42 @@ class TelegramBot:
             active = self._active(self._current())
             wake(self._state, self._clock(), active=active)
             self._was_active = active
-        listening: asyncio.Task[None] | None = None
         try:
             while True:
-                config = self._current()
-                now = self._clock()
-                looked = self._look(config, now)
-                with self._lock:
-                    self._step(config, now, looked)
-                await self._report(config, now)
-                await self._deliver(config, now)
-                listening = self._listening(listening)
-                self._persist(config)
+                await self._tick()
                 await self._sleep(TICK_SECONDS)
         finally:
-            if listening is not None:
-                listening.cancel()
-                await asyncio.gather(listening, return_exceptions=True)
+            listener = self._listener
+            if listener is not None:
+                listener.cancel()
+                await asyncio.gather(listener, return_exceptions=True)
+
+    async def _tick(self) -> None:
+        """One round; a stage that raised leaves the stages after it their turn."""
+        config = self._current()
+        now = self._clock()
+        with self._guard("observing"):
+            looked = self._look(config, now)
+            with self._lock:
+                self._step(config, now, looked)
+        with self._guard("the report"):
+            await self._report(config, now)
+        with self._guard("sending"):
+            await self._deliver(config, now)
+        with self._guard("listening"):
+            self._listener = self._listening(self._listener)
+        with self._guard("keeping the state"):
+            self._persist(config)
+
+    @contextmanager
+    def _guard(self, stage: str) -> Iterator[None]:
+        """core starts its loops as tasks nobody awaits: an exception would stop the bot for good,
+        without a word. It goes to the log instead — its class and place, not its text, which could
+        quote a request, and a request carries the token."""
+        try:
+            yield
+        except Exception as exc:
+            self._log_once(f"{stage} failed: {_failure(exc)}")
 
     def _look(
         self, config: Config, now: float
@@ -408,6 +436,10 @@ class TelegramBot:
             if task is not None and not task.done():
                 task.cancel()
             return None
+        if task is not None and task.done() and not task.cancelled():
+            failed = task.exception()
+            if failed is not None:
+                self._log_once(f"listening failed: {_failure(failed)}")
         if task is None or task.done():
             return asyncio.ensure_future(self._listen())
         return task

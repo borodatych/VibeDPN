@@ -275,3 +275,6 @@ def test_a_token_has_the_form_botfather_gives_and_is_kept_private(tmp_path: Path
     kept = load_secrets(tmp_path)
     assert kept is not None and (kept.token, kept.chat_id) == (TOKEN, 42)
     assert load_secrets(tmp_path / "missing") is None
+    # a file edited by hand with a token that could bend the URL is no token at all
+    (tmp_path / "telegram.json").write_text('{"token": "123:abc def"}', encoding="utf-8")
+    assert load_secrets(tmp_path) is None
