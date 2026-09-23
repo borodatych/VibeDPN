@@ -23,7 +23,6 @@ import {
   suggestExitName,
   WG_EXIT_NAME,
   TOR_KEY,
-  type ApplyView,
   MAX_XRAY_LINK_BYTES,
   XRAY_KEY,
   xrayLinkProblem,
@@ -31,27 +30,11 @@ import {
   type XrayExit,
   type WgExit,
 } from '@/features/uplinks/shared'
+import { ApplyLine } from '@/features/uplinks/apply-line'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
-import { useLanguage, useT } from '@/modules/i18n/use-t'
-import { formatDate } from '@/utils/date'
+import { useT } from '@/modules/i18n/use-t'
 import { useState, type ChangeEvent } from 'react'
-
-const ApplyLine = ({ apply }: { apply: ApplyView }) => {
-  const t = useT()
-  const language = useLanguage()
-  if (apply.pending) {
-    return <p className="text-sm text-warning">{t('uplinks.apply.pending')}</p>
-  }
-  if (apply.ok === false) {
-    return <p className="text-sm text-destructive">{t('uplinks.apply.failed', { message: apply.message })}</p>
-  }
-  if (apply.ok && apply.finished_at !== null) {
-    const time = formatDate(new Date(apply.finished_at * 1000), 'date-time-nice', language)
-    return <p className="text-sm text-muted-foreground">{t('uplinks.apply.ok', { time })}</p>
-  }
-  return null
-}
 
 const ExitRow = ({ exit }: { exit: WgExit }) => {
   const remove = wgExitRemoveMutation.useMutation()
