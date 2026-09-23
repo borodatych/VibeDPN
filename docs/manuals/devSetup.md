@@ -15,6 +15,9 @@
 
 1. `cd core && uv sync --locked` — ставит Python 3.12 и зависимости в `core/.venv`.
 2. Проверки ядра: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest`.
+   `pytest` держит и целостность документации (`tests/test_docs.py`): каждая запись базы знаний
+   связана ссылкой из индекса, ссылки индекса ведут на файлы, мануалы есть в дереве `docs/README.md`.
+   Правили `docs/` без единой строки кода — всё равно прогоните `pytest`.
 3. Compose: из корня `docker compose --profile '*' config -q` — валидирует файл со всеми профилями
    без `.env` (дефолты в `compose.yaml` не открывают ничего наружу).
 4. Скрипты и workflow: `git ls-files -z '*.sh' | xargs -0 shellcheck` и `actionlint`.

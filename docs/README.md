@@ -21,7 +21,7 @@ docs/
 │   └── osImages.md       # готовые образы ОС: какие есть, доступ через cloud-init, первый вход, сборка
 └── knowledge/            # база знаний: грабли и проверенные факты с URL
     ├── README.md         # индекс — запись без строки здесь не существует
-    ├── myst/  adguard/  compose/  docker/  wireguard/  platform/  linux/  security/  ci/  frontend/
+    ├── myst/  adguard/  compose/  docker/  wireguard/  tor/  platform/  linux/  security/  ci/  frontend/
     ├── python/
     └── process/
 ```
