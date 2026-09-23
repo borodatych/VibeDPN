@@ -1,5 +1,6 @@
 """ASGI application factory: health, provider statistics (Stage 2) and tunnel peers (Stage 3)."""
 
+import io
 import time
 from collections.abc import Callable
 from contextlib import closing
@@ -1351,9 +1352,20 @@ QR_DARK = "#000000"
 
 
 def _qr_svg(text: str) -> str:
-    return segno.make(text, micro=False, error="m").svg_inline(
-        scale=QR_SCALE, dark=QR_DARK, light=QR_LIGHT
+    """The QR code as a whole SVG document. The panel shows it as an image, and an SVG loaded as an
+    image draws nothing without its namespace — which ``svg_inline`` leaves out, for inline HTML."""
+    buffer = io.BytesIO()
+    segno.make(text, micro=False, error="m").save(
+        buffer,
+        kind="svg",
+        xmldecl=False,
+        svgns=True,
+        nl=False,
+        scale=QR_SCALE,
+        dark=QR_DARK,
+        light=QR_LIGHT,
     )
+    return buffer.getvalue().decode("utf-8")
 
 
 def _access_error(exc: AccessError) -> HTTPException:

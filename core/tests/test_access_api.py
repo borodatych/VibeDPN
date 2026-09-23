@@ -72,6 +72,8 @@ def test_a_person_gets_a_link_and_a_qr_code_and_the_server_gets_them(tmp_path: P
     assert (server.host, server.port, server.security) == ("myhome.duckdns.org", 443, "reality")
     # a light background under the code: the panel may be dark, and a camera needs contrast
     assert body["qr_svg"].startswith("<svg") and 'path fill="#fff"' in body["qr_svg"]
+    # the panel shows it as an image: without its namespace an SVG image draws nothing
+    assert 'xmlns="http://www.w3.org/2000/svg"' in body["qr_svg"]
     assert "anna\t" in (tmp_path / "access" / PEOPLE_TABLE_FILE).read_text()
     again = client.get("/access/people/anna")
     assert again.status_code == 200 and again.json()["link"] == body["link"]
