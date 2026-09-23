@@ -20,6 +20,7 @@
 
 Клиент с верным ключом, id и short id к серверу с `target: www.microsoft.com:443` не подключился ни разу — ни с отпечатком `chrome`, ни с `firefox`; в журнале сервера `REALITY: processed invalid connection …: handshake did not complete successfully`.
 Тот же сервер с `dl.google.com` пускает клиента всегда.
+С домашней линии владельца (коробка N100, 23.09.2026) `dl.google.com` тоже годится: проверка здоровья настоящим соединением прошла через 6 с после старта.
 При этом `xray tls ping` для обоих сайтов (и для `www.apple.com`, `www.cloudflare.com`) говорит одно и то же: TLS 1.3, постквантовый обмен `X25519MLKEM768`.
 
 **По исходникам REALITY (`tls.go`, функция `Server`):** сервер набирает сайт-прикрытие первой строкой — на каждое входящее соединение и до проверки клиента (`target, err := config.DialContext(ctx, config.Type, config.Dest)`).
