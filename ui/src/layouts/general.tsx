@@ -32,6 +32,7 @@ const navLinks = (t: T): NavItem[] => [
   { label: t('nav.network'), to: routes.network() },
   { label: t('nav.uplinks'), to: routes.uplinks() },
   { label: t('nav.access'), to: routes.access() },
+  { label: t('nav.notifications'), to: routes.notifications() },
   { label: t('nav.journal'), to: routes.journal() },
 ]
 

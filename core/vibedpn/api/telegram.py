@@ -382,7 +382,7 @@ class TelegramBot:
     def _send(
         self, config: Config, known: TelegramSecrets, text: str
     ) -> tuple[str, TelegramError | None]:
-        """One message to the linked chat, and the way it went ("via tor", "direct")."""
+        """One message to the linked chat, and the exit it took (an uplink key, or direct)."""
         try:
             route = route_to(config, self._where, self._lookup)
         except TelegramError as exc:

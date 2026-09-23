@@ -45,10 +45,15 @@ from vibedpn.api.models import (
 )
 from vibedpn.config import DevicePolicy, RoutingMode
 from vibedpn.engine.myst import STATS_DEADLINE_SECONDS, ProviderStats
+from vibedpn.engine.resolver import UPSTREAM_TIMEOUT_SECONDS
+from vibedpn.engine.telegram import TIMEOUT_SECONDS as TELEGRAM_TIMEOUT_SECONDS
 
 CORE_API_HOST = "127.0.0.1"
 # Core may legitimately spend the whole node deadline before answering; wait past it.
 CORE_API_TIMEOUT_SECONDS = STATS_DEADLINE_SECONDS + 2.0
+# A request that makes core call Telegram (the token, a test message): core looks the address up
+# through DoH, then waits for Telegram through the exit of the box, Tor included.
+TELEGRAM_WAIT_SECONDS = TELEGRAM_TIMEOUT_SECONDS + 3 * UPSTREAM_TIMEOUT_SECONDS
 VERSION_HINT = "CLI and core versions differ?"
 ModelT = TypeVar("ModelT", bound=BaseModel)
 PEER_LIST: TypeAdapter[list[PeerView]] = TypeAdapter(list[PeerView])
@@ -100,12 +105,11 @@ def _send(
     *,
     body: dict[str, str | int | bool | None] | None = None,
     transport: httpx.BaseTransport | None = None,
+    timeout: float = CORE_API_TIMEOUT_SECONDS,
 ) -> httpx.Response:
     url = f"http://{CORE_API_HOST}:{port}{path}"
     try:
-        with httpx.Client(
-            timeout=CORE_API_TIMEOUT_SECONDS, transport=transport, trust_env=False
-        ) as client:
+        with httpx.Client(timeout=timeout, transport=transport, trust_env=False) as client:
             return client.request(method, url, json=body)
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         raise CoreUnreachableError(f"{exc.__class__.__name__}: {exc}") from exc
@@ -147,9 +151,10 @@ def _peer_request(
     body: dict[str, str | int | bool | None] | None = None,
     transport: httpx.BaseTransport | None = None,
     error: type[RuntimeError] = PeerRequestError,
+    timeout: float = CORE_API_TIMEOUT_SECONDS,
 ) -> httpx.Response:
     try:
-        response = _send(port, method, path, body=body, transport=transport)
+        response = _send(port, method, path, body=body, transport=transport, timeout=timeout)
     except CoreNoAnswerError as exc:
         raise error(str(exc)) from exc
     if response.status_code != expected:
@@ -594,6 +599,7 @@ def _telegram(
     *,
     body: dict[str, str | int | bool | None] | None = None,
     transport: httpx.BaseTransport | None = None,
+    timeout: float = CORE_API_TIMEOUT_SECONDS,
 ) -> TelegramView:
     response = _peer_request(
         port,
@@ -603,6 +609,7 @@ def _telegram(
         body=body,
         transport=transport,
         error=TelegramRequestError,
+        timeout=timeout,
     )
     try:
         return TelegramView.model_validate(response.json())
@@ -621,7 +628,14 @@ def set_telegram_token(
 ) -> TelegramView:
     """Core checks the token with Telegram through the exit of the box and keeps it."""
     body = TelegramToken(token=token).model_dump()
-    return _telegram(port, "POST", "/telegram/token", body=body, transport=transport)
+    return _telegram(
+        port,
+        "POST",
+        "/telegram/token",
+        body=body,
+        transport=transport,
+        timeout=TELEGRAM_WAIT_SECONDS,
+    )
 
 
 def offer_telegram_link(port: int, transport: httpx.BaseTransport | None = None) -> TelegramView:
@@ -643,4 +657,5 @@ def send_telegram_test(port: int, transport: httpx.BaseTransport | None = None) 
         httpx.codes.NO_CONTENT,
         transport=transport,
         error=TelegramRequestError,
+        timeout=TELEGRAM_WAIT_SECONDS,
     )

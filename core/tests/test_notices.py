@@ -341,7 +341,7 @@ def test_a_linked_chat_or_a_report_does_not_wait_and_a_pause_is_kept() -> None:
         1,
         "This chat now gets the alerts and the weekly report of your VibeDPN box.",
     )
-    failed(state, NOW, "Telegram: Too Many Requests: retry after 7", "via tor", retry_after=7)
+    failed(state, NOW, "Telegram: Too Many Requests: retry after 7", "tor", retry_after=7)
     assert take_batch(state, NOW + 6, text) is None
     assert take_batch(state, NOW + 7, text) is not None
 
@@ -363,11 +363,11 @@ def test_a_failure_waits_longer_each_time_and_a_delivery_starts_over() -> None:
     enqueue(state, notice_at(NOW))
     pauses = []
     for _ in range(9):
-        failed(state, NOW, "tor: ConnectionRefusedError", "via tor")
+        failed(state, NOW, "api.telegram.org (tor): ConnectionRefusedError", "tor")
         pauses.append(state.delivery.retry_at - NOW)
     assert pauses[:4] == [5.0, 10.0, 20.0, 40.0] and pauses[-1] == MAX_BACKOFF_SECONDS
     assert state.delivery.last_ok is False and state.outbox  # the message stays
-    delivered(state, 1, NOW + 400, "via tor")
+    delivered(state, 1, NOW + 400, "tor")
     assert state.outbox == [] and state.delivery.failures == 0 and state.delivery.last_ok
 
 

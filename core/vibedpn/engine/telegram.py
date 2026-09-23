@@ -192,8 +192,12 @@ def _resolved(host: str, lookup: Lookup) -> str:
     return found[0]
 
 
+DIRECT = "direct"  # no uplink key is spelled so: tor, dpn, vps, xray, dpn-<cc>, wg-<name>
+
+
 def via(route: Route) -> str:
-    return f"via {route.exit}" if route.exit is not None else "direct"
+    """The exit of a route as data: its uplink key, or ``direct``; the reader words it."""
+    return route.exit if route.exit is not None else DIRECT
 
 
 def _marked_socket(route: Route, port: int, timeout: float | None) -> socket.socket:
@@ -275,7 +279,7 @@ def call(
         status, raw = transport(where, route, target, json.dumps(payload).encode(), timeout)
     except (OSError, http.client.HTTPException) as exc:
         # the class only: an error's text may quote the request, and the request is the token
-        raise TelegramError(f"{where.host} {via(route)}: {exc.__class__.__name__}") from None
+        raise TelegramError(f"{where.host} ({via(route)}): {exc.__class__.__name__}") from None
     return _answer(status, raw)
 
 

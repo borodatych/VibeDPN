@@ -165,7 +165,7 @@ def render_telegram(view: TelegramView) -> list[str]:
     if view.last_at is not None:
         when = datetime.fromtimestamp(view.last_at, UTC).strftime("%Y-%m-%d %H:%M UTC")
         result = "sent" if view.last_ok else f"not sent: {view.message}"
-        way = f" {view.via}" if view.via else ""
+        way = f" ({view.via})" if view.via else ""
         lines.append(f"last message {when}{way}: {result}")
     if view.waiting:
         lines.append(f"messages waiting: {view.waiting}")

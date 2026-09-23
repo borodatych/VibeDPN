@@ -196,7 +196,7 @@ def test_a_failure_on_the_way_names_its_class_and_never_the_token() -> None:
 
     with pytest.raises(TelegramError) as failed:
         call(API, ROUTE, TOKEN, "getMe", {}, transport=broken)
-    assert str(failed.value) == "api.telegram.org via tor: ConnectionRefusedError"
+    assert str(failed.value) == "api.telegram.org (tor): ConnectionRefusedError"
     assert TOKEN not in str(failed.value)
 
 

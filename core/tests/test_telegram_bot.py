@@ -287,8 +287,8 @@ def test_a_long_outage_reaches_the_chat_through_the_exit_and_waits_while_it_cann
     box.run(20)
     status = box.bot.status()
     assert status.waiting == 1 and status.delivery.last_ok is False
-    assert status.delivery.message == "api.telegram.org via tor: ConnectionRefusedError"
-    assert status.delivery.via == "via tor"
+    assert status.delivery.message == "api.telegram.org (tor): ConnectionRefusedError"
+    assert status.delivery.via == "tor"
     box.telegram.unreachable = False
     box.run(60)  # past the pauses between attempts
     assert box.texts()[-1] == "Exit dpn answers again after 1 min 15 s of silence."
@@ -368,7 +368,8 @@ def test_a_token_turns_the_bot_on_and_offers_a_link_and_is_never_given_back(
     shown = answer.json()
     assert shown["enabled"] and shown["bot"] == "my_box_bot" and not shown["linked"]
     assert shown["link"].startswith("https://t.me/my_box_bot?start=")
-    assert "<svg" in shown["qr_svg"] and shown["link_expires_at"] > api.box.clock.now
+    assert 'xmlns="http://www.w3.org/2000/svg"' in shown["qr_svg"]  # an image needs it
+    assert shown["link_expires_at"] > api.box.clock.now
     assert load_config(api.path).telegram.enabled
     assert api.applied == []  # the router reads nothing of the bot
     assert TOKEN not in answer.text and TOKEN not in api.client.get("/telegram").text
@@ -417,7 +418,7 @@ def test_a_link_needs_a_token_and_a_test_needs_a_chat(tmp_path: Path) -> None:
     assert linked.box.texts() == ["A test message from your VibeDPN box."]
     linked.box.telegram.unreachable = True
     failed = linked.client.post("/telegram/test")
-    assert failed.status_code == 503 and "via tor: ConnectionRefusedError" in failed.text
+    assert failed.status_code == 503 and "(tor): ConnectionRefusedError" in failed.text
 
 
 # --- the CLI and doctor -------------------------------------------------------------------------
@@ -500,8 +501,8 @@ def test_show_tells_whose_bot_where_it_writes_and_how_the_last_message_went(
         chat="@anna",
         last_ok=False,
         last_at=START,
-        message="api.telegram.org via tor: ConnectionRefusedError",
-        via="via tor",
+        message="api.telegram.org (tor): ConnectionRefusedError",
+        via="tor",
         waiting=2,
     )
     monkeypatch.setattr(core_api, "get_telegram", lambda _port: shown)
@@ -511,8 +512,8 @@ def test_show_tells_whose_bot_where_it_writes_and_how_the_last_message_went(
         "telegram on: @my_box_bot",
         "chat: @anna",
         "alerts after 60 s of silence; weekly report: monday 10:00 Europe/Moscow",
-        "last message 2026-09-21 06:59 UTC via tor: not sent:"
-        " api.telegram.org via tor: ConnectionRefusedError",
+        "last message 2026-09-21 06:59 UTC (tor): not sent:"
+        " api.telegram.org (tor): ConnectionRefusedError",
         "messages waiting: 2",
     ]
 
@@ -545,7 +546,7 @@ LINKED = TelegramSecrets(token=TOKEN, bot="my_box_bot", chat_id=CHAT, chat_name=
             TelegramFacts(
                 present=True,
                 secrets=LINKED,
-                state=BotState(delivery=Delivery(last_ok=True, last_at=START, via="via tor")),
+                state=BotState(delivery=Delivery(last_ok=True, last_at=START, via="tor")),
             ),
             Verdict.OK,
             "",

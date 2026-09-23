@@ -13,19 +13,24 @@ type CoreInit = { method: 'PUT' | 'POST'; body: unknown } | { method: 'DELETE' }
 /**
  * A JSON request to the core API from a server loader, without throwing on core's own refusals: a loader that has a
  * meaning for 404 or 503 (no node on this box, the node does not answer) decides itself. Core not answering at all is
- * still an `AppError` 502.
+ * still an `AppError` 502. `timeoutMs` is for the few requests that make core wait for the outside itself (the Telegram
+ * bot checking its token through the exit of the box).
  *
  * @tags core
  * @related coreRequest, coreApiProxy
  */
-export const coreFetch = async <T>(path: string, init?: CoreInit): Promise<CoreAnswer<T>> => {
+export const coreFetch = async <T>(
+  path: string,
+  init?: CoreInit,
+  timeoutMs = CORE_TIMEOUT_MS,
+): Promise<CoreAnswer<T>> => {
   let response: Response
   try {
     response = await fetch(`http://${CORE_API_HOST}:${serverEnv.CORE_API_PORT}${path}`, {
       method: init?.method ?? 'GET',
       headers: init && 'body' in init ? { 'Content-Type': 'application/json' } : undefined,
       body: init && 'body' in init ? JSON.stringify(init.body) : undefined,
-      signal: AbortSignal.timeout(CORE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     })
   } catch {
     throw new AppError('The core of the box does not answer', { status: 502 })
@@ -49,8 +54,8 @@ export const coreFetch = async <T>(path: string, init?: CoreInit): Promise<CoreA
  * @tags core
  * @related coreFetch, coreApiProxy
  */
-export const coreRequest = async <T>(path: string, init?: CoreInit): Promise<T> => {
-  const answer = await coreFetch<T>(path, init)
+export const coreRequest = async <T>(path: string, init?: CoreInit, timeoutMs?: number): Promise<T> => {
+  const answer = await coreFetch<T>(path, init, timeoutMs)
   if (!answer.ok) {
     throw new AppError(answer.detail, { status: answer.status })
   }

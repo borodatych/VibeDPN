@@ -136,7 +136,7 @@ class Delivery(BaseModel):
     last_ok: bool | None = None
     last_at: float | None = None
     message: str = ""
-    via: str = ""  # the exit of the last attempt ("via tor", "direct"); empty when not known
+    via: str = ""  # the exit of the last attempt: an uplink key or "direct"; empty when not known
     failures: int = 0
     retry_at: float = 0.0
 

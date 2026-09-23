@@ -465,7 +465,7 @@ class TelegramView(BaseModel):
     last_ok: bool | None  # the last message: None before the first one
     last_at: float | None
     message: str
-    via: str  # the exit of the last attempt: "via tor", "direct"
+    via: str  # the exit of the last attempt: an uplink key or "direct"; empty when not known
     waiting: int  # messages not sent yet
 
 

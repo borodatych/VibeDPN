@@ -1742,7 +1742,8 @@ def _telegram_delivery(known: TelegramSecrets, state: BotState | None) -> CheckR
             "vibedpn telegram show",
         )
     when = datetime.fromtimestamp(delivery.last_at, UTC).strftime("%Y-%m-%d %H:%M UTC")
-    return CheckResult("telegram", Verdict.OK, f"{whose}; last message {when} {delivery.via}")
+    way = f" ({delivery.via})" if delivery.via else ""
+    return CheckResult("telegram", Verdict.OK, f"{whose}; last message {when}{way}")
 
 
 def _lan_wireless(config: Config | None) -> bool | None:
