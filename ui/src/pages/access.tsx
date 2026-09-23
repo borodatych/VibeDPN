@@ -279,6 +279,9 @@ const DdnsCard = ({ ddns }: { ddns: Ddns }) => {
               : t('access.ddns.lastFailed', { time: lastTime, message: ddns.message })}
           </p>
         )}
+        {ddns.address_error && (
+          <p className="text-warning">{t('access.ddns.addressFailed', { message: ddns.address_error })}</p>
+        )}
         <label className="block space-y-1">
           <span>{t('access.ddns.url')}</span>
           <Input

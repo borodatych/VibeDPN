@@ -429,6 +429,7 @@ class DdnsView(BaseModel):
     last_ok: bool | None
     last_at: float | None
     message: str
+    address_error: str  # the last look at the public address failed, and why; "" when it worked
     apply: ApplyView
 
 

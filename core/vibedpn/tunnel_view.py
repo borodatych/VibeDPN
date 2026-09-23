@@ -137,6 +137,8 @@ def render_ddns(view: DdnsView) -> list[str]:
     if view.public_ip is not None:
         told = view.told_ip or "nothing yet"
         lines.append(f"public address {view.public_ip}, the service has {told}")
+    if view.address_error:
+        lines.append(f"cannot look at the public address now: {view.address_error}")
     if view.last_at is not None:
         result = "ok" if view.last_ok else "failed"
         when = datetime.fromtimestamp(view.last_at, UTC).strftime("%Y-%m-%d %H:%M UTC")

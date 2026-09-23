@@ -1651,6 +1651,9 @@ def _ddns_result(facts: DoctorFacts) -> CheckResult:
     if facts.access.ddns_url is False:
         return CheckResult("ddns", Verdict.FAIL, "no update URL", "vibedpn ddns set")
     state = facts.access.ddns_state
+    if state is not None and state.address_error:
+        # the name may still be right; core just cannot tell whether the address moved
+        return CheckResult("ddns", Verdict.WARN, state.address_error, "vibedpn doctor --network")
     if state is None or state.last_at is None:
         return CheckResult(
             "ddns", Verdict.WARN, "core has not called the service yet", "vibedpn up"

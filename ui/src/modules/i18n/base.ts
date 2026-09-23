@@ -375,6 +375,7 @@ const table = {
   'access.ddns.addresses': "Public address {public}, the service has {told}",
   'access.ddns.lastOk': "Last call {time}: {message}",
   'access.ddns.lastFailed': "Last call {time} failed: {message}",
+  'access.ddns.addressFailed': "Cannot look at the public address now: {message}",
   'access.ddns.url': "Update address of your DDNS service (https://…)",
   'access.ddns.urlHint': "It carries a token: the box keeps it readable by root only and never shows it again.",
   'access.ddns.save': "Save and turn on",

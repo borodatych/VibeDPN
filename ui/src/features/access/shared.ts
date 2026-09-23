@@ -26,6 +26,8 @@ export type Ddns = {
   last_ok: boolean | null
   last_at: number | null
   message: string
+  /** why the last look at the public address failed; empty when it worked */
+  address_error: string
   apply: ApplyView
 }
 

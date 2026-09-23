@@ -135,6 +135,19 @@ def test_with_network_the_name_must_lead_to_this_box() -> None:
             ),
             Verdict.OK,
         ),
+        (
+            AccessFacts(
+                ddns_url=True,
+                ddns_state=DdnsState(
+                    public_ip="203.0.113.5",
+                    told_ip="203.0.113.5",
+                    last_ok=True,
+                    last_at=1.0,
+                    address_error="no public address: ConnectTimeout",
+                ),
+            ),
+            Verdict.WARN,  # the call stands, but whether the address moved is unknown
+        ),
     ],
 )
 def test_doctor_reads_how_the_last_ddns_call_went(

@@ -1492,6 +1492,7 @@ def _add_ddns_routes(
             last_ok=known.last_ok,
             last_at=known.last_at,
             message=known.message,
+            address_error=known.address_error,
             apply=_apply_view(data),
         )
 

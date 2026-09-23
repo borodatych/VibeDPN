@@ -70,7 +70,8 @@ class DdnsError(ValueError):
 
 
 class DdnsState(BaseModel):
-    """What the watcher knows; ``told_*`` is what the service accepted last."""
+    """What the watcher knows; ``told_*`` is what the service accepted last, ``last_*`` and
+    ``message`` are about the last call of the update URL."""
 
     public_ip: str | None = None
     told_ip: str | None = None
@@ -78,6 +79,10 @@ class DdnsState(BaseModel):
     last_ok: bool | None = None
     last_at: float | None = None
     message: str = ""
+    # Why the last look at the public address failed; empty once a look works again. Kept apart
+    # from the call: the call is made only when the address moves, so a look that failed once
+    # would otherwise read as a failed call until the next one, up to a day later.
+    address_error: str = ""
 
 
 def check_url(url: str) -> str:
@@ -158,12 +163,10 @@ def ddns_round(
     try:
         address = public_ip(client)
     except (httpx.HTTPError, DdnsError) as exc:
-        state = state.model_copy(
-            update={"last_ok": False, "last_at": now, "message": f"no public address: {exc}"}
-        )
+        state = state.model_copy(update={"address_error": f"no public address: {exc}"})
         save_state(state_path, state)
         return state
-    state = state.model_copy(update={"public_ip": address})
+    state = state.model_copy(update={"public_ip": address, "address_error": ""})
     if due(state, address, now):
         state = _tell(state, url, address, client, now)
     save_state(state_path, state)
@@ -210,7 +213,9 @@ async def watch_ddns(
                 state = await asyncio.to_thread(
                     ddns_round, current(), secrets_dir, state_path, http, now()
                 )
-                if state is not None and state.last_ok is False:
+                if state is not None and state.address_error:
+                    sys.stderr.write(f"vibedpn-core: ddns: {state.address_error}\n")
+                elif state is not None and state.last_ok is False:
                     sys.stderr.write(f"vibedpn-core: ddns: {state.message}\n")
             except OSError as exc:
                 sys.stderr.write(f"vibedpn-core: ddns: cannot keep its state: {exc.strerror}\n")

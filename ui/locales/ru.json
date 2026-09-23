@@ -360,6 +360,7 @@
   "access.ddns.addresses": "Внешний адрес {public}, у сервиса записан {told}",
   "access.ddns.lastOk": "Последний вызов {time}: {message}",
   "access.ddns.lastFailed": "Последний вызов {time} не удался: {message}",
+  "access.ddns.addressFailed": "Сейчас не удаётся узнать внешний адрес: {message}",
   "access.ddns.url": "Адрес обновления вашего сервиса DDNS (https://…)",
   "access.ddns.urlHint": "В нём токен: коробка хранит его доступным только root и больше никогда не показывает.",
   "access.ddns.save": "Сохранить и включить",

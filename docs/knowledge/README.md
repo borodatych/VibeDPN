@@ -68,7 +68,7 @@
 
 ## ddns
 
-- [updateAnswers.md](ddns/updateAnswers.md) — «нет» приходит и с кодом 200: DuckDNS `KO`, dyndns2 `badauth`/`nohost`/`!donator`…, dynv6 — 401; No-IP блокирует за частые `nochg`, поэтому зовём при смене адреса и раз в сутки; ipify без журналов; адрес обновления — секрет
+- [updateAnswers.md](ddns/updateAnswers.md) — «нет» приходит и с кодом 200: DuckDNS `KO`, dyndns2 `badauth`/`nohost`/`!donator`…, dynv6 — 401; No-IP блокирует за частые `nochg`, поэтому зовём при смене адреса и раз в сутки; ipify без журналов; адрес обновления — секрет; сбой проверки адреса хранится отдельно от результата вызова (`address_error`), иначе он висит «отказом» до суток
 
 ## xray
 

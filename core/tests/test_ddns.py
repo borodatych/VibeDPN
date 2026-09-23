@@ -147,6 +147,32 @@ def test_a_failure_to_reach_the_service_never_quotes_the_token(tmp_path: Path) -
     assert TOKEN not in state_path.read_text()
 
 
+def test_a_failed_look_at_the_address_is_not_a_failed_call_and_clears_by_itself(
+    tmp_path: Path,
+) -> None:
+    """The address is looked at every round, the service is called only when it moves: a look that
+    failed once must not read as a failed call until the daily refresh."""
+    internet = Internet()
+    down = {"ipify": False}
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.ipify.org" and down["ipify"]:
+            raise httpx.ConnectTimeout("no answer", request=request)
+        return internet(request)
+
+    secrets, state_path = with_url(tmp_path)
+    client = httpx.Client(transport=httpx.MockTransport(flaky))
+    ddns_round(config(), secrets, state_path, client, NOW)
+    down["ipify"] = True
+    blind = ddns_round(config(), secrets, state_path, client, NOW + 300)
+    assert blind is not None and blind.address_error == "no public address: no answer"
+    assert blind.last_ok is True and blind.told_ip == "203.0.113.5"  # the call still stands
+    down["ipify"] = False
+    seen = ddns_round(config(), secrets, state_path, client, NOW + 600)
+    assert seen is not None and seen.address_error == "" and seen.last_ok is True
+    assert len(internet.updates) == 1  # the address never moved: the service was asked once
+
+
 def test_without_a_url_the_state_says_what_to_run(tmp_path: Path) -> None:
     (tmp_path / "secrets").mkdir()
     state = ddns_round(
