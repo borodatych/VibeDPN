@@ -47,6 +47,8 @@ TOR_BRIDGES_FILE = "bridges"
 XRAY_CONFIG_DIR = "data/xray/config"
 XRAY_CONFIG_FILE = "config.json"
 DEFAULT_LOG_TAIL = 100
+# the images this host keeps, named the way `compose config` names them
+IMAGE_LISTING = ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
 # Before 28.0.0 ports published on 127.0.0.1 were reachable from L2 neighbours (Docker release
 # notes 28.0.0), and nat-unprotected did not exist; the box relies on both.
 MIN_DOCKER_ENGINE = (28, 0, 0)
@@ -291,6 +293,20 @@ def stale_services(all_services: str, active_services: str) -> list[str]:
     active = {line.strip() for line in active_services.splitlines() if line.strip()}
     every = {line.strip() for line in all_services.splitlines() if line.strip()}
     return sorted(every - active)
+
+
+def kept_services(config_json: str, image_listing: str, services: list[str]) -> list[str]:
+    """Those of ``services`` whose image this host keeps already. Compose pulls a missing image
+    when a service first starts but runs a kept one as it is, and ``compose pull`` refreshes only
+    the active profiles: a service enabled after an update would start on a copy pulled long before
+    under the same moving tag, older than the code around it.
+
+    ``config_json`` is ``compose config --format json``; ``image_listing`` is ``docker image ls``
+    as ``repository:tag`` lines (IMAGE_LISTING).
+    """
+    kept = {line.strip() for line in image_listing.splitlines() if line.strip()}
+    specs = json.loads(config_json).get("services", {})
+    return [service for service in services if specs.get(service, {}).get("image") in kept]
 
 
 def parse_ps(output: str) -> list[ServiceStatus]:

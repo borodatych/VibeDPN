@@ -23,6 +23,8 @@ class Recorder:
         self.ps_output = ""
         self.all_services = "core\nmyst-provider\nwg-server\n"
         self.active_services = "core\nmyst-provider\nwg-server\n"
+        self.config_json = '{"services": {}}'
+        self.image_listing = ""
 
     def run(self, argv: list[str]) -> int:
         self.calls.append(argv)
@@ -32,6 +34,10 @@ class Recorder:
         self.calls.append(argv)
         if argv[-2:] == ["config", "--services"]:
             return self.all_services if "--profile" in argv else self.active_services
+        if argv[-3:] == ["config", "--format", "json"]:
+            return self.config_json
+        if argv[:3] == ["docker", "image", "ls"]:
+            return self.image_listing
         return self.ps_output
 
 

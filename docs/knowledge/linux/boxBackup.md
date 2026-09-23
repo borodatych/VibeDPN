@@ -30,6 +30,30 @@ docker compose --profile '*' pull --ignore-pull-failures  # подтянул vib
 `update` пользуется `--ignore-pull-failures`: тянет всё, а сервис без опубликованного образа —
 это та самая ошибка, которую флаг прощает.
 
+## [провайдер] `compose pull` не трогает выключенные профили, а `up` не тянет то, что уже лежит
+
+**Измерено 2026-09-23 на коробке** (Docker Compose 5.5.1): после `vibedpn update` включили сервер
+доступа (`access` на образе `vibedpn-xray:next`) и сделали `vibedpn up`. Контейнер стартовал на
+образе от 18.09 (метка `org.opencontainers.image.revision` — коммит 75d1d1a), оставшемся от проверки
+аплинка `xray`: старая точка входа не знала режима `serve` и ушла в режим шлюза, проверка здоровья —
+`unhealthy`. Свежий `vibedpn-core:next` при этом был на месте — его профиль был включён.
+
+Два поведения складываются:
+- `compose pull` без `--profile` тянет образы только включённых профилей — так же, как `up` их
+  запускает («assigned ones only start/stop when their profile is active»);
+- у сервиса с `image` и `build` без `pull_policy` Compose по спецификации «attempts to pull the image
+  first and then builds from source if the image isn't found in the registry or platform cache», а
+  по замеру образ, который уже лежит на хосте, `up` запускает как есть.
+
+По справочнику политика `missing` для тега `latest` тянет образ всегда; коробки на `main` это,
+возможно, обходит, но не проверено — коробка стоит на `next`.
+
+**Как применять:** `update` после обычного `pull` тянет ещё образы выключенных сервисов, если они
+уже есть на хосте (`compose.kept_services`: `compose config --format json` против
+`docker image ls` как `repository:tag`). Образа нет — Compose скачает свежий при первом запуске,
+есть — он обновлён вместе с остальными. Эта правка — самого `update`, поэтому доезжает со второго
+обновления (раздел ниже).
+
 ## [провайдер] Таймер systemd для автообновления
 
 **Суть (из man):** `OnCalendar=` — таймер по календарным выражениям; `RandomizedDelaySec=` — случайная задержка от 0 до значения; `Persistent=true` — время последнего запуска хранится на диске и пропущенный запуск догоняется после выключения; `Unit=` по умолчанию — сервис с тем же именем, что у таймера.
@@ -43,7 +67,7 @@ docker compose --profile '*' pull --ignore-pull-failures  # подтянул vib
 В `/proc/<pid>/status`: `Uid: 7753`, `CapEff: 0000000000000400` — ровно `NET_BIND_SERVICE`.
 **Грабля опыта:** на colima VM `127.0.0.1:53` и `192.168.5.1:53` держит dnsmasq самой colima — первый опыт на `127.0.0.1` упал на TCP `address already in use`, это не отказ в правах.
 
-**Источники:** https://man7.org/linux/man-pages/man5/systemd.timer.5.html ; https://docs.python.org/3/library/tarfile.html#extraction-filters ; https://docs.docker.com/reference/cli/docker/compose/pull/
+**Источники:** https://man7.org/linux/man-pages/man5/systemd.timer.5.html ; https://docs.python.org/3/library/tarfile.html#extraction-filters ; https://docs.docker.com/reference/cli/docker/compose/pull/ ; https://docs.docker.com/compose/how-tos/profiles/ ; https://docs.docker.com/reference/compose-file/build/#using-build-and-image ; https://docs.docker.com/reference/compose-file/services/#pull_policy
 
 
 ## Самообновляющийся скрипт и bash (проверено 2026-09-18)

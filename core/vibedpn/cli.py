@@ -58,11 +58,13 @@ from vibedpn.bootstrap import (
 )
 from vibedpn.compose import (
     DEFAULT_LOG_TAIL,
+    IMAGE_LISTING,
     ComposeError,
     capture,
     check_box,
     check_secrets,
     compose_argv,
+    kept_services,
     parse_ps,
     preflight,
     refresh_countries,
@@ -461,15 +463,20 @@ def _compose(box_dir: Path, *args: str, all_profiles: bool = False) -> None:
         raise typer.Exit(code)
 
 
-def _retire_stale(box_dir: Path) -> None:
-    """Stop and remove containers of profiles the (fresh) .env no longer activates."""
+def _inactive_services(box_dir: Path) -> list[str]:
+    """Services of the profiles .env does not activate."""
     try:
-        stale = stale_services(
+        return stale_services(
             capture(compose_argv(box_dir, "config", "--services", all_profiles=True)),
             capture(compose_argv(box_dir, "config", "--services")),
         )
     except ComposeError as exc:
         raise _fail(str(exc)) from None
+
+
+def _retire_stale(box_dir: Path) -> None:
+    """Stop and remove containers of profiles the (fresh) .env no longer activates."""
+    stale = _inactive_services(box_dir)
     if stale:
         _compose(box_dir, "rm", "--stop", "--force", *stale, all_profiles=True)
 
@@ -656,16 +663,34 @@ def update(
         != 0
     ):
         raise _fail("install.sh failed; the box keeps running the previous version")
-    # --ignore-pull-failures, not --ignore-buildable: the latter skips every service that has
-    # a `build:` section, which is all of ours, so the box pulled only the third-party images
-    # and kept running its own containers on the code they were built with (measured on the
-    # box 2026-09-18, knowledge linux/boxBackup.md). A service whose image is not published
-    # is the failure this flag forgives.
-    _compose(box_dir, "pull", "--ignore-pull-failures")
+    _pull(box_dir)
     # the restart runs the freshly installed CLI, not this process with the old code loaded
     if run([sys.executable, "-m", "vibedpn", "restart", "--dir", str(box_dir)]) != 0:
         raise _fail("restart after the update failed; see `vibedpn doctor`")
     typer.echo(f"updated to the latest {branch} (role {config.role.value})")
+
+
+def _pull(box_dir: Path) -> None:
+    """Pull the images of the active services, and of every other service whose image this host
+    keeps (compose.kept_services): a profile enabled after the update starts on current code."""
+    # --ignore-pull-failures, not --ignore-buildable: the latter skips every service that has
+    # a `build:` section, which is all of ours, so the box pulled only the third-party images
+    # and kept running its own containers on the code they were built with (knowledge
+    # linux/boxBackup.md). A service whose image is not published is the failure this flag forgives.
+    _compose(box_dir, "pull", "--ignore-pull-failures")
+    inactive = _inactive_services(box_dir)
+    if not inactive:
+        return
+    try:
+        kept = kept_services(
+            capture(compose_argv(box_dir, "config", "--format", "json", all_profiles=True)),
+            capture(IMAGE_LISTING),
+            inactive,
+        )
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+    if kept:
+        _compose(box_dir, "pull", "--ignore-pull-failures", *kept, all_profiles=True)
 
 
 def _routing_line(config: Config) -> str:

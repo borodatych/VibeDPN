@@ -1,5 +1,6 @@
 """Compose layer: argv, preconditions, ps parsing, preflight error mapping."""
 
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from vibedpn.compose import (
     check_secrets,
     compose_argv,
     engine_too_old,
+    kept_services,
     parse_ps,
     preflight,
     refresh_env,
@@ -117,6 +119,31 @@ def test_stale_services_is_the_difference_of_profiles() -> None:
     active = "core\nui\n"
     assert stale_services(every, active) == ["adguard", "myst-provider"]
     assert stale_services(every, every) == []
+
+
+def test_kept_services_are_those_whose_image_the_host_has() -> None:
+    config_json = json.dumps(
+        {
+            "services": {
+                "access": {"image": "ghcr.io/o/vibedpn-xray:next"},
+                "xray": {"image": "ghcr.io/o/vibedpn-xray:next"},
+                "wg-server": {"image": "ghcr.io/o/vibedpn-wg:next"},
+                "myst-provider": {"image": "mysteriumnetwork/myst:1.39.5-alpine"},
+            }
+        }
+    )
+    # an older tag of the same repository is not the image the service runs
+    listing = "\n".join(
+        [
+            "ghcr.io/o/vibedpn-xray:next",
+            "ghcr.io/o/vibedpn-wg:e2e",
+            "mysteriumnetwork/myst:1.39.5-alpine",
+        ]
+    )
+    inactive = ["access", "myst-provider", "wg-server", "xray"]
+    assert kept_services(config_json, listing, inactive) == ["access", "myst-provider", "xray"]
+    assert kept_services(config_json, "", inactive) == []
+    assert kept_services(config_json, listing, []) == []
 
 
 @pytest.mark.parametrize(

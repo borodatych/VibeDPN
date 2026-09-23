@@ -92,3 +92,38 @@ def test_update_runs_install_sh_pull_and_the_new_cli_restart(
     assert any("VIBEDPN_BRANCH=next" in call and call.endswith("install.sh") for call in flat)
     assert any(call.endswith("pull --ignore-pull-failures") for call in flat)
     assert any(" -m vibedpn restart --dir " in call for call in flat)
+
+
+def test_update_refreshes_the_images_of_disabled_services_the_host_keeps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = make_box(tmp_path, monkeypatch)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "install.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    recorder.ps_output = "next\n"
+    recorder.all_services = "core\naccess\nwg-server\nxray\n"
+    recorder.active_services = "core\n"
+    recorder.config_json = json.dumps(
+        {
+            "services": {
+                "core": {"image": "ghcr.io/o/vibedpn-core:next"},
+                "access": {"image": "ghcr.io/o/vibedpn-xray:next"},
+                "wg-server": {"image": "ghcr.io/o/vibedpn-wg:next"},
+                "xray": {"image": "ghcr.io/o/vibedpn-xray:next"},
+            }
+        }
+    )
+    # an uplink tried once left its image behind; wg was never pulled here
+    recorder.image_listing = "ghcr.io/o/vibedpn-core:next\nghcr.io/o/vibedpn-xray:next\n"
+    result = runner.invoke(cli.app, ["update", "--dir", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    pulls = [call for call in recorder.calls if "pull" in call]
+    assert [call[call.index("pull") :] for call in pulls] == [
+        ["pull", "--ignore-pull-failures"],
+        ["pull", "--ignore-pull-failures", "access", "xray"],
+    ]
+    assert "--profile" in pulls[1]  # disabled services are named only under every profile
+    flat = [" ".join(call) for call in recorder.calls]
+    pulled = flat.index(" ".join(pulls[1]))
+    restarted = next(i for i, call in enumerate(flat) if " -m vibedpn restart " in call)
+    assert pulled < restarted
