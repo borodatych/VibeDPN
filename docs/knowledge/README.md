@@ -30,8 +30,9 @@
 - [hostNetworkAndProfiles.md](compose/hostNetworkAndProfiles.md) — что нельзя с `network_mode: host`
   (ports, networks, sysctl `net.*`), статические IP, профили, `compose.yaml` вместо `docker-compose.yml`
 - [cliWrapper.md](compose/cliWrapper.md) — `--project-directory`, `--remove-orphans`, `--profile '*'`
-- [extendsMerging.md](compose/extendsMerging.md) — `extends` складывает профили и заменяет монтирования по цели: проверено `docker compose config`
   для `down`, двухшаговый `restart`, `.env` как производная перед `up`
+- [extendsMerging.md](compose/extendsMerging.md) — `extends` складывает профили и заменяет монтирования по цели: проверено `docker compose config`
+- [healthcheckTiming.md](compose/healthcheckTiming.md) — долгий `interval` не задерживает первую проверку при `start_period`: движок проверяет раз в `start_interval`, умолчание 5 с (Engine 25+), писать его незачем
 
 ## docker
 
@@ -63,6 +64,14 @@
 - [snowflake.md](tor/snowflake.md) — как Ростелеком режет цели (rutracker и lostfilm по имени с замерзанием после ~20 КБ,
   Telegram и rutor по адресу, ответы Mysterium через ретранслятор замирают на 16 КБ), obfs4-мосты Tor Browser не проходят,
   Snowflake проходит (~145 КБ/с), пакеты trixie без lyrebird/webtunnel, прозрачный шлюз в Tor в netns контейнера; общественный список antifilter (485 доменов) подходит `routing.lists`, открывается только с российского адреса
+
+## ddns
+
+- [updateAnswers.md](ddns/updateAnswers.md) — «нет» приходит и с кодом 200: DuckDNS `KO`, dyndns2 `badauth`/`nohost`/`!donator`…, dynv6 — 401; No-IP блокирует за частые `nochg`, поэтому зовём при смене адреса и раз в сутки; ipify без журналов; адрес обновления — секрет
+
+## xray
+
+- [realityServer.md](xray/realityServer.md) — сервер VLESS/REALITY своими силами на Xray 26.3.27: ключ — тот же X25519, что у WireGuard; `target` и `raw`; прикрытие `www.microsoft.com` не пускает никогда, `dl.google.com` — всегда, а `tls ping` этого не видит — REALITY набирает прикрытие на каждое соединение (исходник `tls.go`); отпечаток `randomized` ломает клиента; `adu`/`rmu` на ходу, им нужен порт, и они выходят с 0 даже при отказе; счётчики на человека через `/debug/vars`; закрыть людям петлю и частные сети; `libcap2-bin` тянет за собой `iproute2`; трафик сервера по uid и ответы людям мимо меток
 
 ## platform
 
