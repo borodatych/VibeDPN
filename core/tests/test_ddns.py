@@ -81,7 +81,8 @@ def test_the_url_is_https_only_and_kept_private(tmp_path: Path) -> None:
         (200, "nochg 203.0.113.5", True),
         (200, "badauth", False),
         (200, "nohost", False),
-        (200, "addresses updated", True),  # dynv6
+        (200, "!donator", False),  # an option the account does not have
+        (200, "addresses updated", True),  # a service with its own words for success
         (500, "OK", False),
         (401, "", False),
     ],

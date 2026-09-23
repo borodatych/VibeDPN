@@ -9,7 +9,8 @@ being blocked" (https://www.noip.com/integrate/response).
 
 Services answer in their own words, and some say "failed" with HTTP 200: DuckDNS answers ``KO``
 (https://www.duckdns.org/spec.jsp), the dyndns2 family ``badauth``, ``nohost`` and the like (the
-No-IP page above). A call succeeds on a 2xx whose first word is none of those.
+No-IP page above and https://help.dyn.com/remote-access-api/return-codes/). A call succeeds on a
+2xx whose first word is none of those.
 """
 
 from __future__ import annotations
@@ -43,7 +44,18 @@ TIMEOUT_SECONDS = 20
 # Put where the address goes, for a service that wants it in the URL; most take the caller's.
 IP_PLACEHOLDER = "{ip}"
 FAILURE_WORDS = frozenset(
-    {"ko", "badauth", "badagent", "nohost", "notfqdn", "numhost", "abuse", "dnserr", "911"}
+    {
+        "ko",
+        "badauth",
+        "badagent",
+        "!donator",
+        "nohost",
+        "notfqdn",
+        "numhost",
+        "abuse",
+        "dnserr",
+        "911",
+    }
 )
 ANSWER_CHARS = 80
 # https only: the token travels in the URL
