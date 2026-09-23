@@ -47,6 +47,12 @@ XRAY=e2e-xray
 XRAY_IP=198.18.0.40
 XRAY_PORT=8443
 XRAY_IMAGE=ghcr.io/xtls/xray-core:26.3.27
+# Telegram of the stand: the Bot API the bot of core calls, on the stand's internet with its own
+# address, and a log of every call with the address it came from — the exit of the bot.
+TG=e2e-telegram
+TG_IP=198.18.0.50
+TG_PORT=8081
+TG_TOKEN=123456:AAH-stand_token_of_the_bot
 LAN=lan0
 LAN_SUBNET=192.168.77.0/24
 BOX_LAN_IP=192.168.77.1
@@ -91,7 +97,7 @@ cleanup() {
   if [ -n "${PY:-}" ] && [ -x "$PY" ]; then
     sudo "$PY" -c "from vibedpn.engine.router import remove_router; remove_router()" >/dev/null 2>&1 || true
   fi
-  docker rm -f "$WEB" "$VPS" "$EXIT" "$XRAY" "$LISTENER" e2e-person-anna e2e-person-boris >/dev/null 2>&1 || true
+  docker rm -f "$WEB" "$VPS" "$EXIT" "$XRAY" "$TG" "$LISTENER" e2e-person-anna e2e-person-boris >/dev/null 2>&1 || true
   docker network rm "$INTERNET" >/dev/null 2>&1 || true
   sudo ip netns del "$NETNS" 2>/dev/null || true
   sudo ip netns del "$NETNS2" 2>/dev/null || true
@@ -114,6 +120,7 @@ fail() {
     echo "# xray gateway"; docker logs --tail 15 vibedpn-xray-1 2>&1 || true
     echo "# xray server of the stand"; docker logs --tail 15 "$XRAY" 2>&1 || true
     echo "# access server"; docker logs --tail 20 vibedpn-access-1 2>&1 || true
+    echo "# telegram of the stand"; curl -s --max-time 3 "http://$TG_IP:$TG_PORT/stand/log" || true
     echo "# fake VPS"; docker exec "$VPS" wg show wg0
     echo "# core"; docker logs --tail 25 vibedpn-core-1
   } >&2 2>&1 || true
@@ -848,6 +855,138 @@ if docker ps --format '{{.Names}}' | grep -q vibedpn-xray-1; then
 fi
 await_exit "$VPS_IP" "the device lost the VPS after uplink xray was turned off"
 echo "xray off: the gateway is gone and the device is back on the VPS"
+
+log "telegram: the bot reaches Telegram the way a device at home does"
+docker run -d --name "$TG" --network "$INTERNET" --ip "$TG_IP" --entrypoint python "$CORE_IMAGE" -c "
+import http.server, json, threading, time
+calls, starts, lock = [], [], threading.Lock()
+class Api(http.server.BaseHTTPRequestHandler):
+    def answer(self, status, body):
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+    def do_GET(self):
+        with lock:
+            self.answer(200, calls)
+    def do_POST(self):
+        payload = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+        if self.path == '/stand/start':
+            with lock:
+                starts.append(payload['code'])
+            return self.answer(200, {})
+        _root, bot, method = self.path.rsplit('/', 2)
+        with lock:
+            calls.append({'from': self.client_address[0], 'method': method, 'text': payload.get('text', '')})
+        if bot != 'bot$TG_TOKEN':
+            return self.answer(401, {'ok': False, 'error_code': 401, 'description': 'Unauthorized'})
+        if method == 'getMe':
+            result = {'id': 1, 'is_bot': True, 'first_name': 'Stand', 'username': 'stand_bot'}
+        elif method == 'getUpdates':
+            with lock:
+                codes = list(starts)
+            chat = {'id': 42, 'type': 'private', 'first_name': 'Owner', 'username': 'owner'}
+            result = [{'update_id': 100 + i, 'message': {'message_id': i, 'chat': chat, 'text': '/start ' + code}}
+                      for i, code in enumerate(codes) if 100 + i >= payload.get('offset', 0)]
+            if not result:
+                time.sleep(1)
+        else:
+            result = {'message_id': len(calls)}
+        self.answer(200, {'ok': True, 'result': result})
+    def log_message(self, *args):
+        pass
+http.server.ThreadingHTTPServer(('0.0.0.0', $TG_PORT), Api).serve_forever()
+" >/dev/null
+# core calls it instead of api.telegram.org: the stand's copy of compose.yaml hands core its address
+"$PY" - "$BOX/compose.yaml" "http://$TG_IP:$TG_PORT" <<'EOF' || fail "cannot point core at the stand's Telegram"
+import sys
+from pathlib import Path
+from ruamel.yaml import YAML
+yaml = YAML()
+path = Path(sys.argv[1])
+compose = yaml.load(path.read_text(encoding="utf-8"))
+compose["services"]["core"]["environment"]["VIBEDPN_TELEGRAM_API"] = sys.argv[2]
+with path.open("w", encoding="utf-8") as out:
+    yaml.dump(compose, out)
+EOF
+sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up with the stand's Telegram failed"
+wait_healthy vibedpn-core-1
+# $1: a method of the Bot API; the calls of it the stand's Telegram has seen, as "address text" lines
+tg_calls() {
+  curl -s --max-time 5 "http://$TG_IP:$TG_PORT/stand/log" | "$PY" -c 'import json, sys
+for call in json.load(sys.stdin):
+    if call["method"] == sys.argv[1]:
+        print(call["from"], call["text"].replace("\n", " "))' "$1"
+}
+# $1: the exit address the test message must come from; $2: what failed
+tg_test_from() {
+  sudo "$CLI" telegram test --dir "$BOX" >/dev/null || fail "$2: vibedpn telegram test failed"
+  seen="$(tg_calls sendMessage | tail -1 | cut -d' ' -f1)"
+  [ "$seen" = "$1" ] || fail "$2 (the stand's Telegram saw it from '${seen:-nobody}')"
+}
+printf '%s\n' "$TG_TOKEN" >"$WORK/telegram-token"
+# shellcheck disable=SC2024  # the output is the stand's to read, so the file is the user's, not root's
+sudo "$CLI" telegram set --token-file "$WORK/telegram-token" --dir "$BOX" >"$WORK/telegram-set.txt" 2>&1 &
+TG_SET=$!
+i=0
+until link="$(grep -o 'https://t.me/stand_bot?start=[A-Za-z0-9_-]*' "$WORK/telegram-set.txt")"; do
+  i=$((i + 1))
+  [ "$i" -lt "$TIMEOUT" ] || fail "vibedpn telegram set printed no link: $(cat "$WORK/telegram-set.txt")"
+  sleep 1
+done
+# the owner opens the link and presses Start: the stand's Telegram hands the bot /start <code>
+curl -s --max-time 5 -X POST "http://$TG_IP:$TG_PORT/stand/start" -d "{\"code\": \"${link#*start=}\"}" >/dev/null
+wait "$TG_SET" || fail "vibedpn telegram set did not see the chat linked: $(cat "$WORK/telegram-set.txt")"
+grep -q "linked: @owner" "$WORK/telegram-set.txt" || fail "the chat is not linked: $(cat "$WORK/telegram-set.txt")"
+if grep -q "$TG_TOKEN" "$WORK/telegram-set.txt"; then
+  fail "vibedpn telegram set printed the token of the bot"
+fi
+[ "$(tg_calls getMe | cut -d' ' -f1)" = "$VPS_IP" ] || fail "the token was not checked through the VPS in mode full"
+echo "telegram: the token checked and the chat linked through the VPS"
+tg_test_from "$VPS_IP" "in mode full the bot does not leave through the VPS"
+echo "telegram, full: the bot leaves as $VPS_IP"
+sudo "$CLI" mode off --dir "$BOX" >/dev/null || fail "vibedpn mode off for the telegram checks failed"
+tg_test_from "$INTERNET_GATEWAY" "in mode off the bot does not go direct"
+echo "telegram, off: the bot leaves as $INTERNET_GATEWAY"
+sudo "$CLI" mode smart --dir "$BOX" >/dev/null || fail "vibedpn mode smart for the telegram checks failed"
+sudo "$CLI" net add "$TG_IP/32" vps --dir "$BOX" >/dev/null || fail "vibedpn net add of the stand's Telegram failed"
+tg_test_from "$VPS_IP" "a network rule does not take the bot through the VPS in mode smart"
+sudo "$CLI" net rm "$TG_IP/32" --dir "$BOX" >/dev/null || fail "vibedpn net rm of the stand's Telegram failed"
+tg_test_from "$INTERNET_GATEWAY" "without the rule the bot does not go direct in mode smart"
+echo "telegram, smart: the network rule takes the bot through the VPS, without it direct"
+sudo "$CLI" mode full --dir "$BOX" >/dev/null || fail "vibedpn mode full after the telegram checks failed"
+
+log "telegram: the kill switch holds the bot too, and the outage is told once its exit is back"
+api_port="$(sudo "$PY" -c 'import sys, pathlib; from vibedpn.config import load_config
+print(load_config(pathlib.Path(sys.argv[1])).api.port)' "$BOX/config.yaml")" || fail "cannot read the API port of the box"
+curl -s --max-time 5 -X PUT "http://127.0.0.1:$api_port/telegram" -H 'Content-Type: application/json' \
+  -d '{"alert_after_seconds": 15}' | grep -q '"alert_after_seconds":15' ||
+  fail "the threshold of the bot did not change live"
+sent="$(tg_calls sendMessage | wc -l)"
+docker stop vibedpn-wg-client-1 >/dev/null
+if sudo "$CLI" telegram test --dir "$BOX" >/dev/null 2>&1; then
+  fail "a test message left with the gateway of its exit stopped"
+fi
+sleep 30  # past the threshold: the outage is news now, and it waits for its exit
+[ "$(tg_calls sendMessage | wc -l)" = "$sent" ] || fail "the bot reached Telegram around its stopped exit"
+echo "telegram: with the gateway stopped nothing left, the alert waits"
+docker start vibedpn-wg-client-1 >/dev/null
+wait_healthy vibedpn-wg-client-1
+# the pauses between attempts grow while the exit is down: the message may wait a couple of minutes
+i=0
+until tg_calls sendMessage | grep -q "^$VPS_IP Exit vps was silent for"; do
+  i=$((i + 1))
+  [ "$i" -lt 180 ] || fail "the outage of vps never reached the stand's Telegram: $(tg_calls sendMessage | tail -3)"
+  sleep 1
+done
+tg_calls sendMessage | grep "Exit vps was silent" | tail -1
+if tg_calls sendMessage | grep -v "^$VPS_IP " | grep -q "Exit vps"; then
+  fail "the alert about vps left around its exit"
+fi
+sudo "$CLI" doctor --dir "$BOX" | grep -q "\[ ok \] telegram" || fail "doctor does not confirm the bot"
+echo "telegram: the outage came as one message, through the VPS, once the gateway was back"
 
 log "access server: a person outside leaves the box the way a device of its LAN does"
 # A person dials the box on the stand's internet, where the web server that names the exit lives
