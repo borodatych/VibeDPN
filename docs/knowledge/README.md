@@ -20,7 +20,7 @@
 
 - [docker.md](adguard/docker.md) — тома, `AdGuardHome.yaml` со `schema_version: 34` вместо мастера
   на 3000, ключи привязки и апстримов, порт 53 против systemd-resolved; первый старт переписывает
-  файл (600, умолчания), ядро правит только свои ключи, bcrypt `$2b$` принимается, `aaaa_disabled`; перезапись имени коробки в `filtering.rewrites` — без `enabled: true` не действует; режим DNS на лету — `disable_ipv6` через API служебным пользователем ядра
+  файл (600, умолчания), ядро правит только свои ключи, bcrypt `$2b$` принимается, `aaaa_disabled`; перезапись имени коробки в `filtering.rewrites` — без `enabled: true` не действует; режим DNS на лету — `disable_ipv6` через API служебным пользователем ядра; переключение `full` → `off` рвёт открытые соединения DoH, первые запросы по ним падают до переподключения (~2 с)
 - [behindForwarder.md](adguard/behindForwarder.md) — за dnsmasq AdGuard пишет все запросы от адреса dnsmasq (`add-subnet`, `add-mac` не помогают); `ipset` — только Linux ipset, `trusted_proxies` — только DoH
 - [domainUpstreams.md](adguard/domainUpstreams.md) — `[/домен/]апстрим` покрывает поддомены, кэш отсчитывает TTL своего апстрима, `querylog` отдаёт клиента, время, апстрим и `cached`
 - [listFormats.md](adguard/listFormats.md) — `||домен^` покрывает домен с поддоменами, строка hosts — адрес и имена, `!` и `#` — комментарии: что читает `routing.lists`
@@ -40,7 +40,8 @@
   `trusted_host_interfaces` не спасает; нужен `gateway_mode_ipv4=nat-unprotected` плюс свой nft-drop
   прямого доступа к адресам шлюзов (репродукция на colima)
 - [bindMountRename.md](docker/bindMountRename.md) — `rename` поверх файлового bind-mount даёт EBUSY,
-  монтировать каталог; права временного файла после замены — через `write_like`
+  монтировать каталог; права временного файла после замены — через `write_like`; файл, заменённый
+  на хосте через `rename`, контейнер не видит — держит прежний, поэтому у шлюзов отпечаток файла
 - [engineOverhead.md](docker/engineOverhead.md) — сколько памяти стоит Docker: `dockerd` 87 МиБ, `containerd` 48 МиБ,
   ~10 МиБ shim на контейнер; Colima — VM поверх того же Docker, на Linux-коробке только добавит
 

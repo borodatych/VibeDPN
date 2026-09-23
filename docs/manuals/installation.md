@@ -160,7 +160,7 @@ sudo vibedpn wifi show
 vibedpn up          # поднять сервисы роли; .env пересобирается из config.yaml
 vibedpn status      # роль, режим, аплинки, контейнеры с health
 vibedpn logs core -f
-vibedpn up          # после правки config.yaml руками: пересоздаёт только то, что изменилось
+vibedpn up          # после правки config.yaml руками: пересоздаёт только то, что изменилось (кроме routing и devices — см. configSpec.md)
 vibedpn restart     # перезапустить всё целиком
 vibedpn down        # погасить всё, включая контейнеры неактивных профилей
 ```

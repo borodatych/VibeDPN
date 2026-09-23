@@ -57,6 +57,10 @@ https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/filtering/rew
 API принимает Basic-авторизацию (`userFromRequestBasicAuth`, `internal/home/authhttp.go`), но пароль владельца у ядра только в bcrypt.
 Поэтому ядро держит в `users` своего пользователя `vibedpn-core` с bcrypt пароля из `secrets/adguard-core-password`; хеш переписывается, только когда пароль перестал совпадать, иначе каждый старт ядра менял бы файл новой солью.
 AdGuard не ответил — роутер уже применён, ответ `adguard: pending`: файл с тем же значением ядро пишет при своём старте.
+Живое переключение `full` → `off` рвёт соединения DoH, которые AdGuard открыл через выход: в `full` его пакеты (uid 7753) метит цепочка `dns_uplink`, после переключения они уходят напрямую с другим адресом.
+Замер на стенде `router.sh` 2026-09-23: сразу после `vibedpn mode off` запрос AAAA остался без ответа, в журнале AdGuard — `exchange failed upstream=https://dns.cloudflare.com:443/dns-query … read: connection reset by peer`; через 2 с AdGuard открыл новое соединение, и ответ пришёл.
+Раньше стенд этого не видел: перед шагом стоял `vibedpn restart`, и AdGuard стартовал без старых соединений.
+`disable_ipv6` меняется без перезапуска DNS-сервера, а смена апстримов идёт через `setConfigRestartable` и перезапускает его — так можно было бы сбросить соединения при смене пути; не сделано.
 **Источники:** https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/dnsforward/http.go ,
 https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/home/authhttp.go ,
 https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/openapi/openapi.yaml .
