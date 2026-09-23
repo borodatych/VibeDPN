@@ -6,6 +6,7 @@ Pure parts (argv building, precondition checks, ``ps`` parsing) are unit-tested;
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -21,16 +22,19 @@ from vibedpn.bootstrap import (
     PUBLIC_FILE_MODE,
     SECRET_FILE_MODE,
     SECRETS_DIR,
+    WG_CLIENT_CONF,
     XRAY_LINK_FILE,
     checkout_image_tag,
     give_to_invoker,
     preserved_env,
+    read_env,
     render_env,
     required_secrets,
     secrets_present,
+    wg_uplink_file,
     write_file,
 )
-from vibedpn.config import Config, ConfigError, Profile, load_config
+from vibedpn.config import DIGEST_LENGTH, Config, ConfigError, Profile, Role, load_config
 from vibedpn.engine.router import country_uplinks, wg_uplinks
 from vibedpn.engine.xray import XRAY_UID, XrayError, config_from_link
 
@@ -46,6 +50,15 @@ TOR_BRIDGES_FILE = "bridges"
 # carries the credentials of the share link, so it is written with the mode of a secret.
 XRAY_CONFIG_DIR = "data/xray/config"
 XRAY_CONFIG_FILE = "config.json"
+# Fingerprints in .env of the files a gateway reads at start that config.yaml does not describe:
+# the configuration rendered from the share link of uplink xray, and the WireGuard peer files.
+# Compose recreates a service only when its definition changes, and a peer file is bind-mounted on
+# its own, so a new one written by rename never reaches the running container (knowledge
+# docker/bindMountRename.md).
+DIGEST_XRAY = "VIBEDPN_DIGEST_XRAY"
+DIGEST_WG_CLIENT = "VIBEDPN_DIGEST_WG_CLIENT"
+# not VIBEDPN_DIGEST_WG_<NAME>: an exit named `server` would take the fingerprint of wg-server
+WG_UPLINK_DIGEST_PREFIX = "VIBEDPN_DIGEST_WG_UPLINK_"
 DEFAULT_LOG_TAIL = 100
 # the images this host keeps, named the way `compose config` names them
 IMAGE_LISTING = ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
@@ -132,12 +145,53 @@ def engine_too_old(version: str) -> bool:
     return tuple(int(part) for part in match.groups()) < MIN_DOCKER_ENGINE
 
 
+def wg_uplink_digest(name: str) -> str:
+    """The .env variable of a named exit's peer file; WG_UPLINK_NAME has no '_', so none collide."""
+    return WG_UPLINK_DIGEST_PREFIX + name.upper().replace("-", "_")
+
+
+def file_digest(path: Path) -> str | None:
+    """The fingerprint of a file's bytes: empty when there is no file, ``None`` when this user
+    cannot read it — a secret, and `vibedpn up` without sudo."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:DIGEST_LENGTH]
+    except FileNotFoundError:
+        return ""
+    except PermissionError:
+        return None
+
+
+def file_digests(box_dir: Path, config: Config) -> dict[str, str | None]:
+    """The files the gateways this configuration runs read at start, by their .env variable."""
+    files: dict[str, Path] = {}
+    if config.upstreams.xray.enabled:
+        files[DIGEST_XRAY] = box_dir / XRAY_CONFIG_DIR / XRAY_CONFIG_FILE
+    if config.role is Role.CLIENT:
+        files[DIGEST_WG_CLIENT] = box_dir / SECRETS_DIR / WG_CLIENT_CONF
+    for name, uplink in sorted(config.upstreams.wg.items()):
+        if uplink.enabled:
+            files[wg_uplink_digest(name)] = box_dir / SECRETS_DIR / wg_uplink_file(name)
+    return {variable: file_digest(path) for variable, path in files.items()}
+
+
+def settled_digests(current: dict[str, str | None], previous: dict[str, str]) -> dict[str, str]:
+    """The fingerprints .env keeps: a file this user cannot read keeps the one it had, because
+    `up` without sudo cannot tell whether it changed — the sudo commands that replace such a file
+    refresh .env themselves."""
+    return {
+        variable: digest if digest is not None else previous.get(variable, "")
+        for variable, digest in current.items()
+    }
+
+
 def refresh_env(box_dir: Path, config: Config) -> Path:
-    """Re-derive ``.env`` from ``config.yaml`` so hand edits to the config take effect."""
+    """Re-derive ``.env`` from ``config.yaml`` so hand edits to the config take effect, together
+    with the fingerprints of the files the gateways read at start."""
     env_path = box_dir / ENV_FILE
     preserved = preserved_env(env_path, checkout_image_tag(box_dir))
+    files = settled_digests(file_digests(box_dir, config), read_env(env_path))
     try:
-        write_file(env_path, render_env(config, preserved), PUBLIC_FILE_MODE)
+        write_file(env_path, render_env(config, preserved, files), PUBLIC_FILE_MODE)
         give_to_invoker(env_path)
     except OSError as exc:
         raise ComposeError(f"cannot write {env_path}: {exc.strerror}; run with sudo?") from exc
@@ -214,13 +268,16 @@ def render_wg_uplinks(config: Config) -> str:
             "      service: wg-client",
             "    profiles:",
             f"      - {Profile.WG_UPLINK.value}",
+            # the fingerprint of its own peer file in place of the one of wg-client (file_digests)
+            "    environment:",
+            f"      VIBEDPN_CONFIG_DIGEST: ${{{wg_uplink_digest(name)}:-}}",
             "    networks:",
             "      upstreams:",
             f"        ipv4_address: {uplink.gateway}",
             "    volumes:",
             # The same target as the base service, so this mount replaces it rather than adding one
             "      - type: bind",
-            f"        source: ./secrets/wg-{name}.conf",
+            f"        source: ./{SECRETS_DIR}/{wg_uplink_file(name)}",
             "        target: /etc/wireguard/wg0.conf",
             "        read_only: true",
             "        bind:",

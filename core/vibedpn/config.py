@@ -45,14 +45,15 @@ INTERFACE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")  # IFNAMSIZ is 16 with
 # wg-<name> and the routing key wg-<name>, so it stays within what all three accept.
 WG_UPLINK_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
 WG_KEY_PREFIX = "wg-"
-# Fingerprints of config.yaml sections in .env, one per service that reads files core renders at
-# start (Config.config_digests). Short: they only have to change when their sections change.
+# Fingerprints of config.yaml sections in .env, one per service that reads at start what those
+# sections become (Config.config_digests). Short: they only have to change when the sections do.
 DIGEST_CORE = "VIBEDPN_DIGEST_CORE"
 DIGEST_HOSTAPD = "VIBEDPN_DIGEST_HOSTAPD"
 DIGEST_DNSMASQ = "VIBEDPN_DIGEST_DNSMASQ"
 DIGEST_ADGUARD = "VIBEDPN_DIGEST_ADGUARD"
 DIGEST_WG_SERVER = "VIBEDPN_DIGEST_WG_SERVER"
 DIGEST_ACCESS = "VIBEDPN_DIGEST_ACCESS"
+DIGEST_TOR = "VIBEDPN_DIGEST_TOR"
 DIGEST_SERVICES = {
     DIGEST_CORE: "core",
     DIGEST_HOSTAPD: "hostapd",
@@ -60,6 +61,7 @@ DIGEST_SERVICES = {
     DIGEST_ADGUARD: "adguard",
     DIGEST_WG_SERVER: "wg-server",
     DIGEST_ACCESS: "access",
+    DIGEST_TOR: "tor",
 }
 DIGEST_LENGTH = 16
 
@@ -1142,7 +1144,8 @@ class Config(StrictModel):
         Routing, devices, rules and lists are applied live through core and are not part of it.
         Anything else core reads belongs in its fingerprint, even what it only puts into an answer
         (the address in the links): core keeps the config it started with, and a section the CLI
-        edits in the file reaches it through a restart alone.
+        edits in the file reaches it through a restart alone. tests/test_config_digests.py sorts
+        every field of config.yaml into one of these ways and fails on a field it does not know.
         """
         network = self.network.model_dump(mode="json") if self.network is not None else None
         lan = {key: value for key, value in network.items() if key != "wifi"} if network else None
@@ -1151,7 +1154,8 @@ class Config(StrictModel):
             if network
             else None
         )
-        parts: dict[str, object] = {
+        # the files core renders at its start for these services
+        rendered: dict[str, object] = {
             DIGEST_HOSTAPD: wifi,
             DIGEST_DNSMASQ: {"lan": lan, "dns": self.dns.enabled},
             DIGEST_ADGUARD: {
@@ -1177,15 +1181,33 @@ class Config(StrictModel):
                 else None
             ),
         }
-        parts[DIGEST_CORE] = {
-            **parts,
+        core = {
+            **rendered,
+            "role": self.role.value,
             "network": network,
             "firewall": self.firewall.model_dump(mode="json"),
             "ddns": self.ddns.model_dump(mode="json"),  # the watcher that calls it lives in core
             # core writes it into every link it hands out, and keeps the config it started with
             "access_address": self.access.address,
+            # the kill switch: nothing but an edit of the file changes it
+            "failopen": self.routing.failopen if self.routing is not None else None,
+            # the uplinks core routes and watches; the CLI turns them on and off in the file
+            "uplinks": {
+                **{upstream.value: self.upstreams.is_enabled(upstream) for upstream in Upstream},
+                "wg": {name: uplink.enabled for name, uplink in self.upstreams.wg.items()},
+            },
+            # what the firewall of a VPS opens, and the node page core serves
+            "provider": {"enabled": self.provider.enabled, "udp_ports": self.provider.udp_ports},
+            "ui_port": self.ui.port,
+            "api": self.api.model_dump(mode="json"),
         }
-        return {name: config_digest(payload) for name, payload in parts.items()}
+        digests = {name: config_digest(payload) for name, payload in rendered.items()}
+        # the bridges tor reads at start; the host writes them, core does not read them
+        digests[DIGEST_TOR] = config_digest(
+            self.upstreams.tor.bridges if self.upstreams.tor.enabled else None
+        )
+        digests[DIGEST_CORE] = config_digest(core)
+        return digests
 
     def digest_services(self) -> set[str]:
         """The services with a fingerprint that this box actually runs: core always, the others by
@@ -1197,6 +1219,7 @@ class Config(StrictModel):
             "adguard": Profile.DNS,
             "wg-server": Profile.WG_SERVER,
             "access": Profile.ACCESS,
+            "tor": Profile.TOR,
         }
         return {"core"} | {
             service for service, profile in by_profile.items() if profile in profiles

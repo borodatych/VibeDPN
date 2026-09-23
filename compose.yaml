@@ -296,6 +296,10 @@ services:
   # only, MASQUERADE, TCP MSS clamping and the kill switch in nftables (images/wg/entrypoint.sh).
   wg-client:
     image: ghcr.io/borodatych/vibedpn-wg:${VIBEDPN_TAG:-latest}
+    environment:
+      # The peer file this gateway reads at start (compose.file_digests): a new one recreates it at
+      # `vibedpn up`. The named exits of compose.wg.yaml override it with the digests of their own.
+      VIBEDPN_CONFIG_DIGEST: ${VIBEDPN_DIGEST_WG_CLIENT:-}
     build:
       context: ./images/wg
     profiles:
@@ -364,6 +368,10 @@ services:
   # TransPort of tor, DNS to its DNSPort, everything else dropped (images/tor/entrypoint.sh).
   tor:
     image: ghcr.io/borodatych/vibedpn-tor:${VIBEDPN_TAG:-latest}
+    environment:
+      # The config.yaml sections this service's start-time files come from
+      # (Config.config_digests): a change recreates it at `vibedpn up`, and nothing else.
+      VIBEDPN_CONFIG_DIGEST: ${VIBEDPN_DIGEST_TOR:-}
     build:
       context: ./images/tor
     profiles:
@@ -396,6 +404,10 @@ services:
   # container only xray itself may speak (images/xray/entrypoint.sh).
   xray:
     image: ghcr.io/borodatych/vibedpn-xray:${VIBEDPN_TAG:-latest}
+    environment:
+      # The configuration rendered from the share link (compose.file_digests): the gateway reads it
+      # only at start, so a new link recreates it at `vibedpn up`.
+      VIBEDPN_CONFIG_DIGEST: ${VIBEDPN_DIGEST_XRAY:-}
     build:
       context: ./images/xray
     profiles:

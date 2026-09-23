@@ -54,6 +54,7 @@ from vibedpn.bootstrap import (
     read_env,
     read_peer_config,
     set_panel_password,
+    wg_uplink_file,
     write_box,
 )
 from vibedpn.compose import (
@@ -443,11 +444,12 @@ def _prepare(box_dir: Path, *, refresh: bool) -> Config:
             for created in ensure_country_secrets(box_dir, config):
                 typer.echo(f"created {created} for the consumer of a new exit country")
             check_secrets(box_dir, config)
-            refresh_env(box_dir, config)
             refresh_countries(box_dir, config)
             refresh_wg_uplinks(box_dir, config)
             refresh_tor_bridges(box_dir, config)
             refresh_xray_config(box_dir, config)
+            # last: .env carries the fingerprints of the files rendered above
+            refresh_env(box_dir, config)
     except ComposeError as exc:
         raise _fail(str(exc)) from None
     return config
@@ -854,10 +856,19 @@ uplink_app = typer.Typer(
 app.add_typer(uplink_app, name="uplink")
 
 
+def _refresh_file_digests(box_dir: Path, config: Config) -> None:
+    """After replacing a file a gateway reads: this command runs with sudo and can read it, while
+    a later `vibedpn up` without sudo cannot, and would keep the fingerprint of the old one."""
+    try:
+        refresh_env(box_dir, config)
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+
+
 def _wg_conf_path(box_dir: Path, name: str) -> Path:
     if not WG_UPLINK_NAME.fullmatch(name):
         raise _fail(f"{name!r} is not a usable name: lowercase letters, digits and '-', up to 24")
-    return box_dir / SECRETS_DIR / f"wg-{name}.conf"
+    return box_dir / SECRETS_DIR / wg_uplink_file(name)
 
 
 @uplink_app.command("add")
@@ -878,9 +889,10 @@ def uplink_add(
     except OSError as exc:
         raise _fail(f"cannot write {target}: {exc.strerror}; run with sudo?") from None
     try:
-        set_wg_uplink(box_dir / CONFIG_FILE, name)
+        config, _changed = set_wg_uplink(box_dir / CONFIG_FILE, name)
     except ConfigEditError as exc:
         raise _fail(str(exc)) from None
+    _refresh_file_digests(box_dir, config)
     typer.echo(f"uplink wg-{name}: {target} saved; `vibedpn up`, then `vibedpn upstream wg-{name}`")
 
 
@@ -911,7 +923,7 @@ def uplink_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     for name in sorted(config.upstreams.wg):
         uplink = config.upstreams.wg[name]
         state = "enabled" if uplink.enabled else "disabled"
-        path = box_dir / SECRETS_DIR / f"wg-{name}.conf"
+        path = box_dir / SECRETS_DIR / wg_uplink_file(name)
         file_state = "file in place" if path.is_file() else f"NO FILE at {path}"
         typer.echo(f"wg-{name}  {state}  ({file_state})")
 
@@ -953,7 +965,12 @@ def xray_enable(
         write_private(target, link.strip() + "\n")
     except OSError as exc:
         raise _fail(f"cannot write {target}: {exc.strerror}; run with sudo?") from None
-    _set_xray(box_dir, True)
+    config = _set_xray(box_dir, True)
+    try:
+        refresh_xray_config(box_dir, config)
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+    _refresh_file_digests(box_dir, config)
     typer.echo(f"uplink xray enabled: {server.endpoint}, {server.security}; `vibedpn up`, then:")
     typer.echo(
         "  vibedpn rule add <domain> xray   (smart mode), or vibedpn upstream xray (full mode)"

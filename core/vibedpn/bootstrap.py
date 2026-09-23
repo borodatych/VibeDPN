@@ -12,7 +12,7 @@ import re
 import secrets as secrets_module
 import shutil
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -380,12 +380,27 @@ def read_env(env_path: Path) -> dict[str, str]:
     return values
 
 
-def render_env(config: Config, preserved: dict[str, str]) -> str:
+def render_env(
+    config: Config, preserved: dict[str, str], files: Mapping[str, str] | None = None
+) -> str:
+    """``.env`` of the box; ``files`` are the fingerprints of the files the gateways read at start
+    (compose.file_digests), which `init` leaves to the first `up`."""
+    file_lines = (
+        [
+            "",
+            "# Fingerprints of the files the gateways read at start: a new share link or peer file"
+            " recreates its gateway.",
+            *(f"{key}={value}" for key, value in files.items()),
+        ]
+        if files
+        else []
+    )
     lines = [
         "# VibeDPN — written by `vibedpn init` from config.yaml."
         " Edit config.yaml, then `vibedpn up`.",
         "",
         *(f"{key}={value}" for key, value in config.env_vars().items()),
+        *file_lines,
         "",
         "# Image tag of ghcr.io/borodatych/vibedpn-{core,wg,ui}; `vibedpn update` moves it."
         " MYST_TAG / ADGUARD_TAG override the pins in compose.yaml.",
@@ -564,11 +579,18 @@ def country_passphrase_file(country: str) -> str:
     return COUNTRY_PASSPHRASE_TEMPLATE.format(country=country.lower())
 
 
+def wg_uplink_file(name: str) -> str:
+    """The peer file of a named WireGuard exit under ``secrets/``."""
+    return f"wg-{name}.conf"
+
+
 def wg_uplink_secrets(config: Config) -> list[str]:
     """The peer file of every named WireGuard exit; the owner supplies these, nothing generates
     them — a configuration file of a provider is the whole uplink (decision 23)."""
     return [
-        f"wg-{name}.conf" for name, uplink in sorted(config.upstreams.wg.items()) if uplink.enabled
+        wg_uplink_file(name)
+        for name, uplink in sorted(config.upstreams.wg.items())
+        if uplink.enabled
     ]
 
 

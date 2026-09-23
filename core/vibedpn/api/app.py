@@ -76,6 +76,7 @@ from vibedpn.bootstrap import (
     BootstrapError,
     check_peer_text,
     network_for,
+    wg_uplink_file,
 )
 from vibedpn.config import (
     WG_UPLINK_NAME,
@@ -501,7 +502,7 @@ def _add_wg_uplink_routes(
                 WgUplinkView(
                     name=name,
                     enabled=uplink.enabled,
-                    has_file=(secrets / f"wg-{name}.conf").is_file(),
+                    has_file=(secrets / wg_uplink_file(name)).is_file(),
                 )
                 for name, uplink in sorted(box.upstreams.wg.items())
             ],
@@ -522,7 +523,7 @@ def _add_wg_uplink_routes(
             text = check_peer_text(request.config, "the file")
         except BootstrapError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        target = secrets / f"wg-{name}.conf"
+        target = secrets / wg_uplink_file(name)
         existed = target.exists()
         write_private(target, text)
         try:
@@ -540,7 +541,7 @@ def _add_wg_uplink_routes(
         checked = checked_name(name)
         _run_edit(box_state, lambda path: remove_wg_uplink(path, checked))
         # the private key of an exit the box no longer has does not stay on it
-        (secrets / f"wg-{checked}.conf").unlink(missing_ok=True)
+        (secrets / wg_uplink_file(checked)).unlink(missing_ok=True)
         ask_host(data, f"WireGuard exit {checked} removed")
         return view()
 
