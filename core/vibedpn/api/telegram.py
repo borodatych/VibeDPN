@@ -20,7 +20,6 @@ import sqlite3
 import sys
 import threading
 import time
-import traceback
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import closing, contextmanager
@@ -28,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from vibedpn.api.background import failure, supervised
 from vibedpn.api.traffic import ACCESS_TRAFFIC_DIR
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.atomic import write_private
@@ -139,13 +139,6 @@ def _log(message: str) -> None:
     sys.stderr.write(f"vibedpn-core: telegram: {message}\n")
 
 
-def _failure(exc: BaseException) -> str:
-    """An unexpected exception as the log may show it: the class and where it was raised."""
-    frames = traceback.extract_tb(exc.__traceback__)
-    where = f" at {Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else ""
-    return f"{exc.__class__.__name__}{where}"
-
-
 class TelegramBot:
     """The bot of this box: its secrets, its state and the loop that keeps both."""
 
@@ -183,9 +176,12 @@ class TelegramBot:
         self._saved_text = ""
         self._offer: LinkOffer | None = None
         self._listener: asyncio.Task[None] | None = None
-        self._was_active = False
+        self._was_active = self._active(current())
         self._looked_at = float("-inf")
         self._logged = ""
+        # Once per start of core, not per start of the loop: the loop starts again after a failure,
+        # and its pause is not the box being off.
+        wake(self._state, clock(), active=self._was_active)
 
     # --- what the request threads of the API ask -----------------------------------------------
 
@@ -258,10 +254,6 @@ class TelegramBot:
     # --- the loop ------------------------------------------------------------------------------
 
     async def run(self) -> None:
-        with self._lock:
-            active = self._active(self._current())
-            wake(self._state, self._clock(), active=active)
-            self._was_active = active
         try:
             while True:
                 await self._tick()
@@ -291,13 +283,14 @@ class TelegramBot:
 
     @contextmanager
     def _guard(self, stage: str) -> Iterator[None]:
-        """core starts its loops as tasks nobody awaits: an exception would stop the bot for good,
-        without a word. It goes to the log instead — its class and place, not its text, which could
-        quote a request, and a request carries the token."""
+        """A stage that raised must not take their turn from the stages after it: core would start
+        the whole loop again, and the same stage would fail first every time. The exception goes to
+        the log — its class and place, not its text, which could quote a request, and a request
+        carries the token."""
         try:
             yield
         except Exception as exc:
-            self._log_once(f"{stage} failed: {_failure(exc)}")
+            self._log_once(f"{stage} failed: {failure(exc)}")
 
     def _look(
         self, config: Config, now: float
@@ -436,12 +429,8 @@ class TelegramBot:
             if task is not None and not task.done():
                 task.cancel()
             return None
-        if task is not None and task.done() and not task.cancelled():
-            failed = task.exception()
-            if failed is not None:
-                self._log_once(f"listening failed: {_failure(failed)}")
         if task is None or task.done():
-            return asyncio.ensure_future(self._listen())
+            return asyncio.ensure_future(supervised("telegram link listener", self._listen))
         return task
 
     async def _listen(self) -> None:

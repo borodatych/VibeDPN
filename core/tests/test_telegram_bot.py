@@ -19,6 +19,7 @@ from typer.testing import CliRunner
 from vibedpn import cli
 from vibedpn.api import client as core_api
 from vibedpn.api.app import create_app
+from vibedpn.api.background import LONGEST_PAUSE_SECONDS
 from vibedpn.api.models import TelegramReportView, TelegramView
 from vibedpn.api.state import BoxState
 from vibedpn.api.telegram import LINK_SECONDS, TelegramBot
@@ -327,9 +328,8 @@ def test_the_weekly_report_comes_once_at_its_moment(tmp_path: Path) -> None:
 def test_a_stage_that_fails_leaves_the_others_their_turn_and_says_so(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """core starts the loop as a task nobody awaits: an exception must neither stop the bot nor
-    keep the alerts from going out, and its text — it could quote the token — stays out of the
-    log."""
+    """A stage that raises in every round must not keep the alerts from going out, and its
+    text — it could quote the token — stays out of the log."""
 
     def broken() -> ProviderStats:
         raise RuntimeError(f"the node quoted {TOKEN}")
@@ -349,6 +349,16 @@ def test_a_box_that_was_off_says_so_when_it_is_back(tmp_path: Path) -> None:
     box = Box(tmp_path, smart_home(), linked=True, state=BotState(heartbeat=START - 3600))
     box.run(15)
     assert box.texts() == ["The box is back: it was off for 1 h, 08:59 to 09:59."]
+
+
+def test_the_loop_started_again_does_not_say_the_box_was_off(tmp_path: Path) -> None:
+    """core starts a loop that raised again after a pause of up to five minutes; the box was on
+    all the while."""
+    box = Box(tmp_path, smart_home(), linked=True, state=BotState(heartbeat=START))
+    box.run(15)
+    box.clock.now += LONGEST_PAUSE_SECONDS
+    box.run(15)
+    assert box.texts() == []
 
 
 # --- the API ------------------------------------------------------------------------------------

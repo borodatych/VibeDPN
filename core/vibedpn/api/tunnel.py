@@ -19,7 +19,7 @@ import os
 import signal
 import socket
 import sys
-from collections.abc import Awaitable, Callable, Coroutine, Iterator, MutableMapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from ipaddress import IPv4Network, ip_address
@@ -28,6 +28,7 @@ from typing import Any
 import uvicorn
 from starlette.responses import JSONResponse
 
+from vibedpn.api.background import BackgroundLoop, supervised
 from vibedpn.api.discovery import watch_devices
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.config import Config
@@ -262,10 +263,10 @@ class _Server(uvicorn.Server):
 async def serve(
     application: ASGIApp,
     listeners: Listeners,
-    background: Sequence[Callable[[], Coroutine[Any, Any, None]]] = (),
+    background: Sequence[BackgroundLoop] = (),
 ) -> None:
-    """Serve every listener until SIGTERM or SIGINT stops them all together; ``background``
-    coroutines (the uplink watcher) run alongside and are cancelled with them."""
+    """Serve every listener until SIGTERM or SIGINT stops them all together; the ``background``
+    loops run alongside, each started again when it raises, and are cancelled with them."""
     servers: list[tuple[_Server, socket.socket]] = [
         (_Server(uvicorn.Config(application, log_level=LOG_LEVEL)), listeners.loopback_api)
     ]
@@ -291,7 +292,7 @@ async def serve(
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(signum, stop)
-    tasks = [asyncio.create_task(start()) for start in background]
+    tasks = [asyncio.create_task(supervised(item.name, item.start)) for item in background]
     try:
         await asyncio.gather(*(server.serve(sockets=[sock]) for server, sock in servers))
     finally:
@@ -309,7 +310,7 @@ def run_servers(
     *,
     watchers: UplinkWatchers | None = None,
     devices: DeviceStore | None = None,
-    extra: Sequence[Callable[[], Coroutine[Any, Any, None]]] = (),
+    extra: Sequence[BackgroundLoop] = (),
 ) -> None:
     try:
         listeners = open_listeners(config)
@@ -320,11 +321,13 @@ def run_servers(
         )
         raise SystemExit(os.EX_UNAVAILABLE) from None
     try:
-        background: list[Callable[[], Coroutine[Any, Any, None]]] = []
+        background: list[BackgroundLoop] = []
         if watchers is not None:
-            background.append(watchers.run)
+            background.append(BackgroundLoop("uplink watchers", watchers.run))
         if devices is not None:
-            background.append(partial(watch_devices, config, devices))
+            background.append(
+                BackgroundLoop("device discovery", partial(watch_devices, config, devices))
+            )
         background.extend(extra)
         asyncio.run(serve(application, listeners, background))
     finally:

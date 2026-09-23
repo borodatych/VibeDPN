@@ -5,7 +5,8 @@ import struct
 
 import pytest
 
-from vibedpn.api.uplink import watch_uplink
+from vibedpn.api import background
+from vibedpn.api.uplink import Report, UplinkState, UplinkWatchers, watch_uplink
 from vibedpn.config import Upstream
 from vibedpn.engine import probe
 from vibedpn.engine.router import UPLINKS, RouterError, Uplink
@@ -93,3 +94,54 @@ def test_watcher_retries_a_failed_route_change_and_treats_probe_errors_as_dead()
         ("vps", False),
         ("vps", True),
     ]
+
+
+def test_an_uplink_watcher_that_raises_is_started_again(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A dead watcher leaves the route of its gateway to nobody: a gateway that goes quiet later
+    would keep its route, and the LAN traffic would sink into it."""
+    monkeypatch.setattr(background, "FIRST_PAUSE_SECONDS", 0.0)
+    started: list[str] = []
+
+    async def watch(key: str, _uplink: Uplink, report: Report) -> None:
+        started.append(key)
+        if len(started) == 1:
+            raise RuntimeError("the first round fails")
+        report(UplinkState(True, 1.0))
+        await asyncio.Event().wait()
+
+    async def scenario() -> None:
+        watchers = UplinkWatchers({"vps": UPLINKS[Upstream.VPS]}, watch=watch)
+        runner = asyncio.ensure_future(watchers.run())
+        await asyncio.sleep(0.01)
+        assert watchers.watched() == ["vps"]
+        assert watchers.states()["vps"].alive
+        runner.cancel()
+        await asyncio.gather(runner, return_exceptions=True)
+
+    asyncio.run(scenario())
+    assert started == ["vps", "vps"]
+    log = capsys.readouterr().err
+    assert "vibedpn-core: uplink vps watcher failed: RuntimeError at test_uplink.py:" in log
+
+
+def test_watchers_started_again_start_every_watcher_anew() -> None:
+    """The supervisor starts ``run`` again after a failure: the watchers it cancelled on its way
+    out must not pass for running ones."""
+    started: list[str] = []
+
+    async def watch(key: str, _uplink: Uplink, _report: Report) -> None:
+        started.append(key)
+        await asyncio.Event().wait()
+
+    async def scenario() -> None:
+        watchers = UplinkWatchers({"vps": UPLINKS[Upstream.VPS]}, watch=watch)
+        for _ in range(2):
+            runner = asyncio.ensure_future(watchers.run())
+            await asyncio.sleep(0.01)
+            runner.cancel()
+            await asyncio.gather(runner, return_exceptions=True)
+
+    asyncio.run(scenario())
+    assert started == ["vps", "vps"]

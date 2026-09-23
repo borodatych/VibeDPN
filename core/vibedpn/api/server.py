@@ -8,15 +8,15 @@ node panel, on the tunnel address (``vibedpn.api.tunnel``).
 import os
 import sys
 from collections import deque
-from collections.abc import Callable, Coroutine, Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 from pathlib import Path
-from typing import Any
 
 import httpx
 from pydantic import ValidationError
 
 from vibedpn.api.app import create_app
+from vibedpn.api.background import BackgroundLoop
 from vibedpn.api.consumer import ConsumerStatus, consumer_round, watch_consumer
 from vibedpn.api.journal import Journal, fan_out, ignore_event, store_journal
 from vibedpn.api.lists import ListsStatus, watch_lists
@@ -197,21 +197,33 @@ def main() -> None:
             *_traffic_task(config, data_dir),
             *_access_traffic_task(config, secrets_dir, data_dir),
             *_ddns_task(config, box_state, secrets_dir, data_dir),
-            bot.run,
-            *([partial(serve_resolver, resolver)] if resolver is not None else []),
-            *([partial(watch_querylog, smart)] if smart is not None else []),
+            BackgroundLoop("telegram bot", bot.run),
+            *(
+                [BackgroundLoop("resolver", partial(serve_resolver, resolver))]
+                if resolver is not None
+                else []
+            ),
+            *(
+                [BackgroundLoop("smart query log", partial(watch_querylog, smart))]
+                if smart is not None
+                else []
+            ),
             *_list_task(box_state, resolver, lists, data_dir),
             # returns at once on a box without network.wifi
-            *([partial(watch_wifi, config, journal)] if events is not None else []),
+            *(
+                [BackgroundLoop("Wi-Fi journal", partial(watch_wifi, config, journal))]
+                if events is not None
+                else []
+            ),
         ],
     )
 
 
-def _traffic_task(config: Config, data_dir: Path) -> list[Callable[[], Coroutine[Any, Any, None]]]:
+def _traffic_task(config: Config, data_dir: Path) -> list[BackgroundLoop]:
     """Counting what the peers of a VPS use; a box without a tunnel server counts nobody."""
     if config.wg_server is None:
         return []
-    return [partial(watch_traffic, data_dir)]
+    return [BackgroundLoop("peer traffic counter", partial(watch_traffic, data_dir))]
 
 
 def _render_access(config: Config, secrets_dir: Path, access_dir: Path) -> None:
@@ -228,28 +240,24 @@ def _render_access(config: Config, secrets_dir: Path, access_dir: Path) -> None:
         )
 
 
-def _access_traffic_task(
-    config: Config, secrets_dir: Path, data_dir: Path
-) -> list[Callable[[], Coroutine[Any, Any, None]]]:
+def _access_traffic_task(config: Config, secrets_dir: Path, data_dir: Path) -> list[BackgroundLoop]:
     """Counting what the people of the access server use; a box without one counts nobody."""
     if not config.access.enabled:
         return []
-    return [
-        partial(
-            watch_traffic,
-            data_dir / ACCESS_TRAFFIC_DIR,
-            read=partial(access_samples, secrets_dir),
-        )
-    ]
+    count = partial(
+        watch_traffic, data_dir / ACCESS_TRAFFIC_DIR, read=partial(access_samples, secrets_dir)
+    )
+    return [BackgroundLoop("access traffic counter", count)]
 
 
 def _ddns_task(
     config: Config, box_state: BoxState, secrets_dir: Path, data_dir: Path
-) -> list[Callable[[], Coroutine[Any, Any, None]]]:
+) -> list[BackgroundLoop]:
     """The name that follows the public address; it reads the live config every round."""
     if not config.ddns.enabled:
         return []
-    return [partial(watch_ddns, lambda: box_state.config, secrets_dir, data_dir / DDNS_STATE_FILE)]
+    watch = partial(watch_ddns, lambda: box_state.config, secrets_dir, data_dir / DDNS_STATE_FILE)
+    return [BackgroundLoop("ddns", watch)]
 
 
 def _telegram_bot(
@@ -282,23 +290,25 @@ def _telegram_bot(
 
 def _consumer_task(
     config: Config, box_state: BoxState, consumer: ConsumerStatus, secrets_dir: Path
-) -> list[Callable[[], Coroutine[Any, Any, None]]]:
+) -> list[BackgroundLoop]:
     """The dpn consumer round on a box with a LAN; it idles while uplink dpn is off."""
     if config.network is None:
         return []
     step = consumer_round(secrets_dir)
-    return [partial(watch_consumer, lambda: box_state.config, consumer, step)]
+    watch = partial(watch_consumer, lambda: box_state.config, consumer, step)
+    return [BackgroundLoop("dpn consumer", watch)]
 
 
 def _list_task(
     box_state: BoxState, resolver: Resolver | None, lists: ListsStatus, data_dir: Path
-) -> list[Callable[[], Coroutine[Any, Any, None]]]:
+) -> list[BackgroundLoop]:
     """The round of routing.lists, on a box whose resolver serves smart."""
     if resolver is None:
         return []
     cache = ListCache(data_dir / LISTS_DIR)
     fetch = http_fetch(list_client())
-    return [partial(watch_lists, lambda: box_state.config, resolver, cache, fetch, lists)]
+    watch = partial(watch_lists, lambda: box_state.config, resolver, cache, fetch, lists)
+    return [BackgroundLoop("domain lists", watch)]
 
 
 def _report(what: str, written: bool | None) -> None:

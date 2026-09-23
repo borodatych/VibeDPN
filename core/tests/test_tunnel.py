@@ -12,7 +12,9 @@ from pathlib import Path
 import httpx
 import pytest
 
+from vibedpn.api import background
 from vibedpn.api.app import create_app
+from vibedpn.api.background import BackgroundLoop
 from vibedpn.api.tunnel import (
     TUNNEL_READ_PATHS,
     Listeners,
@@ -323,6 +325,40 @@ def test_serve_answers_both_ports_and_stops_on_sigterm(tmp_path: Path) -> None:
         listeners.close()
 
     asyncio.run(scenario())
+
+
+def test_serve_starts_a_loop_that_raised_again_and_leaves_a_finished_one_be(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Nobody awaits the background loops until shutdown: without the supervisor the first one
+    would stay dead, and silent, for as long as core runs."""
+    monkeypatch.setattr(background, "FIRST_PAUSE_SECONDS", 0.0)
+    starts = {"flaky": 0, "finished": 0}
+
+    async def flaky() -> None:
+        starts["flaky"] += 1
+        if starts["flaky"] == 1:
+            raise RuntimeError("the first run fails")
+        await asyncio.Event().wait()
+
+    async def finished() -> None:  # like the Wi-Fi journal of a box without Wi-Fi
+        starts["finished"] += 1
+
+    async def scenario() -> None:
+        listeners = Listeners(loopback_api=listen_socket("127.0.0.1", 0, freebind=False))
+        loops = [BackgroundLoop("flaky", flaky), BackgroundLoop("finished", finished)]
+        serving = asyncio.create_task(serve(create_app(), listeners, loops))
+        for _ in range(100):
+            if starts["flaky"] == 2:
+                break
+            await asyncio.sleep(0.01)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(serving, timeout=10)
+        listeners.close()
+
+    asyncio.run(scenario())
+    assert starts == {"flaky": 2, "finished": 1}
+    assert "vibedpn-core: flaky failed: RuntimeError at test_tunnel.py:" in capsys.readouterr().err
 
 
 def test_a_taken_port_is_one_line_at_start(capsys: pytest.CaptureFixture[str]) -> None:

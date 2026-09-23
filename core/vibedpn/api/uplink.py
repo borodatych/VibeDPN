@@ -14,7 +14,9 @@ import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from functools import partial
 
+from vibedpn.api.background import supervised
 from vibedpn.api.journal import Journal, ignore_event
 from vibedpn.engine.events import Event, EventAction, EventKind
 from vibedpn.engine.probe import ping
@@ -101,7 +103,8 @@ class UplinkWatchers:
     restart, and a key whose uplink changed (countries renumbered) gets a fresh watcher.
 
     ``run`` owns the tasks on the event loop; ``sync`` may be called from a request thread and
-    hands the new set over to the loop."""
+    hands the new set over to the loop. A watcher that raised starts again (``supervised``):
+    a dead one would leave the route of its gateway to nobody."""
 
     def __init__(
         self,
@@ -129,6 +132,9 @@ class UplinkWatchers:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            # a run started again after a failure must not take these for running watchers
+            self._tasks.clear()
+            self._states.clear()
 
     def _apply(self, uplinks: Mapping[str, Uplink]) -> None:
         for key in list(self._tasks):
@@ -137,7 +143,8 @@ class UplinkWatchers:
                 self._states.pop(key, None)
         for key, uplink in uplinks.items():
             if key not in self._tasks:
-                task = asyncio.ensure_future(self._watch(key, uplink, self._reporter(key)))
+                watch = partial(self._watch, key, uplink, self._reporter(key))
+                task = asyncio.ensure_future(supervised(f"uplink {key} watcher", watch))
                 self._tasks[key] = (uplink, task)
 
     def _reporter(self, key: str) -> Report:
