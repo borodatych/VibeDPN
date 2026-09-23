@@ -70,6 +70,10 @@
 
 - [updateAnswers.md](ddns/updateAnswers.md) — «нет» приходит и с кодом 200: DuckDNS `KO`, dyndns2 `badauth`/`nohost`/`!donator`…, dynv6 — 401; No-IP блокирует за частые `nochg`, поэтому зовём при смене адреса и раз в сутки; ipify без журналов; адрес обновления — секрет; сбой проверки адреса хранится отдельно от результата вызова (`address_error`), иначе он висит «отказом» до суток
 
+## telegram
+
+- [botApi.md](telegram/botApi.md) — Bot API: URL с токеном, ответ `ok`/`description`/`retry_after`, неверный токен — 401, неразборчивый — 404 (замер); `getUpdates` и `offset`, ссылка `?start=` (алфавит, 64 символа), сообщение в секунду на чат; httpx ставит `socket_options` после `connect` — метка выхода опаздывает, поэтому своё соединение на `http.client`; `SO_MARK` — `CAP_NET_ADMIN` или `CAP_NET_RAW`, имя только в Linux; подключение к найденному адресу с проверкой сертификата по имени (проверено на Telegram)
+
 ## xray
 
 - [realityServer.md](xray/realityServer.md) — сервер VLESS/REALITY своими силами на Xray 26.3.27: ключ — тот же X25519, что у WireGuard; `target` и `raw`; прикрытие `www.microsoft.com` не пускает никогда, `dl.google.com` — всегда, а `tls ping` этого не видит — REALITY набирает прикрытие на каждое соединение (исходник `tls.go`); отпечаток `randomized` ломает клиента; `adu`/`rmu` на ходу, им нужен порт, и они выходят с 0 даже при отказе; счётчики на человека через `/debug/vars`; закрыть людям петлю и частные сети; `libcap2-bin` тянет за собой `iproute2`; трафик сервера по uid и ответы людям мимо меток
@@ -133,6 +137,7 @@
   runtime ~205–283 МиБ плюс Postgres ~70 МиБ, Bun на Pi 4 исправлен в v1.3.9; вход паролем коробки через
   `password.verify` по `htpasswd`, `/api/core/*` за сессией, `hostname` Bun, cookie в LAN; подмена `x-forwarded-for` обходила
   лимит — адрес сокета; вход по имени коробки в `trustedOrigins`; константа `UI_VARIANT` вырезает код только прямо в ветке
+- [svgImageNamespace.md](frontend/svgImageNamespace.md) — SVG картинкой (`<img>`, data-URL) без `xmlns` не рисуется, а `segno.svg_inline` его не ставит: QR для картинки — `save(kind="svg", svgns=True)`
 
 ## python
 
