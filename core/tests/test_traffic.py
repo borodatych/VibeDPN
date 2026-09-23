@@ -4,7 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 
-from vibedpn.api.traffic import watch_traffic
+from vibedpn.api.traffic import samples_of, watch_traffic
 from vibedpn.engine.traffic import (
     Sample,
     advance,
@@ -93,10 +93,10 @@ def test_the_day_of_a_sample_is_utc() -> None:
 def test_the_watcher_adds_every_sample_and_keeps_going_after_a_bad_read(tmp_path: Path) -> None:
     """The watcher of core: it samples, it records, and a read it could not make is not the end of
     it — wg-server may be restarting, and the next sample carries what this one missed."""
-    dumps: list[dict[str, PeerLink] | None] = [
-        {KEY: PeerLink("203.0.113.7:1", 0, 1_000, 500)},
+    dumps: list[list[Sample] | None] = [
+        samples_of({KEY: PeerLink("203.0.113.7:1", 0, 1_000, 500)}),
         None,  # the interface could not be read this time
-        {KEY: PeerLink("203.0.113.7:1", 0, 1_500, 700)},
+        samples_of({KEY: PeerLink("203.0.113.7:1", 0, 1_500, 700)}),
     ]
     slept: list[float] = []
 

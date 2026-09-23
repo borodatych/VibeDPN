@@ -3,9 +3,10 @@
 core owns the key of the server and the list of people — ``secrets/access/server.json`` and
 ``secrets/access/people.json``, written only here. From them and ``config.yaml`` it renders what the
 server reads into its data directory: ``config.json`` (the whole Xray configuration, read at start),
-``people.tsv`` (the people, which the entrypoint applies through the API of Xray without a restart)
-and ``health.json`` (the client its health check connects to itself with). The server is not root,
-so that directory and its files belong to its uid and keep the mode of a secret.
+``people.tsv`` (the people, which the entrypoint applies through the API of Xray without a restart),
+``person.json`` (what the entrypoint fills with one person for ``xray api adu``) and ``health.json``
+(the client its health check connects to itself with). The server is not root, so that directory
+and its files belong to its uid and keep the mode of a secret.
 
 REALITY keys are X25519 — the curve of WireGuard — in base64url without padding, so core makes them
 itself. A share link is built here and read back by the client side (engine/xray.py): a link our own
@@ -42,7 +43,11 @@ PEOPLE_FILE = "people.json"
 # What the server reads, in its data directory (compose.yaml mounts it into the access service).
 CONFIG_FILE = "config.json"
 PEOPLE_TABLE_FILE = "people.tsv"
+PERSON_TEMPLATE_FILE = "person.json"
 HEALTH_FILE = "health.json"
+# The fields images/xray/entrypoint.sh replaces in person.json; names and ids never contain them.
+TEMPLATE_ID = "@ID@"
+TEMPLATE_EMAIL = "@EMAIL@"
 DIR_MODE = 0o700
 # The inbound of the people; images/xray/entrypoint.sh adds and removes them by this tag.
 INBOUND_TAG = "people"
@@ -289,6 +294,22 @@ def render_health(config: Config, keys: ServerKeys) -> str:
     return json.dumps(client, indent=2, ensure_ascii=False) + "\n"
 
 
+def render_person_template(config: Config) -> str:
+    """One person for ``xray api adu``: the API builds a whole inbound from it, so it needs the tag,
+    the protocol and the port of the real one (without a port it adds nobody and still exits 0)."""
+    inbound = {
+        "tag": INBOUND_TAG,
+        "protocol": "vless",
+        "listen": "0.0.0.0",
+        "port": config.access.port,
+        "settings": {
+            "clients": [{"id": TEMPLATE_ID, "email": TEMPLATE_EMAIL, "flow": FLOW}],
+            "decryption": "none",
+        },
+    }
+    return json.dumps({"inbounds": [inbound]}, indent=2) + "\n"
+
+
 def render_people_table(people: Sequence[Person]) -> str:
     """One person a line, ``name<TAB>id``, sorted: what the entrypoint compares with the table it
     applied last and turns into ``xray api adu`` and ``rmu``."""
@@ -461,6 +482,7 @@ def _render(
             os.chown(data_dir, owner, owner)
         write_private(data_dir / CONFIG_FILE, render_server(config, keys, people), owner=owner)
         write_private(data_dir / HEALTH_FILE, render_health(config, keys), owner=owner)
+        write_private(data_dir / PERSON_TEMPLATE_FILE, render_person_template(config), owner=owner)
         write_private(data_dir / PEOPLE_TABLE_FILE, render_people_table(people), owner=owner)
     except OSError as exc:
         raise AccessError(

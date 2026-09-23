@@ -183,6 +183,47 @@ def set_xray_uplink(path: Path, enabled: bool) -> tuple[Config, bool]:
     return _edit(path, mutate)
 
 
+def set_access(
+    path: Path,
+    *,
+    enabled: bool,
+    address: str | None = None,
+    port: int | None = None,
+    target: str | None = None,
+) -> tuple[Config, bool]:
+    """Turn the access server on or off and set what its links name; a field left ``None`` stays as
+    it is. Its key and its people are secrets and never enter config.yaml."""
+
+    def mutate(data: CommentedMap) -> None:
+        section = _section(data, "access", path)
+        section["enabled"] = enabled
+        for key, value in (("address", address), ("port", port), ("target", target)):
+            if value is not None:
+                section[key] = value
+
+    return _edit(path, mutate)
+
+
+def set_ddns(path: Path, enabled: bool) -> tuple[Config, bool]:
+    """Turn ddns on or off; the update URL carries a token and lives in ``secrets/``."""
+
+    def mutate(data: CommentedMap) -> None:
+        _section(data, "ddns", path)["enabled"] = enabled
+
+    return _edit(path, mutate)
+
+
+def _section(data: CommentedMap, name: str, path: Path) -> CommentedMap:
+    """A top-level section, added when a box set up before it existed has none."""
+    section = data.get(name)
+    if section is None:
+        section = CommentedMap()
+        data[name] = section
+    if not isinstance(section, CommentedMap):
+        raise ConfigEditError(f"{path}: {name} must be a mapping")
+    return section
+
+
 class WgUplinkNotFoundError(ConfigEditError):
     """``config.yaml`` has no named WireGuard exit by this name."""
 

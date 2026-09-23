@@ -21,18 +21,21 @@ from vibedpn.api.journal import Journal, ignore_event, store_journal
 from vibedpn.api.lists import ListsStatus, watch_lists
 from vibedpn.api.smart import DnsJournal, SmartLoop, watch_querylog
 from vibedpn.api.state import BoxState
-from vibedpn.api.traffic import watch_traffic
+from vibedpn.api.traffic import ACCESS_TRAFFIC_DIR, access_samples, watch_traffic
 from vibedpn.api.tunnel import run_servers
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.api.wifi import watch_wifi
 from vibedpn.config import Config, ConfigError, load_config
 from vibedpn.engine import hostapd
+from vibedpn.engine.access import AccessError, ensure_access
 from vibedpn.engine.adguard import (
     AdguardError,
     ensure_adguard,
     give_to_adguard,
     querylog_fetcher,
 )
+from vibedpn.engine.ddns import STATE_FILE as DDNS_STATE_FILE
+from vibedpn.engine.ddns import watch_ddns
 from vibedpn.engine.devices import DB_FILE, DeviceError, DeviceStore
 from vibedpn.engine.dnsmasq import DnsmasqError, core_dir, ensure_dnsmasq
 from vibedpn.engine.domainlists import LISTS_DIR, ListCache, http_fetch, list_client
@@ -95,6 +98,8 @@ ADGUARD_WORK_DIR_ENV = "VIBEDPN_ADGUARD_WORK"
 DEFAULT_ADGUARD_WORK_DIR = Path("/etc/vibedpn/adguard-work")  # ./data/adguard/work
 DATA_DIR_ENV = "VIBEDPN_DATA"
 DEFAULT_DATA_DIR = Path("/var/lib/vibedpn")  # compose.yaml mounts ./data/core
+ACCESS_DIR_ENV = "VIBEDPN_ACCESS_DIR"
+DEFAULT_ACCESS_DIR = Path("/etc/vibedpn/access")  # compose.yaml mounts ./data/access
 
 
 def main() -> None:
@@ -150,6 +155,8 @@ def main() -> None:
                 f"vibedpn-core: peer {moved.name} moved from {moved.old} to {moved.new};"
                 f" run `vibedpn peer export {moved.name}` for its home box\n"
             )
+    access_dir = Path(os.environ.get(ACCESS_DIR_ENV, DEFAULT_ACCESS_DIR))
+    _render_access(config, secrets_dir, access_dir)
     devices, events, journal = _lan_stores(config, data_dir)
     watchers = _watchers(config, uplinks, journal)
     box_state, resolver, smart, lists = _box_state(
@@ -167,6 +174,7 @@ def main() -> None:
         lists=lists,
         events=events,
         data_dir=data_dir,
+        access_dir=access_dir,
     )
     run_servers(
         config,
@@ -176,6 +184,8 @@ def main() -> None:
         extra=[
             *_consumer_task(config, box_state, consumer, secrets_dir),
             *_traffic_task(config, data_dir),
+            *_access_traffic_task(config, secrets_dir, data_dir),
+            *_ddns_task(config, box_state, secrets_dir, data_dir),
             *([partial(serve_resolver, resolver)] if resolver is not None else []),
             *([partial(watch_querylog, smart)] if smart is not None else []),
             *_list_task(box_state, resolver, lists, data_dir),
@@ -190,6 +200,44 @@ def _traffic_task(config: Config, data_dir: Path) -> list[Callable[[], Coroutine
     if config.wg_server is None:
         return []
     return [partial(watch_traffic, data_dir)]
+
+
+def _render_access(config: Config, secrets_dir: Path, access_dir: Path) -> None:
+    """Before the API, like the tunnel: compose starts the access server only once core is healthy,
+    so the files it reads are always the ones rendered from the current config."""
+    try:
+        files = ensure_access(config, secrets_dir, access_dir)
+    except AccessError as exc:
+        sys.stderr.write(f"vibedpn-core: cannot start: {exc}\n")
+        raise SystemExit(os.EX_CONFIG) from None
+    if files is not None:
+        sys.stderr.write(
+            f"vibedpn-core: access server config rendered, people in it: {files.people}\n"
+        )
+
+
+def _access_traffic_task(
+    config: Config, secrets_dir: Path, data_dir: Path
+) -> list[Callable[[], Coroutine[Any, Any, None]]]:
+    """Counting what the people of the access server use; a box without one counts nobody."""
+    if not config.access.enabled:
+        return []
+    return [
+        partial(
+            watch_traffic,
+            data_dir / ACCESS_TRAFFIC_DIR,
+            read=partial(access_samples, secrets_dir),
+        )
+    ]
+
+
+def _ddns_task(
+    config: Config, box_state: BoxState, secrets_dir: Path, data_dir: Path
+) -> list[Callable[[], Coroutine[Any, Any, None]]]:
+    """The name that follows the public address; it reads the live config every round."""
+    if not config.ddns.enabled:
+        return []
+    return [partial(watch_ddns, lambda: box_state.config, secrets_dir, data_dir / DDNS_STATE_FILE)]
 
 
 def _consumer_task(

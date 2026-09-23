@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import urllib.request
 from dataclasses import asdict, dataclass, field
@@ -53,7 +54,14 @@ from vibedpn.detect import (
     module_present,
     parse_interface,
 )
+from vibedpn.engine.access import API_PORT as ACCESS_API_PORT
+from vibedpn.engine.access import METRICS_PORT as ACCESS_METRICS_PORT
+from vibedpn.engine.apply import BOX_DATA_DIR
 from vibedpn.engine.consumer import CONNECTED, connection_status
+from vibedpn.engine.ddns import PUBLIC_IP_URL, PUBLIC_IP_URL_ENV, DdnsState
+from vibedpn.engine.ddns import STATE_FILE as DDNS_STATE_FILE
+from vibedpn.engine.ddns import URL_FILE as DDNS_URL_FILE
+from vibedpn.engine.ddns import load_state as load_ddns_state
 from vibedpn.engine.myst import (
     NAT_OPEN,
     NAT_PUNCHABLE,
@@ -99,6 +107,7 @@ SS_ARGV = ["ss", "-H", "-lntup"]
 API_HOST = "127.0.0.1"
 DNS_PORT = 53
 DNS_UPLINK_CHAIN = "dns_uplink"  # templates/lan-router.nft.j2
+ACCESS_CHAIN = "access_output"  # templates/lan-router.nft.j2
 DHCP_SERVER_PORT = 67
 CORE_PROCESS_NAMES = frozenset({"vibedpn-core"})  # comm of the console script in `ss -p`
 ANY_ADDRESSES = frozenset({"0.0.0.0", "*", "::", "[::]"})
@@ -106,10 +115,9 @@ WILDCARD = "*"
 RUNNING_STATE = "running"
 NEVER_STARTED_STATE = "created"
 SUDO_HINT = "sudo vibedpn doctor"
-# `doctor --network` asks a third party for the public address; the service logs nothing
-# (https://www.ipify.org/). The environment variable points a test stand at its own echo server.
-EXIT_IP_URL = "https://api.ipify.org"
-EXIT_IP_URL_ENV = "VIBEDPN_EXIT_IP_URL"
+# `doctor --network` asks for the public address where the ddns of core does (engine/ddns.py).
+EXIT_IP_URL = PUBLIC_IP_URL
+EXIT_IP_URL_ENV = PUBLIC_IP_URL_ENV
 EXIT_IP_TIMEOUT_SECONDS = 8
 # Tor builds a circuit before the first byte, and right after `vibedpn up` its gateway is still
 # reconnecting to the bridges. Measured on the box: a settled gateway answers in 1-2 s, a fresh one
@@ -180,6 +188,17 @@ class ExitFact:
 
 
 @dataclass(frozen=True)
+class AccessFacts:
+    """The access server and ddns, when they are on."""
+
+    chain: bool | None = None  # its chain in the router of a box with a LAN; None: not checked
+    resolved: list[str] | None = None  # what access.address resolves to; None: not asked
+    resolve_error: str = ""
+    ddns_url: bool | None = None  # secrets/ddns-url is there; None: root-only, cannot tell
+    ddns_state: DdnsState | None = None  # what core last wrote about ddns; None: nothing yet
+
+
+@dataclass(frozen=True)
 class DoctorFacts:
     config: Config | None
     config_error: str
@@ -225,6 +244,7 @@ class DoctorFacts:
     updates: UpdatesFact | None = None
     # `GET /connection` of the consumer node; "" when it was not asked or did not answer.
     dpn_connection: str = ""
+    access: AccessFacts = field(default_factory=AccessFacts)
 
 
 @dataclass(frozen=True)
@@ -330,6 +350,12 @@ def port_needs(config: Config) -> list[PortNeed]:
         needs.append(PortNeed("wg-server", "udp", WILDCARD, config.wg_server.listen_port))
     if config.network is not None and config.network.mode is NetworkMode.GATEWAY:
         needs.append(PortNeed("dnsmasq", "udp", WILDCARD, DHCP_SERVER_PORT))
+    if config.access.enabled:
+        needs += [
+            PortNeed("access", "tcp", WILDCARD, config.access.port),
+            PortNeed("access", "tcp", API_HOST, ACCESS_API_PORT),
+            PortNeed("access", "tcp", API_HOST, ACCESS_METRICS_PORT),
+        ]
     return needs
 
 
@@ -387,6 +413,7 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
     results.extend(_nat_results(facts))
     results.extend(_gateway_results(facts))
     results.extend(_wifi_results(facts))
+    results.extend(_access_results(facts))
     if facts.docker_error:
         results.append(CheckResult("docker", Verdict.FAIL, facts.docker_error))
     else:
@@ -1104,7 +1131,39 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         **_nat_facts(config, network=network),
         lan_address_set=_lan_address_set(config),
         lan_wireless=_lan_wireless(config),
+        access=_access_facts(box_dir, config, router_table, network=network),
     )
+
+
+def _access_facts(
+    box_dir: Path, config: Config | None, router_table: bool | None, *, network: bool
+) -> AccessFacts:
+    """What the checks of the access server and ddns read; nothing while neither is on."""
+    if config is None:
+        return AccessFacts()
+    chain: bool | None = None
+    resolved: list[str] | None = None
+    resolve_error = ""
+    if config.access.enabled:
+        if config.network is not None and router_table:
+            chain = _chain_present(ROUTER_TABLE, ACCESS_CHAIN)
+        address = config.access_address()
+        if network and address is not None:
+            try:
+                infos = socket.getaddrinfo(address, None, socket.AF_INET)
+                resolved = sorted({str(info[4][0]) for info in infos})
+            except OSError as exc:
+                resolved, resolve_error = [], str(exc)
+    ddns_url: bool | None = None
+    ddns_state: DdnsState | None = None
+    if config.ddns.enabled:
+        try:
+            ddns_url = (box_dir / SECRETS_DIR / DDNS_URL_FILE).is_file()
+        except PermissionError:
+            ddns_url = None
+        state_path = box_dir / BOX_DATA_DIR / DDNS_STATE_FILE
+        ddns_state = load_ddns_state(state_path) if state_path.exists() else None
+    return AccessFacts(chain, resolved, resolve_error, ddns_url, ddns_state)
 
 
 def tunnel_files(box_dir: Path) -> dict[str, FileFact]:
@@ -1520,6 +1579,92 @@ def _gateway_results(facts: DoctorFacts) -> list[CheckResult]:
     return [
         CheckResult("lan address", Verdict.OK, f"{network.lan_address} on {network.lan_interface}")
     ]
+
+
+def _access_results(facts: DoctorFacts) -> list[CheckResult]:
+    """The access server and ddns. The container's own health is a real connection through
+    REALITY (compose.yaml), and the services check reports it; here is what it cannot see."""
+    config = facts.config
+    if config is None:
+        return []
+    results: list[CheckResult] = []
+    if config.access.enabled:
+        results.append(_access_result(config, facts))
+        name = _access_name_result(config, facts)
+        if name is not None:
+            results.append(name)
+    if config.ddns.enabled:
+        results.append(_ddns_result(facts))
+    return results
+
+
+def _access_result(config: Config, facts: DoctorFacts) -> CheckResult:
+    served = (
+        f"links name {config.access_address()}:{config.access.port},"
+        f" cover site {config.access.target}"
+    )
+    if config.network is None:
+        return CheckResult("access", Verdict.OK, served)
+    if facts.access.chain is False:
+        return CheckResult(
+            "access",
+            Verdict.FAIL,
+            "the router has no access_output chain: people would leave the box around its rules",
+            "vibedpn restart",
+        )
+    if facts.access.chain is None:
+        return CheckResult(
+            "access", Verdict.WARN, f"{served}; cannot tell whether the router steers it", SUDO_HINT
+        )
+    return CheckResult("access", Verdict.OK, f"{served}; people are steered like a device")
+
+
+def _access_name_result(config: Config, facts: DoctorFacts) -> CheckResult | None:
+    """With --network: does the name in the links lead to this box right now?"""
+    if facts.access.resolved is None or facts.exits is None:
+        return None
+    here = next(
+        (item.address for item in facts.exits if item.name == DIRECT_EXIT and item.address), None
+    )
+    name = config.access_address()
+    if not facts.access.resolved:
+        reason = facts.access.resolve_error or "no address"
+        return CheckResult("access name", Verdict.FAIL, f"{name} does not resolve: {reason}")
+    if here is None:
+        return CheckResult(
+            "access name",
+            Verdict.WARN,
+            f"{name} is {', '.join(facts.access.resolved)}; the public address is unknown",
+        )
+    if here in facts.access.resolved:
+        return CheckResult("access name", Verdict.OK, f"{name} leads here ({here})")
+    return CheckResult(
+        "access name",
+        Verdict.WARN,
+        f"{name} is {', '.join(facts.access.resolved)}, this box is {here}:"
+        " ddns has not caught up yet, or the name is not this box's",
+        "vibedpn ddns show",
+    )
+
+
+def _ddns_result(facts: DoctorFacts) -> CheckResult:
+    if facts.access.ddns_url is False:
+        return CheckResult("ddns", Verdict.FAIL, "no update URL", "vibedpn ddns set")
+    state = facts.access.ddns_state
+    if state is None or state.last_at is None:
+        return CheckResult(
+            "ddns", Verdict.WARN, "core has not called the service yet", "vibedpn up"
+        )
+    if state.last_ok is False:
+        return CheckResult("ddns", Verdict.FAIL, state.message, "vibedpn ddns show")
+    if state.told_ip != state.public_ip:
+        return CheckResult(
+            "ddns",
+            Verdict.WARN,
+            f"the service has {state.told_ip}, the box is at {state.public_ip}",
+            "vibedpn ddns show",
+        )
+    return CheckResult("ddns", Verdict.OK, f"the service has {state.told_ip}, the box's address")
 
 
 def _lan_wireless(config: Config | None) -> bool | None:

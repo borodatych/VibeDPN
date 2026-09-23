@@ -27,6 +27,7 @@ from vibedpn.api.client import (
     fetch_provider_stats,
 )
 from vibedpn.api.models import (
+    AccessLink,
     DomainListUpdate,
     DomainListView,
     DomainRuleUpdate,
@@ -90,6 +91,8 @@ from vibedpn.config_edit import (
     ConfigEditError,
     WgUplinkNotFoundError,
     remove_wg_uplink,
+    set_access,
+    set_ddns,
     set_routing,
     set_tor_uplink,
     set_wg_uplink,
@@ -123,6 +126,10 @@ from vibedpn.engine.consumer import (
     register,
     registration_offer,
 )
+from vibedpn.engine.ddns import URL_FILE as DDNS_URL_FILE
+from vibedpn.engine.ddns import DdnsError
+from vibedpn.engine.ddns import host_of as ddns_host
+from vibedpn.engine.ddns import save_url as save_ddns_url
 from vibedpn.engine.hostapd import (
     PASSPHRASE_MAX,
     PASSPHRASE_MIN,
@@ -133,7 +140,13 @@ from vibedpn.engine.hostapd import (
 from vibedpn.engine.myst import MystError, TequilaClient, render_stats
 from vibedpn.engine.xray import XrayError, parse_share_link
 from vibedpn.event_view import client_line, event_line
-from vibedpn.tunnel_view import qr_code, render_peer_traffic, render_peers
+from vibedpn.tunnel_view import (
+    qr_code,
+    render_access_people,
+    render_ddns,
+    render_peer_traffic,
+    render_peers,
+)
 
 EXIT_USER_ERROR = 1
 T = TypeVar("T")
@@ -1360,6 +1373,7 @@ def _core_call(call: Callable[[], T]) -> T:
         DeviceRequestError,
         core_api.RuleRequestError,
         core_api.EventRequestError,
+        core_api.AccessRequestError,
     ) as exc:
         raise _fail(str(exc)) from None
 
@@ -1460,6 +1474,230 @@ def peer_rm(
         raise typer.Exit(EXIT_USER_ERROR)
     _core_call(lambda: core_api.remove_peer(config.api.port, name))
     typer.echo(f"removed peer {name}")
+
+
+access_app = typer.Typer(
+    help="The access server: links for your people, on any role (docs/manuals/accessServer.md).",
+    no_args_is_help=True,
+)
+app.add_typer(access_app, name="access")
+ddns_app = typer.Typer(
+    help="A DNS name that follows the public address of this box (docs/manuals/accessServer.md).",
+    no_args_is_help=True,
+)
+app.add_typer(ddns_app, name="ddns")
+
+PersonName = Annotated[
+    str, typer.Argument(help="Name of the person: 1-32 lowercase letters, digits and hyphens.")
+]
+LinkOut = Annotated[
+    Path | None,
+    typer.Option(
+        "--out",
+        dir_okay=False,
+        help="Write the link here (mode 600) instead of printing it with its QR code.",
+    ),
+]
+
+
+def _any_box(box_dir: Path) -> Config:
+    try:
+        return check_box(box_dir)
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+
+
+def _set_access(
+    box_dir: Path,
+    *,
+    enabled: bool,
+    address: str | None = None,
+    port: int | None = None,
+    target: str | None = None,
+) -> Config:
+    try:
+        config, _changed = set_access(
+            box_dir / CONFIG_FILE, enabled=enabled, address=address, port=port, target=target
+        )
+    except ConfigEditError as exc:
+        raise _fail(str(exc)) from None
+    return config
+
+
+@access_app.command("enable")
+def access_enable(
+    address: Annotated[
+        str | None,
+        typer.Option(
+            "--address",
+            help="The name your people dial: one that follows this box (vibedpn ddns set),"
+            " or the public address of a VPS.",
+        ),
+    ] = None,
+    port: Annotated[
+        int | None, typer.Option("--port", help="TCP port of the server; 443 unless it is taken.")
+    ] = None,
+    target: Annotated[
+        str | None,
+        typer.Option("--target", help="The cover site REALITY borrows its handshake from."),
+    ] = None,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Turn the access server on; `vibedpn up` starts it."""
+    config = _set_access(box_dir, enabled=True, address=address, port=port, target=target)
+    typer.echo(
+        f"access server enabled: {config.access_address()}:{config.access.port},"
+        f" cover site {config.access.target}"
+    )
+    if config.network is not None:
+        typer.echo(
+            f"forward TCP {config.access.port} on your router to this box"
+            " (docs/manuals/accessServer.md)"
+        )
+    typer.echo("`vibedpn up`, then: vibedpn access add <name>")
+
+
+@access_app.command("disable")
+def access_disable(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Turn the access server off; its people and their links are kept for the next time."""
+    _set_access(box_dir, enabled=False)
+    typer.echo("access server disabled; `vibedpn up` stops it")
+
+
+@access_app.command("list")
+def access_list(
+    since: Annotated[
+        str | None,
+        typer.Option("--since", help="Count from this day (YYYY-MM-DD); by default, all of it."),
+    ] = None,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """The server and its people with what they used; the totals survive restarts."""
+    config = _any_box(box_dir)
+    view = _core_call(lambda: core_api.get_access(config.api.port, since))
+    for line in render_access_people(view, since):
+        typer.echo(line)
+
+
+@access_app.command("add")
+def access_add(
+    name: PersonName,
+    out: LinkOut = None,
+    force: Force = False,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Add a person: their link and its QR code, applied to the running server at once."""
+    config = _any_box(box_dir)
+    link = _core_call(lambda: core_api.add_person(config.api.port, name))
+    _deliver_link(link, out, force=force)
+
+
+@access_app.command("link")
+def access_link(
+    name: PersonName,
+    out: LinkOut = None,
+    force: Force = False,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Print a person's link again with its QR code, or write it with --out."""
+    config = _any_box(box_dir)
+    link = _core_call(lambda: core_api.person_link(config.api.port, name))
+    _deliver_link(link, out, force=force)
+
+
+@access_app.command("rm")
+def access_rm(
+    name: PersonName,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask for confirmation.")] = False,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Remove a person: their link stops working at once, nobody else is disconnected."""
+    config = _any_box(box_dir)
+    if not yes and not typer.confirm(f"Remove {name}? Their link stops working"):
+        raise typer.Exit(EXIT_USER_ERROR)
+    _core_call(lambda: core_api.remove_person(config.api.port, name))
+    typer.echo(f"removed {name}")
+
+
+def _deliver_link(link: AccessLink, out: Path | None, *, force: bool) -> None:
+    """Print the link with its QR code, or write it to a file of its own."""
+    if out is None:
+        typer.echo(link.link)
+        typer.echo(qr_code(link.link), nl=False)
+        typer.echo(
+            f"Give {link.name} this link or code: a phone app with VLESS/REALITY imports it"
+            " (docs/manuals/accessServer.md)."
+        )
+        return
+    # The link lets its holder in: never write it through a link that points somewhere else, and
+    # never into an existing file whose mode would apply to it first.
+    if out.is_symlink():
+        raise _fail(f"{out} is a symlink; write the link to a plain path")
+    if out.exists() and not force:
+        raise _fail(f"{out} already exists; pass --force to overwrite it")
+    try:
+        write_private(out, link.link + "\n")
+    except OSError as exc:
+        raise _fail(f"cannot write {out}: {exc.strerror}") from None
+    typer.echo(f"wrote {out}: the link of {link.name}; it lets its holder in")
+
+
+@ddns_app.command("set")
+def ddns_set(
+    url_file: Annotated[
+        Path | None,
+        typer.Option("--url-file", help="File with the update URL; without it, asked here."),
+    ] = None,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Take the update URL of your DDNS service and turn ddns on; `vibedpn up` starts it.
+
+    The URL is never an argument: it carries a token, and an argument lands in the shell history
+    and in `ps` for every user of the box.
+    """
+    if url_file is not None:
+        try:
+            url = url_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise _fail(f"cannot read {url_file}: {exc.strerror}") from None
+    else:
+        url = typer.prompt("Update URL (https://…)", hide_input=True)
+    secrets = box_dir / SECRETS_DIR
+    try:
+        secrets.mkdir(mode=SECRET_DIR_MODE, exist_ok=True)
+        saved = save_ddns_url(secrets, url)
+    except DdnsError as exc:
+        raise _fail(str(exc)) from None
+    except OSError as exc:
+        raise _fail(
+            f"cannot write {secrets / DDNS_URL_FILE}: {exc.strerror}; run with sudo?"
+        ) from None
+    _set_ddns(box_dir, True)
+    typer.echo(f"ddns enabled: {ddns_host(saved)}; `vibedpn up`, then `vibedpn ddns show`")
+
+
+@ddns_app.command("show")
+def ddns_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Which service, the public address, and how the last call went — never the URL itself."""
+    config = _any_box(box_dir)
+    view = _core_call(lambda: core_api.get_ddns(config.api.port))
+    for line in render_ddns(view):
+        typer.echo(line)
+
+
+@ddns_app.command("off")
+def ddns_off(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Turn ddns off; the update URL is kept for the next `vibedpn ddns set`."""
+    _set_ddns(box_dir, False)
+    typer.echo("ddns disabled; `vibedpn up` stops it")
+
+
+def _set_ddns(box_dir: Path, enabled: bool) -> Config:
+    try:
+        config, _changed = set_ddns(box_dir / CONFIG_FILE, enabled)
+    except ConfigEditError as exc:
+        raise _fail(str(exc)) from None
+    return config
 
 
 def _lan_box(box_dir: Path) -> Config:

@@ -7,13 +7,18 @@ reader and writer through it keeps one place to change when the API moves behind
 
 from __future__ import annotations
 
+from typing import TypeVar
 from urllib.parse import quote
 
 import httpx
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from vibedpn.api.models import (
+    AccessLink,
+    AccessPersonCreate,
+    AccessView,
     BoxStatus,
+    DdnsView,
     DevicePolicyUpdate,
     DevicePolicyView,
     DeviceView,
@@ -42,6 +47,7 @@ CORE_API_HOST = "127.0.0.1"
 # Core may legitimately spend the whole node deadline before answering; wait past it.
 CORE_API_TIMEOUT_SECONDS = STATS_DEADLINE_SECONDS + 2.0
 VERSION_HINT = "CLI and core versions differ?"
+ModelT = TypeVar("ModelT", bound=BaseModel)
 PEER_LIST: TypeAdapter[list[PeerView]] = TypeAdapter(list[PeerView])
 TRAFFIC_LIST: TypeAdapter[list[PeerTraffic]] = TypeAdapter(list[PeerTraffic])
 DEVICE_LIST: TypeAdapter[list[DeviceView]] = TypeAdapter(list[DeviceView])
@@ -61,6 +67,11 @@ class StatsUnavailableError(RuntimeError):
 
 class PeerRequestError(RuntimeError):
     """``core`` refused or failed a peer request; the text is its ``detail``."""
+
+
+class AccessRequestError(RuntimeError):
+    """``core`` refused or failed a request about the access server or ddns; the text is its
+    ``detail``."""
 
 
 class DeviceRequestError(RuntimeError):
@@ -511,4 +522,59 @@ def list_wifi_clients(
     except (ValueError, ValidationError) as exc:
         raise EventRequestError(
             f"core answered something that is not a Wi-Fi client list ({VERSION_HINT})"
+        ) from exc
+
+
+def get_access(
+    port: int, since: str | None = None, transport: httpx.BaseTransport | None = None
+) -> AccessView:
+    path = "/access" + (f"?since={quote(since, safe='')}" if since else "")
+    response = _peer_request(
+        port, "GET", path, httpx.codes.OK, transport=transport, error=AccessRequestError
+    )
+    return _parse(AccessView, response, "access server")
+
+
+def add_person(port: int, name: str, transport: httpx.BaseTransport | None = None) -> AccessLink:
+    body = AccessPersonCreate(name=name).model_dump()
+    response = _peer_request(
+        port,
+        "POST",
+        "/access/people",
+        httpx.codes.CREATED,
+        body=body,
+        transport=transport,
+        error=AccessRequestError,
+    )
+    return _parse(AccessLink, response, "link")
+
+
+def person_link(port: int, name: str, transport: httpx.BaseTransport | None = None) -> AccessLink:
+    path = f"/access/people/{quote(name, safe='')}"
+    response = _peer_request(
+        port, "GET", path, httpx.codes.OK, transport=transport, error=AccessRequestError
+    )
+    return _parse(AccessLink, response, "link")
+
+
+def remove_person(port: int, name: str, transport: httpx.BaseTransport | None = None) -> None:
+    path = f"/access/people/{quote(name, safe='')}"
+    _peer_request(
+        port, "DELETE", path, httpx.codes.NO_CONTENT, transport=transport, error=AccessRequestError
+    )
+
+
+def get_ddns(port: int, transport: httpx.BaseTransport | None = None) -> DdnsView:
+    response = _peer_request(
+        port, "GET", "/ddns", httpx.codes.OK, transport=transport, error=AccessRequestError
+    )
+    return _parse(DdnsView, response, "ddns state")
+
+
+def _parse(model: type[ModelT], response: httpx.Response, what: str) -> ModelT:
+    try:
+        return model.model_validate(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise AccessRequestError(
+            f"core answered something that is not a {what} ({VERSION_HINT})"
         ) from exc

@@ -373,3 +373,68 @@ class XrayUplinkUpdate(BaseModel):
 class WgUplinksView(BaseModel):
     uplinks: list[WgUplinkView]
     apply: ApplyView
+
+
+class AccessPerson(BaseModel):
+    """A person of the access server as ``GET /access`` lists them, with what they used over the
+    period asked for — never with their id, which is what lets them in."""
+
+    name: str
+    created: datetime
+    rx_bytes: int  # what the server received from them: their upload
+    tx_bytes: int  # what it sent them: their download
+
+
+class AccessView(BaseModel):
+    """The access server as the panel shows it (docs/manuals/accessServer.md)."""
+
+    enabled: bool
+    address: str  # what the links name; empty while none is set
+    port: int
+    target: str  # the cover site
+    people: list[AccessPerson]
+    apply: ApplyView
+
+
+class AccessUpdate(BaseModel):
+    """``PUT /access``: turn the server on or off; a field left out stays as it is."""
+
+    enabled: bool
+    address: str | None = None
+    port: int | None = None
+    target: str | None = None
+
+
+class AccessPersonCreate(BaseModel):
+    name: str
+
+
+class AccessLink(BaseModel):
+    """The link of one person, from ``POST /access/people`` and ``GET /access/people/{name}``,
+    with the same link as an SVG QR code for the panel to show."""
+
+    name: str
+    link: str
+    qr_svg: str
+
+
+class DdnsView(BaseModel):
+    """ddns as the panel shows it: which service, never the update URL — it carries a token."""
+
+    enabled: bool
+    url_set: bool
+    host: str  # the service the URL points at
+    public_ip: str | None
+    told_ip: str | None  # what the service accepted last
+    last_ok: bool | None
+    last_at: float | None
+    message: str
+    apply: ApplyView
+
+
+class DdnsUpdate(BaseModel):
+    """``PUT /ddns``: turn it on or off, and set the update URL when one is given; the URL goes into
+    ``secrets/`` and never back out."""
+
+    enabled: bool
+    url: str | None = None

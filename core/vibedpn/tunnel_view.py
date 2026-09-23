@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import io
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
 import segno
 
-from vibedpn.api.models import PeerTraffic, PeerView
+from vibedpn.api.models import AccessView, DdnsView, PeerTraffic, PeerView
 from vibedpn.engine.myst import human_bytes
 
 SECONDS_PER_MINUTE = 60
@@ -95,3 +96,49 @@ def render_peer_traffic(totals: Sequence[PeerTraffic], since: str | None) -> lis
     period = f" since {since}" if since else ""
     everything = sum(item.rx_bytes + item.tx_bytes for item in totals)
     return [*lines, f"total{period}: {_bytes(everything)}"]
+
+
+PEOPLE_HEADER = ("PERSON", "SINCE", "RECEIVED", "SENT", "TOTAL")
+
+
+def render_access_people(view: AccessView, since: str | None) -> list[str]:
+    """The people of the access server with what they used, in the order they were added."""
+    state = "on" if view.enabled else "off"
+    address = view.address or "(no address)"
+    head = f"access server {state}: {address}:{view.port}, cover site {view.target}"
+    if not view.people:
+        return [head, "nobody yet: vibedpn access add <name>"]
+    rows = [
+        (
+            person.name,
+            person.created.strftime("%Y-%m-%d"),
+            _bytes(person.rx_bytes),
+            _bytes(person.tx_bytes),
+            _bytes(person.rx_bytes + person.tx_bytes),
+        )
+        for person in view.people
+    ]
+    table = [PEOPLE_HEADER, *rows]
+    widths = [max(len(row[column]) for row in table) for column in range(len(PEOPLE_HEADER))]
+    lines = [
+        "  ".join(cell.ljust(widths[column]) for column, cell in enumerate(row)).rstrip()
+        for row in table
+    ]
+    period = f" since {since}" if since else ""
+    everything = sum(person.rx_bytes + person.tx_bytes for person in view.people)
+    return [head, *lines, f"total{period}: {_bytes(everything)}"]
+
+
+def render_ddns(view: DdnsView) -> list[str]:
+    """ddns in a few lines: the service, the address, how the last call went — never the URL."""
+    state = "on" if view.enabled else "off"
+    service = view.host or "no update URL yet: vibedpn ddns set"
+    lines = [f"ddns {state}: {service}"]
+    if view.public_ip is not None:
+        told = view.told_ip or "nothing yet"
+        lines.append(f"public address {view.public_ip}, the service has {told}")
+    if view.last_at is not None:
+        result = "ok" if view.last_ok else "failed"
+        when = datetime.fromtimestamp(view.last_at, UTC).strftime("%Y-%m-%d %H:%M UTC")
+        lines.append(f"last call {when}: {result}, {view.message}")
+    return lines

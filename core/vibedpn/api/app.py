@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+import segno
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, ValidationError
 
@@ -15,8 +16,15 @@ from vibedpn import __version__
 from vibedpn.api.consumer import ConsumerStatus
 from vibedpn.api.lists import ListsStatus
 from vibedpn.api.models import (
+    AccessLink,
+    AccessPerson,
+    AccessPersonCreate,
+    AccessUpdate,
+    AccessView,
     ApplyView,
     BoxStatus,
+    DdnsUpdate,
+    DdnsView,
     DevicePolicyUpdate,
     DevicePolicyView,
     DeviceView,
@@ -59,6 +67,7 @@ from vibedpn.api.models import (
 )
 from vibedpn.api.smart import SmartLoop
 from vibedpn.api.state import BoxState
+from vibedpn.api.traffic import ACCESS_TRAFFIC_DIR
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.atomic import write_private
 from vibedpn.bootstrap import (
@@ -91,6 +100,8 @@ from vibedpn.config_edit import (
     remove_domain_rule,
     remove_network_rule,
     remove_wg_uplink,
+    set_access,
+    set_ddns,
     set_device,
     set_domain_list,
     set_domain_rule,
@@ -105,6 +116,16 @@ from vibedpn.config_edit import (
     unset_device,
 )
 from vibedpn.detect import DetectError, HostProbe, Interface
+from vibedpn.engine.access import (
+    AccessError,
+    PersonNameError,
+    PersonNotFoundError,
+    add_person,
+    ensure_access,
+    list_people,
+    person_link,
+    remove_person,
+)
 from vibedpn.engine.adguard import AdguardError, set_dns_mode
 from vibedpn.engine.apply import ApplyError, apply_state, request_apply
 from vibedpn.engine.consumer import (
@@ -118,11 +139,18 @@ from vibedpn.engine.consumer import (
     register,
     registration_offer,
 )
+from vibedpn.engine.ddns import STATE_FILE as DDNS_STATE_FILE
+from vibedpn.engine.ddns import DdnsError
+from vibedpn.engine.ddns import host_of as ddns_host
+from vibedpn.engine.ddns import load_state as load_ddns_state
+from vibedpn.engine.ddns import load_url as load_ddns_url
+from vibedpn.engine.ddns import save_url as save_ddns_url
 from vibedpn.engine.devices import DeviceError, DeviceStore, SeenDevice
 from vibedpn.engine.events import DEFAULT_LIMIT, EventError, EventKind, EventStore
 from vibedpn.engine.learned import LearnedError
 from vibedpn.engine.myst import MystError, ProviderStats, TequilaClient, provider_stats
 from vibedpn.engine.router import (
+    ACCESS_UID,
     COUNTRY_KEY_PREFIX,
     RouterError,
     RoutingFacts,
@@ -1228,6 +1256,8 @@ def create_app(
     events: EventStore | None = None,
     wifi_stations: WifiStations | None = None,
     data_dir: Path | None = None,
+    access_dir: Path | None = None,
+    access_owner: int | None = ACCESS_UID,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -1290,8 +1320,203 @@ def create_app(
     )
 
     _add_peer_routes(application, tunnel, link_source, data_dir)
+    _add_access_routes(
+        application,
+        current,
+        state,
+        AccessPaths(secrets_dir, data_dir, access_dir, access_owner),
+    )
+    _add_ddns_routes(application, current, state, secrets_dir, data_dir)
 
     return application
+
+
+NO_ACCESS_FILES = "this core keeps no files for an access server"
+QR_SCALE = 4
+# A QR code needs light around it to be read, and the panel may be dark.
+QR_LIGHT = "#ffffff"
+QR_DARK = "#000000"
+
+
+def _qr_svg(text: str) -> str:
+    return segno.make(text, micro=False, error="m").svg_inline(
+        scale=QR_SCALE, dark=QR_DARK, light=QR_LIGHT
+    )
+
+
+def _access_error(exc: AccessError) -> HTTPException:
+    if isinstance(exc, PersonNameError):
+        return HTTPException(status_code=422, detail=str(exc))
+    if isinstance(exc, PersonNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    # a name that is taken, or a server that is off: the request is fine, the state is not
+    return HTTPException(status_code=409, detail=str(exc))
+
+
+@dataclass(frozen=True)
+class AccessPaths:
+    secrets_dir: Path | None
+    data_dir: Path | None
+    access_dir: Path | None
+    owner: int | None = ACCESS_UID  # who the server's files belong to; tests keep them their own
+
+
+def _add_access_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    state: BoxState | None,
+    paths: AccessPaths,
+) -> None:
+    """``/access``: the access server of the owner's people (decision 30) — on and off, the people
+    and their links. Its key and the ids of the people stay in core; a link goes to whoever asked
+    for it, and the panel shows it as a QR code."""
+
+    def box_paths() -> tuple[Config, BoxState, Path, Path, Path]:
+        box = current()
+        secrets, data, directory = paths.secrets_dir, paths.data_dir, paths.access_dir
+        if box is None or state is None or secrets is None or data is None or directory is None:
+            raise HTTPException(status_code=404, detail=NO_ACCESS_FILES)
+        return box, state, secrets, data, directory
+
+    def view(since: str | None = None) -> AccessView:
+        box, _state, secrets, data, _directory = box_paths()
+        try:
+            people = list_people(secrets)
+        except AccessError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        with closing(traffic_connect(data / ACCESS_TRAFFIC_DIR)) as connection:
+            used = {total.public_key: total for total in traffic_totals(connection, since)}
+        return AccessView(
+            enabled=box.access.enabled,
+            address=box.access_address() or "",
+            port=box.access.port,
+            target=box.access.target,
+            people=[
+                AccessPerson(
+                    name=person.name,
+                    created=person.created,
+                    rx_bytes=used[person.id].rx_bytes if person.id in used else 0,
+                    tx_bytes=used[person.id].tx_bytes if person.id in used else 0,
+                )
+                for person in people
+            ],
+            apply=_apply_view(data),
+        )
+
+    @application.get("/access", response_model=AccessView)
+    def access_server(since: str | None = None) -> AccessView:
+        """The server and its people with what they used since a day (``YYYY-MM-DD``)."""
+        return view(since)
+
+    @application.put("/access", response_model=AccessView)
+    def put_access_server(request: AccessUpdate) -> AccessView:
+        box, box_state, secrets, data, directory = box_paths()
+        edited = _run_edit(
+            box_state,
+            lambda path: set_access(
+                path,
+                enabled=request.enabled,
+                address=request.address,
+                port=request.port,
+                target=request.target,
+            ),
+        )
+        if edited.access.enabled:
+            # ready before the host starts the container: it reads nothing else
+            try:
+                ensure_access(edited, secrets, directory, owner=paths.owner)
+            except AccessError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+        if edited.access != box.access:
+            _ask_host(data, "access server " + ("enabled" if edited.access.enabled else "disabled"))
+        return view()
+
+    @application.post("/access/people", response_model=AccessLink, status_code=201)
+    def create_person(request: AccessPersonCreate) -> AccessLink:
+        box, _state, secrets, _data, directory = box_paths()
+        try:
+            person, link = add_person(box, secrets, directory, request.name, owner=paths.owner)
+        except AccessError as exc:
+            raise _access_error(exc) from exc
+        return AccessLink(name=person.name, link=link, qr_svg=_qr_svg(link))
+
+    @application.get("/access/people/{name}", response_model=AccessLink)
+    def person(name: str) -> AccessLink:
+        box, _state, secrets, _data, _directory = box_paths()
+        try:
+            link = person_link(box, secrets, name)
+        except AccessError as exc:
+            raise _access_error(exc) from exc
+        return AccessLink(name=name, link=link, qr_svg=_qr_svg(link))
+
+    @application.delete("/access/people/{name}", status_code=204, response_class=Response)
+    def delete_person(name: str) -> Response:
+        box, _state, secrets, data, directory = box_paths()
+        try:
+            removed = remove_person(box, secrets, directory, name, owner=paths.owner)
+        except AccessError as exc:
+            raise _access_error(exc) from exc
+        # their totals go with them: a person added under the same name later starts from zero
+        with closing(traffic_connect(data / ACCESS_TRAFFIC_DIR)) as connection:
+            traffic_forget(connection, removed.id)
+        return Response(status_code=204)
+
+
+def _add_ddns_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    state: BoxState | None,
+    secrets_dir: Path | None,
+    data_dir: Path | None,
+) -> None:
+    """``/ddns``: the name that follows the public address of the box. The update URL goes in and
+    never comes back out: it carries a token."""
+
+    def box_paths() -> tuple[Config, BoxState, Path, Path]:
+        box = current()
+        if box is None or state is None or secrets_dir is None or data_dir is None:
+            raise HTTPException(status_code=404, detail=NO_ACCESS_FILES)
+        return box, state, secrets_dir, data_dir
+
+    def view() -> DdnsView:
+        box, _state, secrets, data = box_paths()
+        url = load_ddns_url(secrets)
+        known = load_ddns_state(data / DDNS_STATE_FILE)
+        return DdnsView(
+            enabled=box.ddns.enabled,
+            url_set=url is not None,
+            host="" if url is None else ddns_host(url),
+            public_ip=known.public_ip,
+            told_ip=known.told_ip,
+            last_ok=known.last_ok,
+            last_at=known.last_at,
+            message=known.message,
+            apply=_apply_view(data),
+        )
+
+    @application.get("/ddns", response_model=DdnsView)
+    def ddns() -> DdnsView:
+        return view()
+
+    @application.put("/ddns", response_model=DdnsView)
+    def put_ddns(request: DdnsUpdate) -> DdnsView:
+        box, box_state, secrets, data = box_paths()
+        if request.url is not None:
+            try:
+                secrets.mkdir(mode=SECRET_DIR_MODE, exist_ok=True)
+                save_ddns_url(secrets, request.url)
+            except DdnsError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=500, detail=f"cannot keep the update URL: {exc.strerror}"
+                ) from exc
+        if request.enabled and load_ddns_url(secrets) is None:
+            raise HTTPException(status_code=422, detail="ddns has no update URL yet: give one here")
+        edited = _run_edit(box_state, lambda path: set_ddns(path, request.enabled))
+        if edited.ddns != box.ddns:
+            _ask_host(data, "ddns " + ("enabled" if request.enabled else "disabled"))
+        return view()
 
 
 def _add_peer_routes(
