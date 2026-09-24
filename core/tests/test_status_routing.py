@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vibedpn.api import client as core_api
-from vibedpn.api.app import create_app
+from vibedpn.api.app import create_app, reconnect_dns
 from vibedpn.api.consumer import ConsumerStatus
 from vibedpn.api.state import BoxState
 from vibedpn.api.uplink import UplinkState, UplinkWatchers, watch_uplink
@@ -20,6 +20,7 @@ from vibedpn.engine.adguard import CORE_USER, AdguardError, adguard_text, set_dn
 from vibedpn.engine.consumer import ConsumerState, CountryOffer
 from vibedpn.engine.myst import MystError
 from vibedpn.engine.router import UPLINKS, RouterError, RoutingFacts, Uplink
+from vibedpn.engine.sockdiag import SockDiagError
 
 from .conftest import client_config, home_config, vps_config
 
@@ -46,6 +47,7 @@ def box(
     alive: bool | None = True,
     apply: object = None,
     dns: object = None,
+    reconnect: object = None,
 ) -> tuple[TestClient, Path]:
     path = tmp_path / "config.yaml"
     path.write_text(render_config(Config.model_validate(raw or client_config())), encoding="utf-8")
@@ -64,6 +66,7 @@ def box(
         watchers=watchers,  # type: ignore[arg-type]
         routing_reader=lambda _config: FACTS,
         dns_mode=dns or (lambda _config, _changed: True),  # type: ignore[arg-type]
+        dns_reconnect=reconnect or (lambda _config: None),  # type: ignore[arg-type]
     )
     return TestClient(app), path
 
@@ -126,6 +129,43 @@ def test_a_silent_or_absent_adguard_does_not_undo_the_router(tmp_path: Path) -> 
     assert routing is not None and routing.mode is RoutingMode.OFF
     client, _ = box(tmp_path, dns=lambda _config, _changed=False: None)
     assert client.put("/routing", json={"mode": "full"}).json()["adguard"] == "none"
+
+
+def test_adguard_reconnects_when_the_uplink_of_its_queries_changes(tmp_path: Path) -> None:
+    """Its connections opened along the old path would each fail the first query riding on them."""
+    raw = client_config()
+    raw["upstreams"] = {"vps": {"enabled": True}, "tor": {"enabled": True}}
+    steps = [
+        ({"mode": "off"}, True),  # full through vps -> direct
+        ({"mode": "off"}, False),
+        ({"mode": "smart"}, False),  # direct either way: the new upstreams restart AdGuard instead
+        ({"mode": "full"}, True),
+        ({"mode": "full"}, False),
+        ({"default_upstream": "tor"}, True),
+        ({"mode": "smart"}, True),
+    ]
+    reconnected: list[Config] = []
+    client, _ = box(tmp_path, raw, reconnect=reconnected.append)
+    for request, expected in steps:
+        before = len(reconnected)
+        assert client.put("/routing", json=request).status_code == 200
+        assert (len(reconnected) > before) is expected, request
+    routing = reconnected[-1].routing
+    assert routing is not None and routing.mode is RoutingMode.SMART  # it gets the new config
+
+
+def test_a_kernel_that_keeps_the_connections_leaves_the_switch_applied(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def refused(request: bytes) -> list[tuple[int, bytes]]:
+        raise SockDiagError("the kernel cannot close sockets: it is built without it")
+
+    reconnect_dns(Config.model_validate(client_config()), refused)
+    assert "AdGuard keeps its upstream connections" in capsys.readouterr().err
+    client, path = box(tmp_path, reconnect=lambda config: reconnect_dns(config, refused))
+    assert client.put("/routing", json={"mode": "off"}).status_code == 200
+    routing = load_config(path).routing
+    assert routing is not None and routing.mode is RoutingMode.OFF
 
 
 def test_bad_routing_requests_change_nothing(tmp_path: Path) -> None:

@@ -445,6 +445,14 @@ def active_uplink(config: Config) -> str | None:
     return config.routing.default_upstream
 
 
+def dns_uplink(config: Config) -> str | None:
+    """The uplink AdGuard asks its upstreams through (chain dns_uplink), None when it asks directly
+    It is the uplink of routing.mode full, on a box that runs AdGuard
+    """
+    active = active_uplink(config)
+    return active if active is not None and config.dns.enabled else None
+
+
 def used_uplinks(config: Config) -> list[str]:
     """Every uplink some LAN traffic may take, by key: the one of routing.mode full, the ones device
     policies name, and in smart the ones domain rules name (a rule country has its own). Each needs
@@ -588,6 +596,7 @@ def router_ruleset(config: Config) -> str | None:
     if config.network is None:
         return None
     active = active_uplink(config)
+    dns = dns_uplink(config)
     return (
         template_environment()
         .get_template(ROUTER_TEMPLATE)
@@ -617,9 +626,7 @@ def router_ruleset(config: Config) -> str | None:
             vps_mark=hex(UPLINKS[Upstream.VPS].mark),
             private_ranges=EGRESS_BLOCKED_RANGES,
             # routing.mode full with AdGuard: its upstream queries leave through the same uplink
-            dns_mark=hex(uplink_table(config)[active].mark)
-            if active and config.dns.enabled
-            else "",
+            dns_mark=hex(uplink_table(config)[dns].mark) if dns else "",
             adguard_uid=ADGUARD_UID,
             # the access server: its people leave the box the way a device at home does
             access_uid=ACCESS_UID if config.access.enabled else "",

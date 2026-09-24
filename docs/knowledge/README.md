@@ -20,7 +20,7 @@
 
 - [docker.md](adguard/docker.md) — тома, `AdGuardHome.yaml` со `schema_version: 34` вместо мастера
   на 3000, ключи привязки и апстримов, порт 53 против systemd-resolved; первый старт переписывает
-  файл (600, умолчания), ядро правит только свои ключи, bcrypt `$2b$` принимается, `aaaa_disabled`; перезапись имени коробки в `filtering.rewrites` — без `enabled: true` не действует; режим DNS на лету — `disable_ipv6` через API служебным пользователем ядра; переключение `full` → `off` рвёт открытые соединения DoH, первые запросы по ним падают до переподключения (~2 с)
+  файл (600, умолчания), ядро правит только свои ключи, bcrypt `$2b$` принимается, `aaaa_disabled`; перезапись имени коробки в `filtering.rewrites` — без `enabled: true` не действует; режим DNS на лету — `disable_ipv6` через API служебным пользователем ядра; смена выхода запросов (`full` ↔ `off`, смена `default_upstream`) рвёт соединения DoH старого пути — ядро закрывает их сразу (`SOCK_DESTROY`); замер: перезапуск DNS-сервера AdGuard хуже — теряет запросы без ответа и сбрасывает кеш, а `upstream_dns` перезапускает его даже с прежним значением
 - [behindForwarder.md](adguard/behindForwarder.md) — за dnsmasq AdGuard пишет все запросы от адреса dnsmasq (`add-subnet`, `add-mac` не помогают); `ipset` — только Linux ipset, `trusted_proxies` — только DoH
 - [domainUpstreams.md](adguard/domainUpstreams.md) — `[/домен/]апстрим` покрывает поддомены, кэш отсчитывает TTL своего апстрима, `querylog` отдаёт клиента, время, апстрим и `cached`
 - [listFormats.md](adguard/listFormats.md) — `||домен^` покрывает домен с поддоменами, строка hosts — адрес и имена, `!` и `#` — комментарии: что читает `routing.lists`
@@ -88,6 +88,7 @@
 
 ## linux
 
+- [sockDestroy.md](linux/sockDestroy.md) — закрыть чужое TCP-соединение: netlink `sock_diag`, `SOCK_DESTROY` по id с cookie, нужен `CAP_NET_ADMIN` и `CONFIG_INET_DIAG_DESTROY` (Debian — есть, Raspberry Pi — нет, `default n`); проверено на живом ядре
 - [hostapdControl.md](linux/hostapdControl.md) — управляющий сокет hostapd: `ATTACH`, события `AP-STA-*`, перебор станций, общий каталог сокета двух контейнеров и молчание после перезапуска
 - [systemdPathUnit.md](linux/systemdPathUnit.md) — `.path` по изменению файла: `PathChanged=` на закрытие после записи, чего документация не обещает и как это обойдено
 - [iproute2Json.md](linux/iproute2Json.md) — поля `ip -j route/addr`, фикстуры для парсеров, проверка

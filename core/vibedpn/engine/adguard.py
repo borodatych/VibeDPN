@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import os
 from collections.abc import Callable
+from ipaddress import IPv4Address
 from pathlib import Path
 
 import bcrypt
@@ -25,6 +26,8 @@ from vibedpn.config import Config, RoutingMode
 from vibedpn.config_edit import round_trip_yaml
 from vibedpn.engine.querylog import PAGE_LIMIT, QUERYLOG_PATH
 from vibedpn.engine.resolver import RESOLVER_HOST, RESOLVER_PORT
+from vibedpn.engine.router import ADGUARD_UID
+from vibedpn.engine.sockdiag import Connection, Exchange, close_where, netlink_exchange
 
 CONF_FILE = "AdGuardHome.yaml"
 # The schema of adguard/adguardhome v0.107.79, the tag compose.yaml pins: a file without it is
@@ -265,6 +268,27 @@ def set_dns_mode(
     if response.status_code != httpx.codes.OK:
         raise AdguardError(f"AdGuard refused the DNS mode: HTTP {response.status_code}")
     return True
+
+
+def close_upstream_connections(config: Config, exchange: Exchange = netlink_exchange) -> int:
+    """Close the connections AdGuard holds to its upstreams; how many closed
+
+    Called when the uplink of its queries changed: each would fail the first query riding on it
+    Unlike a restart of its DNS server, this keeps its cache and never takes its listener down
+    Peers in the LAN and on the box stay: chain dns_uplink leaves them unmarked
+    Every IPv6 peer but loopback goes: in full its IPv6 is dropped silently, not reset
+    """
+    network = config.network
+    if network is None or not config.dns.enabled:
+        return 0
+
+    def upstream(connection: Connection) -> bool:
+        peer = connection.peer
+        if peer.is_loopback or peer == connection.local:
+            return False
+        return not (isinstance(peer, IPv4Address) and peer in network.lan_subnet)
+
+    return close_where(ADGUARD_UID, upstream, exchange)
 
 
 Chown = Callable[[Path, int, int], None]

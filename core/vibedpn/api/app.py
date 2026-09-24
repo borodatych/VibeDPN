@@ -1,6 +1,7 @@
 """ASGI application factory: health, provider statistics (Stage 2) and tunnel peers (Stage 3)."""
 
 import io
+import sys
 import time
 from collections.abc import Callable
 from contextlib import closing
@@ -134,7 +135,7 @@ from vibedpn.engine.access import (
     person_link,
     remove_person,
 )
-from vibedpn.engine.adguard import AdguardError, set_dns_mode
+from vibedpn.engine.adguard import AdguardError, close_upstream_connections, set_dns_mode
 from vibedpn.engine.apply import ApplyError, apply_state, request_apply
 from vibedpn.engine.consumer import (
     CONSUMER_TEQUILAPI,
@@ -162,10 +163,12 @@ from vibedpn.engine.router import (
     COUNTRY_KEY_PREFIX,
     RouterError,
     RoutingFacts,
+    dns_uplink,
     read_routing,
     uplink_table,
     used_uplinks,
 )
+from vibedpn.engine.sockdiag import Exchange, SockDiagError, netlink_exchange
 from vibedpn.engine.telegram import TelegramError, check_token
 from vibedpn.engine.traffic import connect as traffic_connect
 from vibedpn.engine.traffic import forget as traffic_forget
@@ -192,6 +195,8 @@ StatsSource = Callable[[], ProviderStats]
 RoutingReader = Callable[[Config], RoutingFacts]
 # Tells the running AdGuard the DNS mode; None: no AdGuard on this box.
 DnsModeSetter = Callable[[Config, bool], bool | None]  # the box, did smart come or go
+# Drops the connections AdGuard opened along the uplink its queries no longer take
+DnsReconnect = Callable[[Config], None]
 NO_LAN = "this box routes no LAN"
 DpnOffers = Callable[[], list[CountryOffer]]
 LinkSource = Callable[[], dict[str, PeerLink] | None]
@@ -1169,6 +1174,7 @@ def _add_routing_routes(
     watchers: UplinkWatchers | None,
     routing_reader: RoutingReader,
     dns_mode: DnsModeSetter,
+    dns_reconnect: DnsReconnect,
     consumer: ConsumerStatus | None = None,
 ) -> None:
     """``/status`` and ``/routing``: the LAN router at a glance, and its mode changed live."""
@@ -1215,6 +1221,8 @@ def _add_routing_routes(
             raise HTTPException(
                 status_code=503, detail=f"router refused the change, config.yaml restored: {exc}"
             ) from exc
+        if dns_uplink(box) != dns_uplink(updated):
+            dns_reconnect(updated)
         adguard: Literal["applied", "pending", "none"]
         try:
             entered_or_left_smart = (box.routing.mode is RoutingMode.SMART) != (
@@ -1258,6 +1266,7 @@ def create_app(
     watchers: UplinkWatchers | None = None,
     routing_reader: RoutingReader = read_routing,
     dns_mode: DnsModeSetter | None = None,
+    dns_reconnect: DnsReconnect | None = None,
     consumer: ConsumerStatus | None = None,
     dpn_offers: DpnOffers | None = None,
     consumer_client: Callable[[], TequilaClient] | None = None,
@@ -1301,6 +1310,7 @@ def create_app(
         watchers,
         routing_reader,
         dns_mode or default_dns_mode,
+        dns_reconnect or reconnect_dns,
         consumer,
     )
     _add_dpn_routes(application, current, state, dpn_offers or _default_dpn_offers)
@@ -1342,6 +1352,25 @@ def create_app(
     _add_telegram_routes(application, current, state, telegram)
 
     return application
+
+
+def reconnect_dns(box: Config, exchange: Exchange = netlink_exchange) -> None:
+    """Close the upstream connections of AdGuard after the uplink of its queries changed
+
+    A failure leaves them as they were: the router is applied, and each fails one query at most
+    """
+    try:
+        closed = close_upstream_connections(box, exchange)
+    except SockDiagError as exc:
+        sys.stderr.write(
+            f"vibedpn-core: AdGuard keeps its upstream connections ({exc});"
+            " the first name after the switch may fail once\n"
+        )
+        return
+    if closed:
+        sys.stderr.write(
+            f"vibedpn-core: AdGuard upstream connections closed: {closed}, their path changed\n"
+        )
 
 
 NO_ACCESS_FILES = "this core keeps no files for an access server"

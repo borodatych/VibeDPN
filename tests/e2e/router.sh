@@ -301,6 +301,31 @@ try:
 except OSError:
     print(0)' "$1" "$BOX_LAN_IP"
 }
+# The reply code and the answer count for google.com of type $1: "0 0" is an empty answer and
+# "2 0" a SERVFAIL, which a count alone cannot tell apart; "timeout" when AdGuard is silent.
+dns_reply() {
+  in_device "$PY" -c 'import socket, struct, sys
+q = struct.pack("!HHHHHH", 11, 0x0100, 1, 0, 0, 0) + b"\x06google\x03com\x00" + struct.pack("!HH", int(sys.argv[1]), 1)
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(5); s.sendto(q, (sys.argv[2], 53))
+try:
+    data = s.recvfrom(2048)[0]
+except OSError:
+    print("timeout")
+else:
+    print(struct.unpack("!H", data[2:4])[0] & 15, struct.unpack("!H", data[6:8])[0])' "$1" "$BOX_LAN_IP"
+}
+# One question, for a name nobody has asked yet: after a switch of the uplink AdGuard's queries take
+# it must be answered at the first try. A connection opened along the old path would fail it
+# with SERVFAIL, so core closes those at the switch (knowledge adguard/docker.md).
+first_answer() {
+  name="$(fresh_name "$1")"
+  [ "$(fresh_answers "$name")" -gt 0 ] || fail "$2: AdGuard did not resolve $name at the first try"
+}
+# The line core writes once it closed the connections of AdGuard that outlived their path.
+closed_since() {
+  docker logs --since "$1" vibedpn-core-1 2>&1 | grep -q "AdGuard upstream connections closed" ||
+    fail "$2: core did not close the connections AdGuard opened along the old path"
+}
 await_dns() {
   i=0
   until dns_answers 1 >/dev/null 2>&1; do
@@ -470,7 +495,8 @@ else
   log "DNS: AdGuard on the box, empty AAAA in full, the init password"
   await_dns
   [ "$(dns_answers 1)" -gt 0 ] || fail "AdGuard gives the device no A answer"
-  [ "$(dns_answers 28)" = 0 ] || fail "AdGuard answers AAAA in mode full"
+  reply="$(dns_reply 28)"
+  [ "$reply" = "0 0" ] || fail "AdGuard does not give an empty AAAA answer in mode full ($reply)"
   login="$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
     -d "{\"name\":\"admin\",\"password\":\"$PASSWORD\"}" "http://$BOX_LAN_IP:3000/control/login")"
   [ "$login" = 200 ] || fail "AdGuard does not accept the password from vibedpn init ($login)"
@@ -519,6 +545,10 @@ await_exit "$VPS_IP" "the device did not return to the VPS with the gateway"
 log "vibedpn mode off: direct, applied live through core, nothing restarts"
 started="$(wg_started)"
 core_before="$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)"
+if [ "$OFFLINE" != 1 ]; then
+  fresh_answers "$(fresh_name 20)" >/dev/null # AdGuard holds a connection through the VPS
+fi
+switched="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 sudo "$CLI" mode off --dir "$BOX" | tee "$WORK/mode.txt"
 grep -q "applied live, nothing restarted" "$WORK/mode.txt" || fail "vibedpn mode off did not apply live through core"
 [ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)" = "$core_before" ] || fail "vibedpn mode off restarted core"
@@ -526,27 +556,27 @@ await_exit "$INTERNET_GATEWAY" "the device does not go direct in mode off"
 [ "$(wg_started)" = "$started" ] || fail "vibedpn mode off restarted wg-client"
 "$CLI" status --dir "$BOX" | grep -q "^routing: mode=off" || fail "status does not show mode off"
 if [ "$OFFLINE" != 1 ]; then
-  await_dns
-  # The DoH connections AdGuard opened through the uplink in full die when their path changes, and
-  # a query over one of them fails until AdGuard opens a new one (knowledge adguard/docker.md).
-  i=0
-  until [ "$(dns_answers 28 2>/dev/null || echo 0)" -gt 0 ]; do
-    i=$((i + 1))
-    [ "$i" -lt "$TIMEOUT" ] || fail "AdGuard still hides AAAA in mode off"
-    sleep 1
-  done
-  echo "AAAA answered in mode off"
+  first_answer 21 "vibedpn mode off"
+  closed_since "$switched" "vibedpn mode off"
+  reply="$(dns_reply 28)"
+  [ "${reply%% *}" = 0 ] && [ "${reply#* }" -gt 0 ] 2>/dev/null ||
+    fail "AdGuard does not answer AAAA in mode off ($reply)"
+  echo "the first new name and AAAA answered at once in mode off"
 fi
 
 log "vibedpn mode full: through the VPS again"
+switched="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 sudo "$CLI" mode full --dir "$BOX" | grep -q "applied live, nothing restarted" ||
   fail "vibedpn mode full did not apply live through core"
 await_exit "$VPS_IP" "the device does not return to the VPS after vibedpn mode full"
 [ "$(wg_started)" = "$started" ] || fail "vibedpn mode full restarted wg-client"
 [ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)" = "$core_before" ] || fail "vibedpn mode full restarted core"
 if [ "$OFFLINE" != 1 ]; then
-  await_dns
-  [ "$(dns_answers 28)" = 0 ] || fail "AdGuard answers AAAA again in mode full"
+  first_answer 22 "vibedpn mode full"
+  closed_since "$switched" "vibedpn mode full"
+  reply="$(dns_reply 28)"
+  [ "$reply" = "0 0" ] || fail "AdGuard does not give an empty AAAA answer again in mode full ($reply)"
+  echo "the first new name answered at once through the VPS, AAAA empty again"
 fi
 # the same mode again goes through core as well and changes nothing
 sudo "$CLI" mode full --dir "$BOX" | grep -q "^routing: mode=full" || fail "a repeated vibedpn mode full failed"
@@ -599,10 +629,19 @@ sudo "$CLI" uplink add "$EXIT_NAME" "$WORK/exit-peer.conf" --dir "$BOX" | grep -
 sudo "$CLI" uplink show --dir "$BOX" | grep -q "wg-$EXIT_NAME" || fail "vibedpn uplink show does not list the named exit"
 sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up with the named exit failed"
 wait_healthy "vibedpn-wg-$EXIT_NAME-1"
+if [ "$OFFLINE" != 1 ]; then
+  fresh_answers "$(fresh_name 23)" >/dev/null # AdGuard holds a connection through the VPS
+fi
+switched="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 sudo "$CLI" upstream "wg-$EXIT_NAME" --dir "$BOX" | grep -q "wg-$EXIT_NAME" ||
   fail "vibedpn upstream wg-$EXIT_NAME failed"
 await_exit "$EXIT_IP" "the device does not leave through the named exit wg-$EXIT_NAME"
 echo "named exit: the device leaves as $EXIT_IP"
+if [ "$OFFLINE" != 1 ]; then
+  first_answer 24 "vibedpn upstream wg-$EXIT_NAME"
+  closed_since "$switched" "vibedpn upstream wg-$EXIT_NAME"
+  echo "named exit: the first new name answered at once through it"
+fi
 # The same echo server as the other doctor check: against the real internet every path of this
 # stand leaves with the runner's own address, and every exit would look like a leak.
 named_report="$(sudo env VIBEDPN_EXIT_IP_URL="http://$WEB_IP:$WEB_PORT/" "$CLI" doctor --network --dir "$BOX" 2>&1 || true)"
@@ -624,8 +663,16 @@ await_exit "$EXIT_IP" "the device lost the named exit after its file was replace
 echo "named exit: a new file recreated its gateway, the device still leaves as $EXIT_IP"
 
 log "named exit: back to the VPS (the exit stays for the smart-mode rule below)"
+if [ "$OFFLINE" != 1 ]; then
+  fresh_answers "$(fresh_name 25)" >/dev/null # AdGuard holds a connection through the named exit
+fi
+switched="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 sudo "$CLI" upstream vps --dir "$BOX" >/dev/null || fail "vibedpn upstream vps after the named exit failed"
 await_exit "$VPS_IP" "the device does not come back to the VPS after the named exit"
+if [ "$OFFLINE" != 1 ]; then
+  first_answer 26 "vibedpn upstream vps"
+  closed_since "$switched" "vibedpn upstream vps"
+fi
 
 if [ "$OFFLINE" != 1 ]; then
   log "routing.mode smart: a domain rule through the VPS, everything else direct"

@@ -6,7 +6,7 @@ from ruamel.yaml import YAML
 
 from vibedpn.config import Config
 from vibedpn.engine.adguard import give_to_adguard
-from vibedpn.engine.router import ADGUARD_UID, router_ruleset
+from vibedpn.engine.router import ADGUARD_UID, dns_uplink, router_ruleset
 
 from .conftest import client_config
 
@@ -35,6 +35,17 @@ def test_off_mode_or_no_adguard_leaves_dns_direct() -> None:
     assert "dns_uplink" not in ruleset("off")
     assert "dns_uplink" not in ruleset("full", dns=False)
     assert "meta skuid" not in ruleset("off")
+
+
+def test_dns_uplink_names_the_uplink_the_chain_marks_for() -> None:
+    """The chain and the reconnect of AdGuard after a switch read the same answer."""
+    raw = client_config()
+    assert dns_uplink(Config.model_validate(raw)) == "vps"
+    raw["dns"] = {"enabled": False}
+    assert dns_uplink(Config.model_validate(raw)) is None
+    raw = client_config()
+    raw["routing"]["mode"] = "off"
+    assert dns_uplink(Config.model_validate(raw)) is None
 
 
 def test_compose_runs_adguard_as_that_user() -> None:
