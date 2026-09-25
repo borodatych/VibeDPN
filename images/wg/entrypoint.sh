@@ -13,6 +13,9 @@ STATE_DIR=/run/vibedpn-wg
 MODE_FILE="$STATE_DIR/mode"
 NFT_FAMILY=inet
 NFT_TABLE=vibedpn_wg
+# Present while the tunnel of a client is down: core probes the gateway with ping, and a gateway
+# that is up with a dead peer behind it must look silent, or core would route the LAN into it.
+PROBE_TABLE=vibedpn_probe
 # `wg set fwmark` marks the encrypted packets WireGuard sends out itself. Both the policy
 # routing of a full tunnel and the kill switch key on that mark; wg-quick uses the number as
 # the routing table id too, and so do we.
@@ -283,12 +286,46 @@ teardown() {
   trap - TERM INT
   if [ -f "$MODE_FILE" ] && [ "$(cat "$MODE_FILE")" = client ]; then
     nft delete table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null || true
+    nft delete table "$NFT_FAMILY" "$PROBE_TABLE" 2>/dev/null || true
   fi
   ip link del "$IFACE" 2>/dev/null || true
   remove_policy_rules
   rm -f "$MODE_FILE"
   log "$IFACE is down"
   exit 0
+}
+
+# The probe of core gets an answer only while the tunnel works: a handshake within
+# HANDSHAKE_MAX_AGE_SECONDS. Then a VPS that died behind a running container is a silent gateway,
+# and core holds its traffic or hands it to a fallback uplink (decision 32).
+# The table is changed only when the verdict changes; PROBES keeps the last one.
+PROBES=""
+close_probes() {
+  nft -f - <<NFT
+add table $NFT_FAMILY $PROBE_TABLE
+delete table $NFT_FAMILY $PROBE_TABLE
+table $NFT_FAMILY $PROBE_TABLE {
+  chain input {
+    type filter hook input priority filter; policy accept;
+    iifname != { "$IFACE", "lo" } icmp type echo-request drop comment "the tunnel is down: core finds this gateway silent"
+  }
+}
+NFT
+  PROBES=closed
+}
+
+gate_probes() {
+  age="$(handshake_age)"
+  if [ "$age" -le "$HANDSHAKE_MAX_AGE_SECONDS" ]; then
+    if [ "$PROBES" != open ]; then
+      nft delete table "$NFT_FAMILY" "$PROBE_TABLE" 2>/dev/null || true
+      PROBES=open
+      log "the peer answers: core may route through this gateway"
+    fi
+  elif [ "$PROBES" != closed ]; then
+    close_probes
+    log "no handshake for ${age}s: this gateway tells core it is down"
+  fi
 }
 
 # `ip link show up dev` prints the interface only while it is administratively up, and nothing
@@ -303,6 +340,9 @@ interface_is_up() {
 watch_interface() {
   started="$(date +%s)"
   while interface_is_up; do
+    if [ "$MODE" = client ]; then
+      gate_probes
+    fi
     # A client keeps the tunnel honest: wg resolves Endpoint once, so a VPS that moved to a new
     # address is only fixed by starting over — which is what a non-zero exit gets us.
     if [ "$MODE" = client ] && [ $(($(date +%s) - started)) -gt "$WATCHDOG_GRACE_SECONDS" ]; then
@@ -357,8 +397,11 @@ umask 077
 mkdir -p "$STATE_DIR"
 # The kill switch goes in first: nftables matches an interface by name, so the rules are valid
 # before wg0 exists and there is no window in which traffic could route around the tunnel.
+# The probes start closed for the same reason: core must not route into a tunnel before its
+# first handshake.
 if [ "$MODE" = client ]; then
   install_kill_switch
+  close_probes
 fi
 setup_interface
 printf '%s\n' "$MODE" >"$MODE_FILE"
