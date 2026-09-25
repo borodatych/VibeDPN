@@ -506,6 +506,31 @@ def up(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
         )
     _retire_stale(box_dir)
     _compose(box_dir, "up", "-d", "--remove-orphans")
+    if "core" not in recreated:
+        _reread(config)
+
+
+def _reread(config: Config) -> None:
+    """core kept running through this up: what it applies live it takes from config.yaml now
+
+    A core that does not answer is starting, and reads the file itself
+    """
+    try:
+        view = core_api.reread_config(config.api.port)
+    except core_api.CoreUnreachableError:
+        return
+    except core_api.CoreNoAnswerError as exc:
+        typer.secho(
+            f"core did not answer ({exc}); `vibedpn restart` applies config.yaml",
+            fg=typer.colors.YELLOW,
+        )
+        return
+    except core_api.ConfigRereadError as exc:
+        raise _fail(f"core did not take config.yaml: {exc}") from None
+    if not view.changed:
+        return
+    note = "; AdGuard catches up at the next start of core" if view.adguard == "pending" else ""
+    typer.echo(f"core applied config.yaml live (routing, devices, rules), nothing restarted{note}")
 
 
 @app.command()

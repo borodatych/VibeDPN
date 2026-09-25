@@ -25,6 +25,7 @@ from vibedpn.api.models import (
     AccessView,
     ApplyView,
     BoxStatus,
+    ConfigRereadView,
     DdnsUpdate,
     DdnsView,
     DevicePolicyUpdate,
@@ -88,6 +89,7 @@ from vibedpn.bootstrap import (
 from vibedpn.config import (
     WG_UPLINK_NAME,
     Config,
+    ConfigError,
     DeviceConfig,
     DomainList,
     DomainRule,
@@ -197,6 +199,9 @@ RoutingReader = Callable[[Config], RoutingFacts]
 DnsModeSetter = Callable[[Config, bool], bool | None]  # the box, did smart come or go
 # Drops the connections AdGuard opened along the uplink its queries no longer take
 DnsReconnect = Callable[[Config], None]
+AdguardFollows = Literal["applied", "pending", "none"]
+# The before and the after of a live change: what AdGuard makes of it
+DnsFollower = Callable[[Config, Config], AdguardFollows]
 NO_LAN = "this box routes no LAN"
 DpnOffers = Callable[[], list[CountryOffer]]
 LinkSource = Callable[[], dict[str, PeerLink] | None]
@@ -1167,14 +1172,61 @@ def _add_network_routes(
         return view(box_state)
 
 
+def _dns_follower(dns_mode: DnsModeSetter, dns_reconnect: DnsReconnect) -> DnsFollower:
+    """What AdGuard follows after a live change of the configuration"""
+
+    def follow(before: Config, after: Config) -> AdguardFollows:
+        """Its connections of an old path closed, its DNS mode told
+
+        The upstreams go only when smart came or went: sending them restarts its DNS server
+        """
+        if dns_uplink(before) != dns_uplink(after):
+            dns_reconnect(after)
+
+        def smart(config: Config) -> bool:
+            return config.routing is not None and config.routing.mode is RoutingMode.SMART
+
+        try:
+            return "none" if dns_mode(after, smart(before) != smart(after)) is None else "applied"
+        except AdguardError:
+            return "pending"
+
+    return follow
+
+
+def _add_config_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    state: BoxState | None,
+    follow_dns: DnsFollower,
+) -> None:
+    """``/config/reread``: config.yaml edited by hand, applied by `vibedpn up` without a restart"""
+
+    @application.post("/config/reread", response_model=ConfigRereadView)
+    def reread_config() -> ConfigRereadView:
+        box = current()
+        if state is None or box is None:
+            raise HTTPException(status_code=404, detail="this core keeps no live configuration")
+        try:
+            updated, changed = state.reread()
+        except (ConfigError, ValidationError) as exc:
+            raise HTTPException(status_code=422, detail=f"config.yaml: {exc}") from exc
+        except RouterError as exc:
+            raise HTTPException(
+                status_code=503, detail=f"router refused config.yaml, core keeps its own: {exc}"
+            ) from exc
+        if not changed:
+            return ConfigRereadView(changed=False)
+        return ConfigRereadView(changed=True, adguard=follow_dns(box, updated))
+
+
 def _add_routing_routes(
     application: FastAPI,
     current: Callable[[], Config | None],
     state: BoxState | None,
     watchers: UplinkWatchers | None,
     routing_reader: RoutingReader,
-    dns_mode: DnsModeSetter,
-    dns_reconnect: DnsReconnect,
+    follow_dns: DnsFollower,
     consumer: ConsumerStatus | None = None,
 ) -> None:
     """``/status`` and ``/routing``: the LAN router at a glance, and its mode changed live."""
@@ -1221,16 +1273,7 @@ def _add_routing_routes(
             raise HTTPException(
                 status_code=503, detail=f"router refused the change, config.yaml restored: {exc}"
             ) from exc
-        if dns_uplink(box) != dns_uplink(updated):
-            dns_reconnect(updated)
-        adguard: Literal["applied", "pending", "none"]
-        try:
-            entered_or_left_smart = (box.routing.mode is RoutingMode.SMART) != (
-                updated.routing is not None and updated.routing.mode is RoutingMode.SMART
-            )
-            adguard = "none" if dns_mode(updated, entered_or_left_smart) is None else "applied"
-        except AdguardError:
-            adguard = "pending"
+        adguard = follow_dns(box, updated)
         routing = updated.routing
         if routing is None:  # set_routing refuses a box without routing; keeps the type narrow
             raise HTTPException(status_code=404, detail=NO_LAN)
@@ -1303,16 +1346,17 @@ def create_app(
             return None
         return set_dns_mode(box, secrets_dir, upstreams_changed=upstreams_changed)
 
+    follow_dns = _dns_follower(dns_mode or default_dns_mode, dns_reconnect or reconnect_dns)
     _add_routing_routes(
         application,
         current,
         state,
         watchers,
         routing_reader,
-        dns_mode or default_dns_mode,
-        dns_reconnect or reconnect_dns,
+        follow_dns,
         consumer,
     )
+    _add_config_routes(application, current, state, follow_dns)
     _add_dpn_routes(application, current, state, dpn_offers or _default_dpn_offers)
     _add_dpn_registration_routes(application, current, consumer_client or _default_consumer_client)
     _add_lan_routes(application, state, interfaces_source, smart, lists)

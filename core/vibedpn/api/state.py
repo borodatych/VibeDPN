@@ -18,7 +18,7 @@ from pathlib import Path
 
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.atomic import write_like
-from vibedpn.config import Config
+from vibedpn.config import Config, load_config
 from vibedpn.engine.router import RouterError, apply_router, uplink_table
 
 Apply = Callable[[Config], Sequence[str]]  # the keys of the uplinks in use
@@ -89,3 +89,19 @@ class BoxState:
                 table = uplink_table(config)
                 self._watchers.sync({key: table[key] for key in uplinks})
             return config
+
+    def reread(self) -> tuple[Config, bool]:
+        """config.yaml as it lies now, applied like an edit; True when core had it otherwise
+
+        The owner edits the file by hand and runs `vibedpn up`: what core applies live follows here
+        What only a new core applies is up's to make: it recreates core, nothing is left to reread
+        The running network stays until the restart, as with every edit
+        """
+        running = self._config
+
+        def read(path: Path) -> tuple[Config, bool]:
+            config = load_config(path)
+            return config, config.model_copy(update={"network": running.network}) != running
+
+        updated = self.edit(read)
+        return updated, updated != running

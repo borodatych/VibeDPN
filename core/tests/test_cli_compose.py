@@ -6,9 +6,11 @@ import pytest
 from typer.testing import CliRunner
 
 from vibedpn import cli
-from vibedpn.api.client import CoreUnreachableError, StatsUnavailableError
+from vibedpn.api import client as core_api
+from vibedpn.api.client import ConfigRereadError, CoreUnreachableError, StatsUnavailableError
+from vibedpn.api.models import ConfigRereadView
 from vibedpn.bootstrap import Answers, HostFacts, build_config, render_config
-from vibedpn.config import Config, Role
+from vibedpn.config import Config, Role, load_config
 from vibedpn.engine.myst import ProviderStats, SessionTotals
 
 from .conftest import client_config
@@ -230,3 +232,54 @@ def test_commands_need_an_initialised_box(tmp_path: Path, monkeypatch: pytest.Mo
     result = runner.invoke(cli.app, ["status", "--dir", str(tmp_path)])
     assert result.exit_code == 1
     assert "vibedpn init" in result.output
+
+
+def test_up_asks_the_running_core_to_reread_what_it_applies_live(
+    box: tuple[Path, Recorder], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hand edit of routing or devices changes no fingerprint: core keeps running and rereads."""
+    box_dir, _recorder = box
+    asked: list[int] = []
+
+    def reread(port: int) -> ConfigRereadView:
+        asked.append(port)
+        return ConfigRereadView(changed=len(asked) > 1, adguard="applied")
+
+    monkeypatch.setattr(core_api, "reread_config", reread)
+    first = runner.invoke(cli.app, ["up", "--dir", str(box_dir)])
+    assert first.exit_code == 0 and "applied config.yaml live" not in first.output
+    result = runner.invoke(cli.app, ["up", "--dir", str(box_dir)])
+    assert result.exit_code == 0, result.output
+    assert asked == [load_config(box_dir / "config.yaml").api.port] * 2
+    assert "core applied config.yaml live" in result.output
+    # a section only a new core applies: up recreates core, and there is nothing to reread
+    path = box_dir / "config.yaml"
+    current = load_config(path)
+    telegram = current.telegram.model_copy(update={"enabled": True})
+    path.write_text(
+        render_config(current.model_copy(update={"telegram": telegram})), encoding="utf-8"
+    )
+    recreated = runner.invoke(cli.app, ["up", "--dir", str(box_dir)])
+    assert recreated.exit_code == 0 and "recreated" in recreated.output
+    assert len(asked) == 2
+
+
+def test_up_leaves_a_starting_core_alone_and_fails_on_a_refused_file(
+    box: tuple[Path, Recorder], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    box_dir, _recorder = box
+    assert runner.invoke(cli.app, ["up", "--dir", str(box_dir)]).exit_code == 0
+
+    def starting(_port: int) -> ConfigRereadView:
+        raise CoreUnreachableError("ConnectError")
+
+    monkeypatch.setattr(core_api, "reread_config", starting)
+    quiet = runner.invoke(cli.app, ["up", "--dir", str(box_dir)])
+    assert quiet.exit_code == 0 and "core" not in quiet.output
+
+    def refused(_port: int) -> ConfigRereadView:
+        raise ConfigRereadError("router refused config.yaml, core keeps its own: nft failed")
+
+    monkeypatch.setattr(core_api, "reread_config", refused)
+    failed = runner.invoke(cli.app, ["up", "--dir", str(box_dir)])
+    assert failed.exit_code == 1 and "core did not take config.yaml" in failed.output

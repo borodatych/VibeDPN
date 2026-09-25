@@ -18,6 +18,7 @@ from vibedpn.api.models import (
     AccessPersonCreate,
     AccessView,
     BoxStatus,
+    ConfigRereadView,
     DdnsView,
     DevicePolicyUpdate,
     DevicePolicyView,
@@ -92,6 +93,10 @@ class DeviceRequestError(RuntimeError):
 
 class RuleRequestError(RuntimeError):
     """Core refused a domain rule or list, or answered something else."""
+
+
+class ConfigRereadError(RuntimeError):
+    """core read config.yaml and refused it: invalid, or the router did not take it"""
 
 
 class RoutingRequestError(RuntimeError):
@@ -283,6 +288,17 @@ def set_routing(
         raise RoutingRequestError(
             f"core answered something that is not routing ({VERSION_HINT})"
         ) from exc
+
+
+def reread_config(port: int, transport: httpx.BaseTransport | None = None) -> ConfigRereadView:
+    """Ask the running core to apply config.yaml as it lies now, without a restart"""
+    response = _send(port, "POST", "/config/reread", transport=transport)
+    if response.status_code != httpx.codes.OK:
+        raise ConfigRereadError(_detail(response))
+    try:
+        return ConfigRereadView.model_validate(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise ConfigRereadError(f"core answered something else ({VERSION_HINT})") from exc
 
 
 def fetch_status(port: int, transport: httpx.BaseTransport | None = None) -> BoxStatus:

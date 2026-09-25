@@ -138,6 +138,13 @@ class RoutingView(BaseModel):
     adguard: Literal["applied", "pending", "none"]
 
 
+class ConfigRereadView(BaseModel):
+    # config.yaml differed from what core applied: the router and AdGuard follow it now
+    changed: bool
+    # as in RoutingView; None: nothing changed that AdGuard follows
+    adguard: Literal["applied", "pending", "none"] | None = None
+
+
 class VpsLanAccessUpdate(BaseModel):
     allowed: bool
 

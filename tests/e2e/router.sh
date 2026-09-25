@@ -597,6 +597,21 @@ fi
 sudo "$CLI" mode full --dir "$BOX" | grep -q "^routing: mode=full" || fail "a repeated vibedpn mode full failed"
 await_exit "$VPS_IP" "a repeated vibedpn mode full moved the device off the VPS"
 
+log "a hand edit of routing.mode and up: core rereads config.yaml, nothing restarts"
+# routing is not in the fingerprint of core (decision 25): up keeps core and asks it to reread
+core_before="$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)"
+sudo sed -i 's/^  mode: full$/  mode: off/' "$BOX/config.yaml"
+sudo "$CLI" up --dir "$BOX" | tee "$WORK/up.txt"
+grep -q "core applied config.yaml live" "$WORK/up.txt" ||
+  fail "vibedpn up did not have core reread a hand edit of routing.mode"
+await_exit "$INTERNET_GATEWAY" "a hand edit of routing.mode off did not send the device direct"
+[ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)" = "$core_before" ] ||
+  fail "a hand edit of routing.mode restarted core"
+"$CLI" status --dir "$BOX" | grep -q "^routing: mode=off" || fail "status does not show the hand-edited mode off"
+sudo "$CLI" mode full --dir "$BOX" >/dev/null || fail "vibedpn mode full after the hand edit failed"
+await_exit "$VPS_IP" "the device does not return to the VPS after the hand edit"
+echo "a hand edit of routing.mode applied by up without a restart of core"
+
 log "named exit wg-$EXIT_NAME: a ready WireGuard file becomes an uplink of its own"
 # The second provider of the stand, with its own way out: through it the echo service reports
 # $EXIT_IP, through the VPS $VPS_IP — so the path is an address, not a counter.

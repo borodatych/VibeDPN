@@ -188,6 +188,57 @@ def test_failopen_reconnects_adguard_when_the_gateway_of_its_queries_changes_sta
     assert len(reconnected) == 2
 
 
+def hand_edit(path: Path, mode: str) -> None:
+    """config.yaml changed by the owner in an editor, behind core's back."""
+    config = load_config(path)
+    routing = config.routing
+    assert routing is not None
+    edited = routing.model_copy(update={"mode": RoutingMode(mode)})
+    path.write_text(render_config(config.model_copy(update={"routing": edited})), encoding="utf-8")
+
+
+def test_core_rereads_a_hand_edit_and_applies_it_live(tmp_path: Path) -> None:
+    """`vibedpn up` asks: the router, the watchers and AdGuard follow as after PUT /routing."""
+    applied: list[Config] = []
+    told: list[tuple[RoutingMode, bool]] = []
+    reconnected: list[Config] = []
+
+    def apply(config: Config) -> list[str]:
+        applied.append(config)
+        return []
+
+    def dns(config: Config, changed: bool) -> bool:
+        assert config.routing is not None
+        told.append((config.routing.mode, changed))
+        return True
+
+    client, path = box(tmp_path, apply=apply, dns=dns, reconnect=reconnected.append)
+    hand_edit(path, "off")
+    response = client.post("/config/reread")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"changed": True, "adguard": "applied"}
+    assert [item.routing.mode for item in applied if item.routing] == [RoutingMode.OFF]
+    assert told == [(RoutingMode.OFF, False)] and len(reconnected) == 1  # full through vps: direct
+    assert client.get("/status").json()["mode"] == "off"
+    assert client.post("/config/reread").json() == {"changed": False, "adguard": None}
+    assert len(applied) == 1  # nothing new: the router is not rebuilt
+
+
+def test_a_file_core_cannot_take_leaves_core_as_it_runs(tmp_path: Path) -> None:
+    def refused(_config: Config) -> list[str]:
+        raise RouterError("nft failed")
+
+    client, path = box(tmp_path)
+    path.write_text("version: 1\nrouting: [not, a, mapping]\n", encoding="utf-8")
+    assert client.post("/config/reread").status_code == 422
+    assert client.get("/status").json()["mode"] == "full"
+    client, path = box(tmp_path, apply=refused)
+    hand_edit(path, "off")
+    answer = client.post("/config/reread")
+    assert answer.status_code == 503 and "core keeps its own" in answer.json()["detail"]
+    assert client.get("/status").json()["mode"] == "full"
+
+
 def test_bad_routing_requests_change_nothing(tmp_path: Path) -> None:
     client, path = box(tmp_path)
     before = path.read_text(encoding="utf-8")
