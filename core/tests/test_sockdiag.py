@@ -17,6 +17,7 @@ from vibedpn.engine.sockdiag import (
     SOCK_DESTROY,
     SOCK_DIAG_BY_FAMILY,
     SockDiagError,
+    can_close,
     close_connection,
     close_where,
     dump_request,
@@ -177,3 +178,9 @@ def test_the_id_sent_to_close_is_the_one_the_kernel_listed() -> None:
     request = sockdiag.destroy_request(connection)
     assert struct.unpack_from("=H", request, 4)[0] == SOCK_DESTROY
     assert request[24:] == body[4:52] == connection.socket_id
+
+
+def test_the_kernel_is_asked_whether_it_closes_sockets_with_a_socket_that_is_not_there() -> None:
+    """ENOENT: it looked the socket up, so it can close one; EOPNOTSUPP: built without it."""
+    assert can_close(Kernel([], destroy=errno.ENOENT)) is True
+    assert can_close(Kernel([], destroy=errno.EOPNOTSUPP)) is False

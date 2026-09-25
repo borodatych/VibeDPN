@@ -155,7 +155,7 @@ from vibedpn.engine.ddns import load_state as load_ddns_state
 from vibedpn.engine.ddns import load_url as load_ddns_url
 from vibedpn.engine.ddns import save_url as save_ddns_url
 from vibedpn.engine.devices import DeviceError, DeviceStore, SeenDevice
-from vibedpn.engine.events import DEFAULT_LIMIT, EventError, EventKind, EventStore
+from vibedpn.engine.events import DEFAULT_LIMIT, Event, EventError, EventKind, EventStore
 from vibedpn.engine.learned import LearnedError
 from vibedpn.engine.myst import MystError, ProviderStats, TequilaClient, provider_stats
 from vibedpn.engine.router import (
@@ -1371,6 +1371,27 @@ def reconnect_dns(box: Config, exchange: Exchange = netlink_exchange) -> None:
         sys.stderr.write(
             f"vibedpn-core: AdGuard upstream connections closed: {closed}, their path changed\n"
         )
+
+
+def reconnect_on_failover(
+    current: Callable[[], Config], reconnect: DnsReconnect = reconnect_dns
+) -> Callable[[Event], None]:
+    """A journal that closes the old connections of AdGuard when routing.failopen moves its queries
+
+    With failopen, a silent gateway sends them direct and an answering one takes them back
+    Either way the connections opened along the other path are dead
+    Without failopen a silent gateway stops them all, and they come back along the same path
+    """
+
+    def follow(event: Event) -> None:
+        if event.kind is not EventKind.UPLINK:
+            return
+        config = current()
+        failopen = config.routing is not None and config.routing.failopen
+        if failopen and event.subject == dns_uplink(config):
+            reconnect(config)
+
+    return follow
 
 
 NO_ACCESS_FILES = "this core keeps no files for an access server"

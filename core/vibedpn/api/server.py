@@ -15,7 +15,7 @@ from pathlib import Path
 import httpx
 from pydantic import ValidationError
 
-from vibedpn.api.app import create_app
+from vibedpn.api.app import create_app, reconnect_on_failover
 from vibedpn.api.background import BackgroundLoop
 from vibedpn.api.consumer import ConsumerStatus, consumer_round, watch_consumer
 from vibedpn.api.journal import Journal, fan_out, ignore_event, store_journal
@@ -164,7 +164,9 @@ def main() -> None:
     devices, events, stored = _lan_stores(config, data_dir)
     # the Telegram bot hears every event the store keeps; it drains them on its own loop
     inbox: deque[Event] = deque()
-    journal = fan_out(stored, inbox.append)
+    # box_state is built below, before any watcher runs and journals
+    failover = reconnect_on_failover(lambda: box_state.config)
+    journal = fan_out(stored, inbox.append, failover)
     watchers = _watchers(config, uplinks, journal)
     box_state, resolver, smart, lists = _box_state(
         config, config_path, watchers, secrets_dir, data_dir

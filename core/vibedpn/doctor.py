@@ -96,6 +96,7 @@ from vibedpn.engine.router import (
     uplink_table,
     used_uplinks,
 )
+from vibedpn.engine.sockdiag import SockDiagError, can_close
 from vibedpn.engine.telegram import SECRETS_FILE as TELEGRAM_SECRETS_FILE
 from vibedpn.engine.telegram import TelegramSecrets
 from vibedpn.engine.telegram import load_secrets as load_telegram_secrets
@@ -248,6 +249,8 @@ class DoctorFacts:
     last_resort_routes: dict[str, bool | None] = field(default_factory=dict)
     rp_filter: int | None = None  # max of all and the gateway bridge, as the kernel uses it
     lan_ipv6: bool | None = None  # a global IPv6 address on lan_interface; None: not checked
+    # The kernel closes sockets (CONFIG_INET_DIAG_DESTROY); None: not asked or not answered
+    socket_destroy: bool | None = None
     exits: list[ExitFact] | None = None  # None: `doctor` ran without --network
     memory_bytes: int | None = None  # None: /proc/meminfo could not be read
     # The node's NAT type (only with --network: the node asks Mysterium's servers); "" not asked.
@@ -695,6 +698,9 @@ def _lan_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
     ipv6 = _lan_ipv6_result(config, facts)
     if ipv6 is not None:
         results.append(ipv6)
+    reconnect = _dns_reconnect_result(config, facts.socket_destroy)
+    if reconnect is not None:
+        results.append(reconnect)
     if config.upstreams.vps.enabled:
         results.append(_vps_lan_access_result(config))
     if config.ui.enabled:
@@ -839,6 +845,36 @@ def _exit_results(
                 )
             )
     return results
+
+
+def _dns_reconnect_result(config: Config, can: bool | None) -> CheckResult | None:
+    """After a switch of its uplink, core closes the connections AdGuard opened along the old path
+
+    A kernel that cannot close sockets leaves them: the first name over each fails once
+    """
+    if not config.dns.enabled or can is None:
+        return None
+    if can:
+        return CheckResult(
+            "dns reconnect", Verdict.OK, "a switch of the uplink closes AdGuard's old connections"
+        )
+    return CheckResult(
+        "dns reconnect",
+        Verdict.WARN,
+        "the kernel cannot close sockets (no CONFIG_INET_DIAG_DESTROY):"
+        " after a switch of the uplink the first name may fail once",
+        "nothing to do on this box: it keeps working, only that first name waits for a retry",
+    )
+
+
+def _socket_destroy(config: Config | None) -> bool | None:
+    """Asked only on a box that runs AdGuard: nothing else of VibeDPN closes sockets"""
+    if config is None or config.network is None or not config.dns.enabled:
+        return None
+    try:
+        return can_close()
+    except SockDiagError:
+        return None
 
 
 def _lan_ipv6_result(config: Config, facts: DoctorFacts) -> CheckResult | None:
@@ -1144,6 +1180,7 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         last_resort_routes=last_resort_routes,
         rp_filter=rp_filter,
         lan_ipv6=lan_ipv6,
+        socket_destroy=_socket_destroy(config),
         exits=_exits(box_dir, config, services) if network and config is not None else None,
         dpn_connection=_dpn_connection(config) if network and config is not None else "",
         memory_bytes=HostProbe().memory_bytes(),

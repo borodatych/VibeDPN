@@ -26,6 +26,8 @@ FIRST_PAUSE_SECONDS = 5.0
 LONGEST_PAUSE_SECONDS = 300.0
 # A loop that ran this long before it raised is not failing in a row: its pause starts short again.
 STEADY_SECONDS = 600.0
+# The code of VibeDPN itself, told from the libraries it calls
+PACKAGE_DIR = Path(__file__).resolve().parents[1]
 
 Start = Callable[[], Awaitable[None]]
 Sleep = Callable[[float], Awaitable[None]]
@@ -41,10 +43,24 @@ class BackgroundLoop:
 
 
 def failure(exc: BaseException) -> str:
-    """An unexpected exception as the log may show it: the class and where it was raised."""
+    """An unexpected exception as the log may show it: its class and place, never its text
+
+    Raised inside a library, the place alone does not say which call of ours failed
+    So the last line of our own code that led there follows it: `at decoder.py:355 from ddns.py:140`
+    """
     frames = traceback.extract_tb(exc.__traceback__)
-    where = f" at {Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else ""
-    return f"{exc.__class__.__name__}{where}"
+    if not frames:
+        return exc.__class__.__name__
+    raised = frames[-1]
+    where = f"{exc.__class__.__name__} at {Path(raised.filename).name}:{raised.lineno}"
+    ours = next((frame for frame in reversed(frames) if _ours(frame.filename)), None)
+    if ours is None or ours is raised:
+        return where
+    return f"{where} from {Path(ours.filename).name}:{ours.lineno}"
+
+
+def _ours(filename: str) -> bool:
+    return Path(filename).resolve().is_relative_to(PACKAGE_DIR)
 
 
 async def supervised(

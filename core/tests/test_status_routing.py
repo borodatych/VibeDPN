@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vibedpn.api import client as core_api
-from vibedpn.api.app import create_app, reconnect_dns
+from vibedpn.api.app import create_app, reconnect_dns, reconnect_on_failover
 from vibedpn.api.consumer import ConsumerStatus
 from vibedpn.api.state import BoxState
 from vibedpn.api.uplink import UplinkState, UplinkWatchers, watch_uplink
@@ -18,6 +18,7 @@ from vibedpn.bootstrap import render_config
 from vibedpn.config import Config, RoutingMode, Upstream, load_config
 from vibedpn.engine.adguard import CORE_USER, AdguardError, adguard_text, set_dns_mode
 from vibedpn.engine.consumer import ConsumerState, CountryOffer
+from vibedpn.engine.events import Event, EventAction, EventKind
 from vibedpn.engine.myst import MystError
 from vibedpn.engine.router import UPLINKS, RouterError, RoutingFacts, Uplink
 from vibedpn.engine.sockdiag import SockDiagError
@@ -166,6 +167,25 @@ def test_a_kernel_that_keeps_the_connections_leaves_the_switch_applied(
     assert client.put("/routing", json={"mode": "off"}).status_code == 200
     routing = load_config(path).routing
     assert routing is not None and routing.mode is RoutingMode.OFF
+
+
+def test_failopen_reconnects_adguard_when_the_gateway_of_its_queries_changes_state() -> None:
+    """With failopen a silent gateway sends its queries direct, an answering one takes them back."""
+    raw = client_config()
+    raw["routing"] = {"mode": "full", "default_upstream": "vps", "failopen": True}
+    raw["upstreams"] = {"vps": {"enabled": True}, "tor": {"enabled": True}}
+    config = Config.model_validate(raw)
+    reconnected: list[Config] = []
+    follow = reconnect_on_failover(lambda: config, reconnected.append)
+    follow(Event(1.0, EventKind.UPLINK, "vps", EventAction.GATEWAY_SILENT))
+    follow(Event(2.0, EventKind.UPLINK, "vps", EventAction.GATEWAY_ANSWERS))
+    follow(Event(3.0, EventKind.UPLINK, "tor", EventAction.GATEWAY_SILENT))  # not its uplink
+    follow(Event(4.0, EventKind.WIFI, "wlan0", EventAction.AP_DISABLED))
+    assert len(reconnected) == 2
+    raw["routing"]["failopen"] = False  # the kill switch: nothing moves, the path stays
+    config = Config.model_validate(raw)
+    follow(Event(5.0, EventKind.UPLINK, "vps", EventAction.GATEWAY_SILENT))
+    assert len(reconnected) == 2
 
 
 def test_bad_routing_requests_change_nothing(tmp_path: Path) -> None:

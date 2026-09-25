@@ -5,10 +5,12 @@ import asyncio
 
 import pytest
 
+from vibedpn.api import background
 from vibedpn.api.background import (
     FIRST_PAUSE_SECONDS,
     LONGEST_PAUSE_SECONDS,
     STEADY_SECONDS,
+    failure,
     supervised,
 )
 
@@ -129,3 +131,29 @@ def test_cancelling_ends_the_loop_while_it_runs_and_while_it_waits(
     log = capsys.readouterr().err
     assert "forever" not in log
     assert log.count("broken failed") == 1
+
+
+def test_a_failure_inside_a_library_names_the_line_of_ours_that_led_there() -> None:
+    """Raised by json, the place alone says decoder.py; the loop that called json is what to fix."""
+    ours = compile(
+        "import json\ndef read(text):\n    return json.loads(text)\n",
+        str(background.PACKAGE_DIR / "engine" / "stand_in.py"),
+        "exec",
+    )
+    namespace: dict[str, object] = {}
+    exec(ours, namespace)  # a module of ours without a file on disk
+    read = namespace["read"]
+    assert callable(read)
+    with pytest.raises(ValueError) as raised:
+        read(f'{{"token": "{SECRET}"')
+    line = failure(raised.value)
+    assert line.startswith("JSONDecodeError at decoder.py:")
+    assert line.endswith(" from stand_in.py:3")
+    assert SECRET not in line
+    try:
+        raise RuntimeError(SECRET)
+    except RuntimeError as exc:
+        # raised in the code that failed: the place alone names it
+        assert failure(exc).startswith("RuntimeError at test_background.py:")
+        assert " from " not in failure(exc)
+    assert failure(RuntimeError("never raised")) == "RuntimeError"

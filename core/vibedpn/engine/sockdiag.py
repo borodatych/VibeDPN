@@ -182,3 +182,19 @@ def close_where(
         for connection in list_connections(exchange)
         if connection.uid == uid and doomed(connection)
     )
+
+
+def can_close(exchange: Exchange = netlink_exchange) -> bool:
+    """Whether the kernel closes sockets at all
+
+    Asked to close a socket that does not exist, it answers ENOENT when it can
+    Built without CONFIG_INET_DIAG_DESTROY, it answers EOPNOTSUPP
+    The lookup comes first, so the answer needs no CAP_NET_ADMIN
+    """
+    nobody = Connection(
+        socket.AF_INET, IPv4Address(0), 0, IPv4Address(0), 0, 0, bytes(SOCKET_ID_BYTES)
+    )
+    for kind, body in exchange(destroy_request(nobody)):
+        if kind == NLMSG_ERROR:
+            return _failure(body) != errno.EOPNOTSUPP
+    raise SockDiagError("the kernel did not answer the request to close a socket")

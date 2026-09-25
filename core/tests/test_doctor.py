@@ -600,6 +600,15 @@ def test_dns_leak_in_full_follows_the_dns_uplink_chain() -> None:
     assert by_name(evaluate(facts(exits=[])))["dns leak"].verdict is Verdict.OK  # home, mode off
 
 
+def test_dns_reconnect_says_whether_the_kernel_closes_old_connections() -> None:
+    """A Raspberry Pi kernel cannot: the box works, only the first name after a switch may fail."""
+    can = by_name(evaluate(facts(config=full_client(), socket_destroy=True)))["dns reconnect"]
+    assert can.verdict is Verdict.OK
+    cannot = by_name(evaluate(facts(config=full_client(), socket_destroy=False)))["dns reconnect"]
+    assert cannot.verdict is Verdict.WARN and "CONFIG_INET_DIAG_DESTROY" in cannot.detail
+    assert "dns reconnect" not in by_name(evaluate(facts(config=full_client())))  # not asked
+
+
 def test_without_network_nothing_is_asked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The exit probes are the only requests to the internet; gather must not even reach them."""
 

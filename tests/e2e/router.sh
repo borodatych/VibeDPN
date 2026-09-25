@@ -535,12 +535,27 @@ sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up after failopen t
 wait_healthy vibedpn-core-1
 wait_healthy vibedpn-wg-client-1
 await_exit "$VPS_IP" "the device does not leave through the VPS after switching to failopen true"
+if [ "$OFFLINE" != 1 ]; then
+  fresh_answers "$(fresh_name 27)" >/dev/null # AdGuard holds a connection through the VPS
+fi
+switched="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 docker stop vibedpn-wg-client-1 >/dev/null
 await_exit "$INTERNET_GATEWAY" "failopen true did not let the device out directly"
 echo "gateway stopped: exit address $(exit_address)"
+if [ "$OFFLINE" != 1 ]; then
+  # failopen moves the queries of AdGuard too: direct now, and back through the VPS below
+  first_answer 28 "failopen true with the gateway stopped"
+  closed_since "$switched" "failopen true with the gateway stopped"
+fi
+switched="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 docker start vibedpn-wg-client-1 >/dev/null
 wait_healthy vibedpn-wg-client-1
 await_exit "$VPS_IP" "the device did not return to the VPS with the gateway"
+if [ "$OFFLINE" != 1 ]; then
+  first_answer 29 "failopen true with the gateway back"
+  closed_since "$switched" "failopen true with the gateway back"
+  echo "failopen: the first new name answered at once both ways"
+fi
 
 log "vibedpn mode off: direct, applied live through core, nothing restarts"
 started="$(wg_started)"

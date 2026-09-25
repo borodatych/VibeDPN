@@ -95,6 +95,8 @@ https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/openapi/openapi.yaml .
 Закрывает через `SOCK_DESTROY` (`engine/sockdiag.py`, разбор ядра — `linux/sockDestroy.md`); в журнал ядра — `AdGuard upstream connections closed: N, their path changed`.
 Апстримы по-прежнему уходят только при входе в `smart` и выходе из него: там меняется сам список апстримов.
 Без `CONFIG_INET_DIAG_DESTROY` (ядра Raspberry Pi) ядро пишет `AdGuard keeps its upstream connections (…)`, и поведение остаётся прежним.
+Тот же путь меняет и `routing.failopen: true`: молчащий шлюз уводит запросы AdGuard напрямую, ответивший — обратно в выход; ядро закрывает соединения и тогда — по событию сторожа выхода в журнале (2026-09-25). При `failopen: false` путь не меняется: молчащий шлюз останавливает запросы, а вернувшийся несёт их тем же путём.
+`vibedpn doctor` на коробке с AdGuard спрашивает ядро, умеет ли оно закрывать сокеты, и пишет `dns reconnect` — ok или warn.
 **Как применять:** стенд `router.sh` после `mode off`, `mode full`, `upstream wg-stand` и `upstream vps` требует ответа на новое имя с первого запроса и строки ядра о закрытии; «пусто в `full`» для AAAA проверяется кодом ответа NOERROR, а не числом записей.
 **Источники:** https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/dnsforward/http.go ,
 https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/dnsforward/dnsforward.go .
