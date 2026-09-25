@@ -132,6 +132,7 @@
 
 ## frontend
 
+- [rootImportCycle.md](frontend/rootImportCycle.md) — `bun dev` падал: страницы ошибок `root` тянули `languageQuery`, построенный от `root` (TDZ); язык теперь в React-контексте, гейт — тест графа импортов `root`; `prettier-plugin-jsdoc` склеивает строки описания, мысли — отдельными абзацами
 - [toolchain.md](frontend/toolchain.md) — версии для Stage 6; TypeScript 7 против typescript-eslint,
   шаблон Vite с oxlint вместо ESLint; устарело — UI на start0
 - [start0Build.md](frontend/start0Build.md) — start0 на коробке: сборка падает на 2 ГиБ (пик 2.18 ГиБ),
