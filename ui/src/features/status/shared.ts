@@ -13,6 +13,10 @@ export type UplinkStatus = {
   gateway_route: boolean | null
   kill_switch_route: boolean | null
   lan_access: boolean | null
+  /** an uplink in use: the uplink whose gateway carries its traffic on the host now (itself or a fallback); null: none */
+  exit_through: string | null
+  /** it is in routing.fallback */
+  fallback: boolean
 }
 
 /** A Mysterium consumer as core last saw it: the one of uplink dpn or of a rule country. */
@@ -39,6 +43,8 @@ export type BoxStatus = {
   /** an uplink key: vps, dpn, or wg-<name> of a named WireGuard exit */
   default_upstream: string
   failopen: boolean
+  /** routing.fallback in order: the uplinks that take the traffic of a silent one */
+  fallback: string[]
   rules_current: boolean | null
   lan_without_exit: boolean
   uplinks: UplinkStatus[]
@@ -51,6 +57,7 @@ export type BoxStatus = {
 export type RoutingView = {
   mode: string
   default_upstream: string
+  fallback: string[]
   adguard: 'applied' | 'pending' | 'none'
 }
 
@@ -71,6 +78,10 @@ export const summarizeStatus = (status: BoxStatus): { tone: StatusTone; headline
   }
   const modeUplink = status.uplinks.find((item) => item.name === status.default_upstream)
   if (status.mode === 'full' && modeUplink?.gateway_alive === false) {
+    const through = modeUplink.exit_through
+    if (through !== null && through !== uplink) {
+      return { tone: 'warning', headline: { key: 'status.headline.fallback', params: { uplink, through } } }
+    }
     return { tone: 'warning', headline: { key: 'status.headline.failopen', params: { uplink } } }
   }
   if (status.rules_current === false) {
@@ -80,6 +91,35 @@ export const summarizeStatus = (status: BoxStatus): { tone: StatusTone; headline
     return { tone: 'ok', headline: { key: 'status.headline.direct' } }
   }
   return { tone: 'ok', headline: { key: 'status.headline.through', params: { uplink } } }
+}
+
+/** A consumer of a rule country (dpn-<country>) serves its rules only: no mode and no chain goes through it. */
+const COUNTRY_KEY_PREFIX = 'dpn-'
+
+/**
+ * The uplinks the owner may name as the exit of the LAN or in the fallback chain: the enabled ones but the rule
+ * countries.
+ *
+ * @tags status
+ */
+export const routableUplinks = (status: BoxStatus): string[] =>
+  status.uplinks
+    .filter((uplink) => uplink.enabled && !uplink.name.startsWith(COUNTRY_KEY_PREFIX))
+    .map((uplink) => uplink.name)
+
+/**
+ * The fallback chain with one uplink moved a place up; the first one stays where it is.
+ *
+ * @tags status
+ */
+export const raiseInChain = (chain: string[], name: string): string[] => {
+  const index = chain.indexOf(name)
+  if (index <= 0) {
+    return chain
+  }
+  const next = [...chain]
+  next.splice(index - 1, 2, name, chain[index - 1])
+  return next
 }
 
 /** `GET /dpn/registration` (core/vibedpn/api/models.py: DpnRegistrationView): the price before the click. */

@@ -13,7 +13,14 @@ import {
 } from '@/features/status/api'
 import { formatMyst } from '@/features/node/shared'
 import { REGISTERED } from '@/features/status/shared'
-import { summarizeStatus, type BoxStatus, type DpnStatus, type UplinkStatus } from '@/features/status/shared'
+import {
+  raiseInChain,
+  routableUplinks,
+  summarizeStatus,
+  type BoxStatus,
+  type DpnStatus,
+  type UplinkStatus,
+} from '@/features/status/shared'
 import { eventListQuery } from '@/features/events/api'
 import { DROPS_WINDOW_HOURS, WIFI_DROPS_WARNING, wifiDrops } from '@/features/events/shared'
 import { UpdateCard } from '@/features/update/card'
@@ -22,6 +29,7 @@ import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import type { T } from '@/modules/i18n/base'
 import { useLanguage, useT } from '@/modules/i18n/use-t'
 import { formatDate } from '@/utils/date'
+import { ArrowUpIcon, XIcon } from 'lucide-react'
 
 const TONE_BADGE = { ok: 'success', warning: 'warning', danger: 'destructive' } as const
 
@@ -40,6 +48,20 @@ const killSwitchText = (uplink: UplinkStatus, failopen: boolean, t: T) => {
     return t('uplink.killSwitchState.unreadable')
   }
   return uplink.kill_switch_route ? t('uplink.killSwitchState.armed') : t('uplink.killSwitchState.missing')
+}
+
+const exitText = (uplink: UplinkStatus, t: T) => {
+  if (uplink.exit_through === null) {
+    return t('uplink.exit.none')
+  }
+  return uplink.exit_through === uplink.name ? t('uplink.exit.own') : uplink.exit_through.toUpperCase()
+}
+
+const uplinkRole = (uplink: UplinkStatus, t: T) => {
+  if (uplink.in_use) {
+    return t('uplink.inUse')
+  }
+  return uplink.fallback ? t('uplink.inFallback') : t('uplink.notInUse')
 }
 
 const VpsLanAccess = ({ allowed }: { allowed: boolean }) => {
@@ -75,15 +97,18 @@ const VpsLanAccess = ({ allowed }: { allowed: boolean }) => {
 const UplinkCard = ({ uplink, failopen }: { uplink: UplinkStatus; failopen: boolean }) => {
   const t = useT()
   const language = useLanguage()
+  const watched = uplink.in_use || uplink.fallback
   return (
-    <Section
-      h2={uplink.name.toUpperCase()}
-      size="lg"
-      description={uplink.in_use ? t('uplink.inUse') : t('uplink.notInUse')}
-    >
+    <Section h2={uplink.name.toUpperCase()} size="lg" description={uplinkRole(uplink, t)}>
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 font-accent text-sm">
         <dt className="text-muted-foreground">{t('uplink.gateway')}</dt>
-        <dd>{uplink.in_use ? gatewayText(uplink.gateway_alive, t) : t('common.none')}</dd>
+        <dd>{watched ? gatewayText(uplink.gateway_alive, t) : t('common.none')}</dd>
+        {uplink.in_use && (
+          <>
+            <dt className="text-muted-foreground">{t('uplink.exit')}</dt>
+            <dd>{exitText(uplink, t)}</dd>
+          </>
+        )}
         <dt className="text-muted-foreground">{t('uplink.killSwitch')}</dt>
         <dd>{uplink.in_use ? killSwitchText(uplink, failopen, t) : t('common.none')}</dd>
         {uplink.lan_access !== null && (
@@ -110,15 +135,11 @@ const UplinkCard = ({ uplink, failopen }: { uplink: UplinkStatus; failopen: bool
 const RoutingControls = ({ status }: { status: BoxStatus }) => {
   const mutation = routingUpdateMutation.useMutation()
   const t = useT()
-  const change = async (input: { mode?: 'off' | 'full'; default_upstream?: 'vps' | 'dpn' | 'tor' }) => {
+  const change = async (input: { mode?: 'off' | 'full'; default_upstream?: string; fallback?: string[] }) => {
     await mutation.mutateAsync(input)
     await boxStatusQuery.refetchQuery()
   }
-  // The consumers of rule countries (dpn-<country>) serve their rules only: no mode goes through them.
-  const enabled = status.uplinks.filter(
-    (uplink): uplink is UplinkStatus & { name: 'vps' | 'dpn' | 'tor' } =>
-      uplink.enabled && (uplink.name === 'vps' || uplink.name === 'dpn' || uplink.name === 'tor'),
-  )
+  const enabled = routableUplinks(status)
   return (
     <Section
       h2={t('routing.title')}
@@ -148,24 +169,98 @@ const RoutingControls = ({ status }: { status: BoxStatus }) => {
       {enabled.length > 1 && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <span className="font-accent text-sm text-muted-foreground">{t('routing.uplink')}</span>
-          {enabled.map((uplink) => (
+          {enabled.map((name) => (
             <Button
-              key={uplink.name}
-              variant={status.default_upstream === uplink.name ? 'default' : 'outline-secondary'}
-              disabled={status.default_upstream === uplink.name}
+              key={name}
+              variant={status.default_upstream === name ? 'default' : 'outline-secondary'}
+              disabled={status.default_upstream === name}
               loading={mutation.isPending}
-              onClick={() => void change({ default_upstream: uplink.name })}
+              onClick={() => void change({ default_upstream: name })}
             >
-              {uplink.name.toUpperCase()}
+              {name.toUpperCase()}
             </Button>
           ))}
         </div>
+      )}
+      {enabled.length > 1 && (
+        <FallbackChain
+          chain={status.fallback}
+          candidates={enabled.filter((name) => !status.fallback.includes(name))}
+          pending={mutation.isPending}
+          onChange={(fallback) => void change({ fallback })}
+        />
       )}
       {mutation.isError && <p className="mt-3 text-sm text-destructive">{mutation.error.message}</p>}
       {mutation.data?.routing.adguard === 'pending' && (
         <p className="mt-3 text-sm text-warning">{t('routing.adguardPending')}</p>
       )}
     </Section>
+  )
+}
+
+const FallbackChain = ({
+  chain,
+  candidates,
+  pending,
+  onChange,
+}: {
+  chain: string[]
+  candidates: string[]
+  pending: boolean
+  onChange: (chain: string[]) => void
+}) => {
+  const t = useT()
+  return (
+    <div className="mt-4 space-y-2">
+      <p className="font-accent text-sm text-muted-foreground">{t('routing.fallback.title')}</p>
+      <p className="text-sm text-muted-foreground">{t('routing.fallback.hint')}</p>
+      {chain.length === 0 ? (
+        <p className="text-sm">{t('routing.fallback.empty')}</p>
+      ) : (
+        <ol className="space-y-1">
+          {chain.map((name, index) => (
+            <li key={name} className="flex items-center gap-2 font-accent text-sm">
+              <span className="w-6 text-muted-foreground">{index + 1}</span>
+              <span className="min-w-24">{name.toUpperCase()}</span>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                icon={ArrowUpIcon}
+                aria-label={t('routing.fallback.up', { uplink: name })}
+                hint={t('routing.fallback.up', { uplink: name })}
+                disabled={index === 0 || pending}
+                onClick={() => onChange(raiseInChain(chain, name))}
+              />
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                icon={XIcon}
+                aria-label={t('routing.fallback.remove', { uplink: name })}
+                hint={t('routing.fallback.remove', { uplink: name })}
+                disabled={pending}
+                onClick={() => onChange(chain.filter((item) => item !== name))}
+              />
+            </li>
+          ))}
+        </ol>
+      )}
+      {candidates.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-accent text-sm text-muted-foreground">{t('routing.fallback.add')}</span>
+          {candidates.map((name) => (
+            <Button
+              key={name}
+              variant="outline-secondary"
+              size="sm"
+              loading={pending}
+              onClick={() => onChange([...chain, name])}
+            >
+              {name.toUpperCase()}
+            </Button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -217,9 +312,7 @@ const RegisterIdentity = ({ dpn }: { dpn: DpnStatus }) => {
     await boxStatusQuery.refetchQuery()
     await dpnRegistrationQuery.refetchQuery()
   }
-  const price = offer?.free
-    ? t('dpn.register.free')
-    : t('dpn.register.fee', { fee: formatMyst(offer?.fee_wei ?? '0') })
+  const price = offer?.free ? t('dpn.register.free') : t('dpn.register.fee', { fee: formatMyst(offer?.fee_wei ?? '0') })
   return (
     <div className="mt-3 space-y-2 text-sm">
       <p className="text-muted-foreground">{price}</p>

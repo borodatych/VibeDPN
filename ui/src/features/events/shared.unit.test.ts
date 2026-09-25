@@ -8,8 +8,8 @@ const PHONE = '92:da:e8:fa:f8:63'
 
 const event = (action: BoxEvent['action'], detail: BoxEvent['detail'] = {}, name: string | null = null): BoxEvent => ({
   time: 0,
-  kind: action.startsWith('gateway') ? 'uplink' : 'wifi',
-  subject: action.startsWith('gateway') ? 'dpn' : action.startsWith('ap') ? 'wlp2s0' : PHONE,
+  kind: action.startsWith('gateway') || action === 'rerouted' ? 'uplink' : 'wifi',
+  subject: action.startsWith('gateway') || action === 'rerouted' ? 'dpn' : action.startsWith('ap') ? 'wlp2s0' : PHONE,
   name,
   action,
   detail,
@@ -50,5 +50,13 @@ describe('events', () => {
         event('client_disconnected'),
       ]),
     ).toBe(2)
+  })
+
+  test('a move along the fallback chain says where the traffic went and warns until it is back', () => {
+    expect(eventText(event('rerouted', { through: 'tor' }), t)).toBe('Its traffic goes through tor')
+    expect(eventText(event('rerouted', { through: 'direct' }), t)).toBe('Its traffic goes direct')
+    expect(eventText(event('rerouted', { through: 'held' }), t)).toBe('Its traffic is held (kill switch)')
+    expect(eventTone(event('rerouted', { through: 'tor' }))).toBe('warning')
+    expect(eventTone(event('rerouted', { through: 'dpn' }))).toBe('ok')
   })
 })

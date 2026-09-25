@@ -26,6 +26,8 @@ export const routingUpdateMutation = root.lets
       mode: z.enum(['off', 'full']).optional(),
       // an uplink key, not a fixed set: the names of the WireGuard exits are the owner's
       default_upstream: z.string().optional(),
+      // routing.fallback as a whole, in order; [] empties it
+      fallback: z.array(z.string()).optional(),
     }),
   )
   .loader(async ({ input }) => {

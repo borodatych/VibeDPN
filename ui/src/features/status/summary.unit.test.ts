@@ -1,4 +1,4 @@
-import { summarizeStatus, type BoxStatus } from '@/features/status/shared'
+import { raiseInChain, routableUplinks, summarizeStatus, type BoxStatus } from '@/features/status/shared'
 import { baseT } from '@/modules/i18n/translator'
 import { describe, expect, test } from 'bun:test'
 
@@ -6,6 +6,7 @@ const base: BoxStatus = {
   mode: 'full',
   default_upstream: 'vps',
   failopen: false,
+  fallback: [],
   rules_current: true,
   lan_without_exit: false,
   uplinks: [
@@ -19,6 +20,8 @@ const base: BoxStatus = {
       gateway_route: true,
       kill_switch_route: true,
       lan_access: false,
+      exit_through: 'vps',
+      fallback: false,
     },
   ],
   dpn: null,
@@ -47,6 +50,19 @@ describe('summarizeStatus', () => {
     expect(summary.headline.key).toBe('status.headline.failopen')
   })
 
+  test('a silent gateway whose traffic a fallback carries names that fallback', () => {
+    const silent = withGateway(false)
+    const summary = summarizeStatus({
+      ...silent,
+      fallback: ['tor'],
+      uplinks: silent.uplinks.map((uplink) => ({ ...uplink, exit_through: 'tor' })),
+    })
+    expect(summary.tone).toBe('warning')
+    expect(baseT(summary.headline.key, summary.headline.params)).toBe(
+      'The vps uplink does not answer: the LAN goes out through tor from the fallback chain',
+    )
+  })
+
   test('a gateway not probed yet is not called silent', () => {
     expect(summarizeStatus(withGateway(null)).tone).toBe('ok')
   })
@@ -57,5 +73,27 @@ describe('summarizeStatus', () => {
 
   test('mode off says the LAN goes direct', () => {
     expect(summarizeStatus({ ...base, mode: 'off' }).headline.key).toBe('status.headline.direct')
+  })
+})
+
+describe('the fallback chain', () => {
+  test('any enabled uplink may be named but the consumers of rule countries', () => {
+    const uplink = base.uplinks[0]
+    const status: BoxStatus = {
+      ...base,
+      uplinks: [
+        uplink,
+        { ...uplink, name: 'dpn-de' },
+        { ...uplink, name: 'wg-second' },
+        { ...uplink, name: 'tor', enabled: false },
+      ],
+    }
+    expect(routableUplinks(status)).toEqual(['vps', 'wg-second'])
+  })
+
+  test('an uplink moves one place up, the first one stays', () => {
+    expect(raiseInChain(['wg-second', 'tor', 'xray'], 'xray')).toEqual(['wg-second', 'xray', 'tor'])
+    expect(raiseInChain(['wg-second', 'tor'], 'wg-second')).toEqual(['wg-second', 'tor'])
+    expect(raiseInChain(['tor'], 'vps')).toEqual(['tor'])
   })
 })

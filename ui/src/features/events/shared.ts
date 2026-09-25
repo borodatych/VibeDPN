@@ -4,7 +4,17 @@ export const EVENT_KINDS = ['wifi', 'uplink'] as const
 export type EventKind = (typeof EVENT_KINDS)[number]
 
 export type EventAction =
-  'client_connected' | 'client_disconnected' | 'ap_enabled' | 'ap_disabled' | 'gateway_answers' | 'gateway_silent'
+  | 'client_connected'
+  | 'client_disconnected'
+  | 'ap_enabled'
+  | 'ap_disabled'
+  | 'gateway_answers'
+  | 'gateway_silent'
+  | 'rerouted'
+
+/** Where the traffic of a rerouted uplink went when no uplink of the chain answered: core's words, not an uplink. */
+const REROUTED_DIRECT = 'direct'
+const REROUTED_HELD = 'held'
 
 /** One entry of core's `GET /events` (core/vibedpn/api/models.py: EventView); `time` in unix seconds. */
 export type BoxEvent = {
@@ -113,14 +123,29 @@ export const eventText = (event: BoxEvent, t: T): string => {
       return t('events.uplink.answers')
     case 'gateway_silent':
       return t('events.uplink.silent')
+    case 'rerouted': {
+      const through = String(event.detail.through ?? '')
+      if (through === REROUTED_DIRECT) {
+        return t('events.uplink.reroutedDirect')
+      }
+      if (through === REROUTED_HELD) {
+        return t('events.uplink.reroutedHeld')
+      }
+      return t('events.uplink.rerouted', { uplink: through })
+    }
   }
 }
 
 /** Something the owner may want to look at: a link lost, not a link gained. */
-export const eventTone = (event: BoxEvent): EventTone =>
-  event.action === 'client_disconnected' || event.action === 'ap_disabled' || event.action === 'gateway_silent'
+export const eventTone = (event: BoxEvent): EventTone => {
+  if (event.action === 'rerouted') {
+    // back through its own gateway is a link regained; anywhere else is the chain at work
+    return event.detail.through === event.subject ? 'ok' : 'warning'
+  }
+  return event.action === 'client_disconnected' || event.action === 'ap_disabled' || event.action === 'gateway_silent'
     ? 'warning'
     : 'ok'
+}
 
 /** Clients that lost the access point among these events. */
 export const wifiDrops = (events: BoxEvent[]): number =>
