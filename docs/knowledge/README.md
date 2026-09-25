@@ -137,6 +137,7 @@
 ## frontend
 
 - [rootImportCycle.md](frontend/rootImportCycle.md) — `bun dev` падал: страницы ошибок `root` тянули `languageQuery`, построенный от `root` (TDZ); язык теперь в React-контексте, гейт — тест графа импортов `root`; `prettier-plugin-jsdoc` склеивает строки описания, мысли — отдельными абзацами
+- [i18nGate.md](frontend/i18nGate.md) — «No»/«Yes» в подтверждениях шли по-английски: `jsx-no-literals` стоял на списке экранов, а примитивы, атрибуты (`ignoreProps`) и ветки `{x ? 'Text' : …}` не видит; гейт на всех `.tsx` плюс `no-restricted-syntax`, тест мёртвых ключей; строки вне разметки гейт не ловит
 - [toolchain.md](frontend/toolchain.md) — версии для Stage 6; TypeScript 7 против typescript-eslint,
   шаблон Vite с oxlint вместо ESLint; устарело — UI на start0
 - [start0Build.md](frontend/start0Build.md) — start0 на коробке: сборка падает на 2 ГиБ (пик 2.18 ГиБ),
