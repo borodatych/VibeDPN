@@ -127,6 +127,28 @@ def test_a_failed_update_says_why_and_leaves_the_revision(
     assert "install.sh failed" in failed.message and failed.before == failed.after == "abc1234"
 
 
+def test_images_that_never_download_are_the_reason_the_panel_shows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = Host(tmp_path, monkeypatch, installs=True)
+
+    def run(argv: list[str]) -> int:
+        if "pull" in argv:
+            host.calls.append(argv)
+            return 1
+        return Host.run(host, argv)
+
+    monkeypatch.setattr(cli, "run", run)
+    monkeypatch.setattr(cli, "PULL_PAUSE_SECONDS", 0.0)
+    request_update(tmp_path / DATA, 100.0)
+    result = runner.invoke(cli.app, ["update", "--requested", "--dir", str(tmp_path)])
+    assert result.exit_code == 1
+    failed = read_update_result(tmp_path / DATA)
+    assert failed is not None and not failed.ok
+    assert "did not download after 3 attempts" in failed.message
+    assert not any("restart" in argv for argv in host.calls)
+
+
 def test_the_panel_asks_once_and_sees_the_update_run(tmp_path: Path) -> None:
     data = tmp_path / "data"
     data.mkdir()

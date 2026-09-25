@@ -674,6 +674,12 @@ def _switch_update_timer(box_dir: Path, switch: TimerSwitch) -> None:
     typer.echo(f"automatic update: {switch.value}")
 
 
+# One of the addresses ghcr.io resolves to is a black hole on some lines, and the resolver hands
+# it out now and then: a pull that failed is tried again, as install.sh does with git
+PULL_ATTEMPTS = 3
+PULL_PAUSE_SECONDS = 10.0
+
+
 class _UpdateFailedError(Exception):
     """Why an update stopped; the box keeps running what it ran"""
 
@@ -799,11 +805,7 @@ def _record_revision(box_dir: Path) -> Revision | None:
 def _pull(box_dir: Path) -> None:
     """Pull the images of the active services, and of every other service whose image this host
     keeps (compose.kept_services): a profile enabled after the update starts on current code."""
-    # --ignore-pull-failures, not --ignore-buildable: the latter skips every service that has
-    # a `build:` section, which is all of ours, so the box pulled only the third-party images
-    # and kept running its own containers on the code they were built with (knowledge
-    # linux/boxBackup.md). A service whose image is not published is the failure this flag forgives.
-    _compose(box_dir, "pull", "--ignore-pull-failures")
+    _pull_images(box_dir)
     inactive = _inactive_services(box_dir)
     if not inactive:
         return
@@ -814,9 +816,55 @@ def _pull(box_dir: Path) -> None:
             inactive,
         )
     except ComposeError as exc:
-        raise _fail(str(exc)) from None
+        raise _UpdateFailedError(str(exc)) from None
     if kept:
-        _compose(box_dir, "pull", "--ignore-pull-failures", *kept, all_profiles=True)
+        _pull_images(box_dir, *kept, all_profiles=True)
+
+
+def _pull_images(box_dir: Path, *services: str, all_profiles: bool = False) -> None:
+    """Pull the images of ``services`` (every active one when none is named), trying again after
+    a failure; the images that still fail end the update before the restart
+
+    No failure is forgiven: every service of the box pulls a published image
+    --ignore-pull-failures forgives a timeout too:
+    The box would restart on its old images and report the update done
+    Not --ignore-buildable either: it skips every service with a `build:` section, all of ours
+    (knowledge linux/boxBackup.md)
+    """
+    for attempt in range(1, PULL_ATTEMPTS + 1):
+        if _compose_code(box_dir, "pull", *services, all_profiles=all_profiles) == 0:
+            return
+        if attempt < PULL_ATTEMPTS:
+            typer.echo(
+                f"pulling the images failed (attempt {attempt} of {PULL_ATTEMPTS});"
+                f" trying again in {PULL_PAUSE_SECONDS:g} s"
+            )
+            time.sleep(PULL_PAUSE_SECONDS)
+    named = list(services) or _active_services(box_dir)
+    failed = [
+        service
+        for service in named
+        if _compose_code(box_dir, "pull", service, all_profiles=all_profiles) != 0
+    ]
+    images = ", ".join(failed) or "some of them"
+    raise _UpdateFailedError(
+        f"the images of {images} did not download after {PULL_ATTEMPTS} attempts;"
+        " the box keeps running the previous version — run `vibedpn update` again"
+    )
+
+
+def _compose_code(box_dir: Path, *args: str, all_profiles: bool = False) -> int:
+    try:
+        return run(compose_argv(box_dir, *args, all_profiles=all_profiles))
+    except ComposeError as exc:
+        raise _UpdateFailedError(str(exc)) from None
+
+
+def _active_services(box_dir: Path) -> list[str]:
+    try:
+        return capture(compose_argv(box_dir, "config", "--services")).split()
+    except ComposeError as exc:
+        raise _UpdateFailedError(str(exc)) from None
 
 
 def _routing_line(config: Config) -> str:

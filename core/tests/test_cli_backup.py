@@ -90,7 +90,10 @@ def test_update_runs_install_sh_pull_and_the_new_cli_restart(
     assert result.exit_code == 0, result.output
     flat = [" ".join(call) for call in recorder.calls]
     assert any("VIBEDPN_BRANCH=next" in call and call.endswith("install.sh") for call in flat)
-    assert any(call.endswith("pull --ignore-pull-failures") for call in flat)
+    assert any(call.endswith(" pull") for call in flat)
+    assert not any(
+        "--ignore-pull-failures" in call for call in flat
+    )  # a failed pull is not forgiven
     assert any(" -m vibedpn restart --dir " in call for call in flat)
 
 
@@ -119,11 +122,73 @@ def test_update_refreshes_the_images_of_disabled_services_the_host_keeps(
     assert result.exit_code == 0, result.output
     pulls = [call for call in recorder.calls if "pull" in call]
     assert [call[call.index("pull") :] for call in pulls] == [
-        ["pull", "--ignore-pull-failures"],
-        ["pull", "--ignore-pull-failures", "access", "xray"],
+        ["pull"],
+        ["pull", "access", "xray"],
     ]
     assert "--profile" in pulls[1]  # disabled services are named only under every profile
     flat = [" ".join(call) for call in recorder.calls]
     pulled = flat.index(" ".join(pulls[1]))
     restarted = next(i for i, call in enumerate(flat) if " -m vibedpn restart " in call)
     assert pulled < restarted
+
+
+class FlakyPulls:
+    """Compose whose pulls fail ``failures`` times first; ``broken`` services never pull alone."""
+
+    def __init__(self, recorder: Recorder, failures: int, broken: tuple[str, ...] = ()) -> None:
+        self.recorder = recorder
+        self.failures = failures
+        self.broken = broken
+
+    def run(self, argv: list[str]) -> int:
+        self.recorder.calls.append(argv)
+        if "pull" not in argv:
+            return 0
+        named = argv[argv.index("pull") + 1 :]
+        if named and not set(named) & set(self.broken):
+            return 0
+        if self.failures:
+            self.failures -= 1
+            return 1
+        return 1 if set(named) & set(self.broken) else 0
+
+
+def update_box(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failures: int, broken: tuple[str, ...] = ()
+) -> tuple[Recorder, str, int]:
+    recorder = make_box(tmp_path, monkeypatch)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "install.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    recorder.ps_output = "next\n"
+    recorder.active_services = recorder.all_services = "core\nhostapd\ntor\n"
+    monkeypatch.setattr(cli, "run", FlakyPulls(recorder, failures, broken).run)
+    monkeypatch.setattr(cli, "PULL_PAUSE_SECONDS", 0.0)
+    result = runner.invoke(cli.app, ["update", "--dir", str(tmp_path)])
+    return recorder, result.output, result.exit_code
+
+
+def test_a_pull_that_timed_out_is_tried_again_and_the_update_goes_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One address of ghcr.io is a black hole on some lines: the next try usually gets another."""
+    recorder, output, code = update_box(tmp_path, monkeypatch, failures=1)
+    assert code == 0, output
+    assert "pulling the images failed (attempt 1 of 3); trying again" in output
+    flat = [" ".join(call) for call in recorder.calls]
+    assert sum(call.endswith(" pull") for call in flat) == 2
+    assert any(" -m vibedpn restart " in call for call in flat)
+
+
+def test_images_that_never_download_stop_the_update_before_the_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Saying "updated" over a core that was not replaced is what a forgiven pull did."""
+    recorder, output, code = update_box(
+        tmp_path, monkeypatch, failures=3, broken=("core", "hostapd")
+    )
+    assert code == 1
+    assert "the images of core, hostapd did not download after 3 attempts" in output
+    assert "keeps running the previous version" in output
+    flat = [" ".join(call) for call in recorder.calls]
+    assert sum(call.endswith(" pull") for call in flat) == 3
+    assert not any(" -m vibedpn restart " in call for call in flat)
