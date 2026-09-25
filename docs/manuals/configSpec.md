@@ -13,7 +13,7 @@
 - **Где лежит:** `/opt/vibedpn/config.yaml`. Пишет `vibedpn init`; править руками можно, после
   правки — `vibedpn up`: он пересоздаёт только ядро и те службы, чьи разделы изменились.
   Исключение — то, что ядро применяет на лету через свой API: `routing` (режим, выход по умолчанию,
-  правила, сети, списки; кроме `failopen`), `devices`, `upstreams.vps.lan_access` и
+  правила, сети, списки, запасные выходы; кроме `failopen`), `devices`, `upstreams.vps.lan_access` и
   `upstreams.dpn.country`. Их правку руками `up` отдаёт работающему ядру: оно перечитывает файл
   и применяет её на лету, без перезапуска. Файл, который роутер не принял, `up` называет ошибкой,
   а ядро остаётся с прежними настройками.
@@ -101,7 +101,8 @@ network:
 |---|---|---|---|
 | `mode` | `off` \| `full` \| `smart` | `off` | `off` — всё напрямую; `full` — всё через `default_upstream`, кроме устройств с политикой; `smart` — по правилам `domains`, остальное напрямую, устройства с политикой — как в `full` |
 | `default_upstream` | `vps` \| `dpn` \| `tor` \| `wg-<имя>` | — (обязателен) | куда идёт трафик в `full`/`smart`. Если `mode` не `off`, аплинк должен быть включён в `upstreams`. У `home` — `dpn`, `tor` или свой выход `wg-<имя>` из `upstreams.wg` |
-| `failopen` | bool | `false` | `false` — упал аплинк, трафик устройств с политикой `vps`/`dpn` стоит (kill-switch); `true` — уходит напрямую, осознанный выбор |
+| `failopen` | bool | `false` | `false` — упал аплинк, трафик устройств с политикой `vps`/`dpn` стоит (kill-switch); `true` — уходит напрямую, осознанный выбор. Действует, только когда не отвечает ни один выход из `fallback` |
+| `fallback` | список ключей выходов | `[]` | запасные выходы по порядку: `vps`, `dpn`, `tor`, `xray`, `wg-<имя>`. Когда шлюз используемого выхода молчит, его трафик идёт через первый отвечающий выход списка; вернулся свой — трафик возвращается к нему. Каждый выход списка должен быть включён в `upstreams`, повторяться нельзя; страны `dpn-<код>` не годятся — они обслуживают только свои правила. Выход сам себе запасным не бывает. Меняется на лету: `vibedpn fallback`, панель, правка руками и `vibedpn up`. Второй VPS — это свой выход `wg-<имя>` по peer-файлу с неё ([multiVps.md](multiVps.md)) |
 | `domains` | список правил | `[]` | правила `mode: smart`, по одному на сайт; старый ключ `smart_domains` (список суффиксов) читается как правила через `default_upstream` |
 | `domains[].domain` | домен | — | покрывает и поддомены (`kinopoisk.ru` — и `www.kinopoisk.ru`); приводится к нижнему регистру |
 | `domains[].via` | `vps` \| `dpn` \| `wg` \| `tor` \| `direct` | — | канал сайта; аплинк `vps`/`dpn`/`tor` должен быть включён в `upstreams`, `wg` — свой выход из `upstreams.wg` |
@@ -475,6 +476,39 @@ upstreams:
     enabled: true
   dpn:
     enabled: false
+dns:
+  enabled: true
+ui:
+  enabled: true
+```
+
+### `client` — два VPS: второй подхватывает, когда первый молчит
+
+Второй VPS подключён своим выходом `wg-second` по peer-файлу с него (`vibedpn uplink add second
+second.conf`). Пока шлюз `vps` отвечает, LAN выходит через него; замолчал — через `wg-second`;
+молчат оба — `tor`; молчат все — kill-switch держит трафик (`failopen: false`).
+
+```yaml
+# example: client-two-vps
+version: 1
+role: client
+network:
+  mode: sidecar
+  lan_interface: end0
+  lan_subnet: 192.168.0.0/24
+  lan_address: 192.168.0.2
+routing:
+  mode: full
+  default_upstream: vps
+  failopen: false
+  fallback: [wg-second, tor]
+upstreams:
+  vps:
+    enabled: true
+  tor:
+    enabled: true
+  wg:
+    second: {}
 dns:
   enabled: true
 ui:

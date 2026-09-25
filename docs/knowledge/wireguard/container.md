@@ -94,7 +94,21 @@ VPS и переживает контейнер, убитый SIGKILL или уп
 **Healthcheck:** client — handshake не старше 180 с (`wg show wg0 latest-handshakes`; пир с
 `PersistentKeepalive` пересогласуется примерно раз в две минуты), server — достаточно поднятого
 wg0, пиров может не быть.
-**Источники:** https://man7.org/linux/man-pages/man8/wg.8.html (setconf, ключи конфига),
+**Пробник ядра видит живой путь, а не живой контейнер (решение 32):** ядро проверяет шлюз ping-ом, и
+контейнер-клиент с умершим сервером за ним ему отвечал — цепочка запасных выходов такой шлюз не
+замечала бы. Теперь клиент держит таблицу `inet vibedpn_probe` с отбросом `icmp echo-request` не из
+`wg0`, пока последний handshake старше 180 с, и ставит её до создания интерфейса: до первого
+handshake ядро шлюз живым не считает. Порог — из ядра Linux: инициатор обновляет ключи через
+`REKEY_AFTER_TIME = 120` с, а ключи старше `REJECT_AFTER_TIME = 180` с WireGuard отвергает сам —
+тишина дольше 180 с значит, что туннель уже ничего не пропускает. Таблица меняется только при смене
+вердикта, сторож считает его каждые 5 с. Проверено стендом `router.sh`: сервер за живым шлюзом
+отбрасывает весь входящий трафик — трафик LAN ушёл на запасной выход, отбрасывать перестал — вернулся.
+**Грабля стенда:** `docker pause` сервер WireGuard не убивает. Он замораживает процессы cgroup, а
+WireGuard живёт в ядре и продолжает отвечать: после 300 с «паузы» у клиента было рукопожатие 59 с
+назад. Умерший сервер на стенде — таблица nft с `policy drop` на входе в его netns.
+**Источники:** https://git.zx2c4.com/wireguard-linux/plain/drivers/net/wireguard/messages.h (`REKEY_AFTER_TIME`,
+`REJECT_AFTER_TIME`), https://www.wireguard.com/protocol/ (кто и когда начинает новый handshake),
+https://man7.org/linux/man-pages/man8/wg.8.html (setconf, ключи конфига),
 https://git.zx2c4.com/wireguard-tools/plain/src/man/wg-quick.8 (kill-switch, ключи wg-quick),
 https://git.zx2c4.com/wireguard-tools/plain/src/wg-quick/linux.bash (`parse_options`,
 `add_default`), https://docs.docker.com/compose/how-tos/startup-order/ (`depends_on` при

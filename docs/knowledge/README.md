@@ -50,7 +50,8 @@
 - [container.md](wireguard/container.md) — модуль ядра хоста, `/dev/net/tun` только для
   wireguard-go, `src_valid_mark`, пакеты Alpine (`wg` без wg-quick); что делает entrypoint
   вместо wg-quick: ключи мимо `wg setconf`, fwmark-маршрутизация при `AllowedIPs 0.0.0.0/0`,
-  kill-switch в netns контейнера, «упал» = удалён или down; ключи X25519 из `cryptography`
+  kill-switch в netns контейнера, «упал» = удалён или down; клиент не отвечает на ping ядра, пока
+  handshake старше 180 с (`REJECT_AFTER_TIME`); ключи X25519 из `cryptography`
   с clamping как у `wg genkey` (вектор RFC 7748); пиры на работающем сервере через `wg syncconf`,
   синхронизация маршрутов, формат `wg show dump`, QR-код через `segno`
 - [tunnelAccess.md](wireguard/tunnelAccess.md) — панель ноды и API ядра на адресе туннеля:
@@ -92,6 +93,7 @@
 
 ## linux
 
+- [uplinkFallback.md](linux/uplinkFallback.md) — цепочка запасных выходов: переключается маршрут таблицы, метка остаётся; снятие маршрута по списку `ip -j route`, а не по имени шлюза; маршруты считает одно место под замком; когда рвать соединения AdGuard; ruamel и позиция нового ключа
 - [sockDestroy.md](linux/sockDestroy.md) — закрыть чужое TCP-соединение: netlink `sock_diag`, `SOCK_DESTROY` по id с cookie, нужен `CAP_NET_ADMIN` и `CONFIG_INET_DIAG_DESTROY` (Debian — есть, Raspberry Pi — нет, `default n`); проверено на живом ядре
 - [hostapdControl.md](linux/hostapdControl.md) — управляющий сокет hostapd: `ATTACH`, события `AP-STA-*`, перебор станций, общий каталог сокета двух контейнеров и молчание после перезапуска
 - [systemdPathUnit.md](linux/systemdPathUnit.md) — `.path` по изменению файла: `PathChanged=` на закрытие после записи, чего документация не обещает и как это обойдено
