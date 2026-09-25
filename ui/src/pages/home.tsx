@@ -16,6 +16,7 @@ import { REGISTERED } from '@/features/status/shared'
 import { summarizeStatus, type BoxStatus, type DpnStatus, type UplinkStatus } from '@/features/status/shared'
 import { eventListQuery } from '@/features/events/api'
 import { DROPS_WINDOW_HOURS, WIFI_DROPS_WARNING, wifiDrops } from '@/features/events/shared'
+import { UpdateCard } from '@/features/update/card'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import type { T } from '@/modules/i18n/base'
@@ -329,6 +330,7 @@ export const homePage = generalLayout.lets
           .map((uplink) => (
             <UplinkCard key={uplink.name} uplink={uplink} failopen={status.failopen} />
           ))}
+        <UpdateCard />
       </Sections>
     )
   })

@@ -62,6 +62,8 @@ from vibedpn.api.models import (
     TelegramView,
     TorUplinkUpdate,
     TorUplinkView,
+    UpdateResultView,
+    UpdateView,
     UplinkStatus,
     VpsLanAccessUpdate,
     VpsLanAccessView,
@@ -175,6 +177,7 @@ from vibedpn.engine.telegram import TelegramError, check_token
 from vibedpn.engine.traffic import connect as traffic_connect
 from vibedpn.engine.traffic import forget as traffic_forget
 from vibedpn.engine.traffic import totals as traffic_totals
+from vibedpn.engine.update import read_revision, request_update, update_state
 from vibedpn.engine.wg import (
     Peer,
     PeerExistsError,
@@ -348,6 +351,52 @@ def _add_link_routes(
 
 
 NO_PANEL_APPLY = "this box takes no WireGuard exits from the panel: it routes no LAN"
+NO_UPDATE_FILES = "this core keeps no data directory: the host cannot be asked to update"
+
+
+def _update_view(data: Path) -> UpdateView:
+    revision = read_revision(data)
+    progress = update_state(data, time.time())
+    last = progress.last
+    return UpdateView(
+        branch=revision.branch if revision else None,
+        commit=revision.commit if revision else None,
+        committed_at=revision.committed_at if revision else None,
+        pending=progress.pending,
+        last=None
+        if last is None
+        else UpdateResultView(
+            ok=last.ok,
+            message=last.message,
+            before=last.before,
+            after=last.after,
+            finished_at=last.finished_at,
+        ),
+    )
+
+
+def _add_update_routes(application: FastAPI, data_dir: Path | None) -> None:
+    """``/update``: the box updates itself when the panel asks; the host runs it (decision 26)"""
+
+    def data() -> Path:
+        if data_dir is None:
+            raise HTTPException(status_code=404, detail=NO_UPDATE_FILES)
+        return data_dir
+
+    @application.get("/update", response_model=UpdateView)
+    def get_update() -> UpdateView:
+        return _update_view(data())
+
+    @application.post("/update", response_model=UpdateView)
+    def post_update() -> UpdateView:
+        where = data()
+        if update_state(where, time.time()).pending:
+            raise HTTPException(status_code=409, detail="an update is already running")
+        try:
+            request_update(where, time.time())
+        except ApplyError as exc:
+            raise HTTPException(status_code=503, detail=f"the host was not asked: {exc}") from exc
+        return _update_view(where)
 
 
 def _apply_view(data: Path) -> ApplyView:
@@ -1394,6 +1443,7 @@ def create_app(
     )
     _add_ddns_routes(application, current, state, secrets_dir, data_dir)
     _add_telegram_routes(application, current, state, telegram)
+    _add_update_routes(application, data_dir)
 
     return application
 

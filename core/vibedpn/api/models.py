@@ -321,6 +321,26 @@ class ApplyView(BaseModel):
     finished_at: float | None
 
 
+class UpdateResultView(BaseModel):
+    """How the last update asked in the panel ended (engine/update.py)"""
+
+    ok: bool
+    message: str
+    before: str  # short commits; "" when unknown
+    after: str
+    finished_at: float
+
+
+class UpdateView(BaseModel):
+    """The revision the box runs, an update in progress and how the last one ended"""
+
+    branch: str | None  # None: not known yet (no `vibedpn up` since the update feature)
+    commit: str | None
+    committed_at: str | None
+    pending: bool
+    last: UpdateResultView | None
+
+
 class TorUplinkUpdate(BaseModel):
     """``PUT /uplinks/tor``: turn the exit through Tor on or off."""
 

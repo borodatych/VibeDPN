@@ -3,6 +3,7 @@
 Stage 1 ships ``init``; ``up``, ``down``, ``restart``, ``status``, ``logs`` and ``doctor`` follow.
 """
 
+import contextlib
 import os
 import sys
 import time
@@ -110,6 +111,7 @@ from vibedpn.doctor import evaluate, gather, has_failures, render, to_json
 from vibedpn.engine.apply import (
     APPLY_UNIT,
     BOX_DATA_DIR,
+    ApplyError,
     ApplyResult,
     read_request,
     read_result,
@@ -144,6 +146,16 @@ from vibedpn.engine.hostapd import (
     write_passphrase,
 )
 from vibedpn.engine.myst import MystError, TequilaClient, render_stats
+from vibedpn.engine.update import (
+    UPDATE_REQUEST_UNIT,
+    Revision,
+    UpdateResult,
+    read_update_request,
+    read_update_result,
+    render_update_units,
+    write_revision,
+    write_update_result,
+)
 from vibedpn.engine.xray import XrayError, parse_share_link
 from vibedpn.event_view import client_line, event_line
 from vibedpn.tunnel_view import (
@@ -506,6 +518,7 @@ def up(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
         )
     _retire_stale(box_dir)
     _compose(box_dir, "up", "-d", "--remove-orphans")
+    _record_revision(box_dir)
     if "core" not in recreated:
         _reread(config)
 
@@ -660,27 +673,82 @@ def _switch_update_timer(box_dir: Path, switch: TimerSwitch) -> None:
     typer.echo(f"automatic update: {switch.value}")
 
 
+class _UpdateFailedError(Exception):
+    """Why an update stopped; the box keeps running what it ran"""
+
+
 @app.command()
 def update(
     timer: Annotated[
         TimerSwitch | None,
         typer.Option(help="Weekly automatic update by a systemd timer: on or off."),
     ] = None,
+    requested: Annotated[
+        bool,
+        typer.Option(
+            "--requested",
+            help="Run the update asked in the panel and write its result for core"
+            " (the unit vibedpn-update-request runs this).",
+        ),
+    ] = False,
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
     """Update the checkout and the CLI (install.sh), pull the images, restart the box."""
     if timer is not None:
         _switch_update_timer(box_dir, timer)
         return
+    if requested:
+        _update_as_requested(box_dir)
+        return
+    try:
+        typer.echo(_update_box(box_dir))
+    except _UpdateFailedError as exc:
+        raise _fail(str(exc)) from None
+
+
+def _update_as_requested(box_dir: Path) -> None:
+    """The update the panel asked for; a request made while it ran is served by the next round"""
+    data_dir = box_dir / BOX_DATA_DIR
+    while True:
+        asked = read_update_request(data_dir)
+        last = read_update_result(data_dir)
+        if asked is None or (last is not None and last.requested_at >= asked):
+            return  # nothing asked, or already done
+        before = _revision(box_dir)
+        try:
+            ok, message = True, _update_box(box_dir)
+        except _UpdateFailedError as exc:
+            ok, message = False, str(exc)
+        after = _revision(box_dir)
+        write_update_result(
+            data_dir,
+            UpdateResult(
+                requested_at=asked,
+                finished_at=time.time(),
+                ok=ok,
+                message=message,
+                before=before.commit if before is not None else "",
+                after=after.commit if after is not None else "",
+            ),
+        )
+        if not ok:
+            raise _fail(message)
+
+
+def _update_box(box_dir: Path) -> str:
+    """Update and restart the box; the line that says what came of it"""
     config = _prepare(box_dir, refresh=False)
     installer = box_dir / "install.sh"
     if not (box_dir / ".git").is_dir() or not installer.is_file():
-        raise _fail(f"{box_dir} is not a checkout made by install.sh; nothing to update")
+        raise _UpdateFailedError(
+            f"{box_dir} is not a checkout made by install.sh; nothing to update"
+        )
     try:
         branch = capture(["git", "-C", str(box_dir), "rev-parse", "--abbrev-ref", "HEAD"]).strip()
         origin = capture(["git", "-C", str(box_dir), "remote", "get-url", "origin"]).strip()
     except ComposeError as exc:
-        raise _fail(str(exc)) from None
+        raise _UpdateFailedError(str(exc)) from None
+    before = _revision(box_dir)
     environment = {"VIBEDPN_DIR": str(box_dir), "VIBEDPN_BRANCH": branch, "VIBEDPN_REPO": origin}
     if (
         run(
@@ -693,12 +761,38 @@ def update(
         )
         != 0
     ):
-        raise _fail("install.sh failed; the box keeps running the previous version")
+        raise _UpdateFailedError("install.sh failed; the box keeps running the previous version")
     _pull(box_dir)
     # the restart runs the freshly installed CLI, not this process with the old code loaded
     if run([sys.executable, "-m", "vibedpn", "restart", "--dir", str(box_dir)]) != 0:
-        raise _fail("restart after the update failed; see `vibedpn doctor`")
-    typer.echo(f"updated to the latest {branch} (role {config.role.value})")
+        raise _UpdateFailedError("restart after the update failed; see `vibedpn doctor`")
+    after = _record_revision(box_dir)
+    if before is not None and after is not None and before.commit == after.commit:
+        return f"already the latest {branch} ({after.commit}), images pulled and the box restarted"
+    moved = f" from {before.commit} to {after.commit}" if before and after else ""
+    return f"updated to the latest {branch}{moved} (role {config.role.value})"
+
+
+def _revision(box_dir: Path) -> Revision | None:
+    """The commit of the checkout, or None outside a git checkout"""
+    if not (box_dir / ".git").is_dir():
+        return None
+    try:
+        branch = capture(["git", "-C", str(box_dir), "rev-parse", "--abbrev-ref", "HEAD"]).strip()
+        line = capture(["git", "-C", str(box_dir), "log", "-1", "--format=%h %cI"]).strip()
+    except ComposeError:
+        return None
+    commit, _, committed_at = line.partition(" ")
+    return Revision(branch, commit, committed_at) if commit and branch else None
+
+
+def _record_revision(box_dir: Path) -> Revision | None:
+    """Tell core, and so the panel, which commit the box runs"""
+    revision = _revision(box_dir)
+    if revision is not None:
+        with contextlib.suppress(ApplyError):
+            write_revision(box_dir / BOX_DATA_DIR, revision)
+    return revision
 
 
 def _pull(box_dir: Path) -> None:
@@ -804,8 +898,11 @@ def _ensure_apply_units(box_dir: Path) -> None:
     if systemctl is None or os.geteuid() != 0:
         return
     changed = False
+    units = render_units(box_dir.resolve(), sys.executable) | render_update_units(
+        box_dir.resolve(), sys.executable
+    )
     try:
-        for name, text in render_units(box_dir.resolve(), sys.executable).items():
+        for name, text in units.items():
             unit = SYSTEMD_DIR / name
             if not unit.is_file() or unit.read_text(encoding="utf-8") != text:
                 unit.write_text(text, encoding="utf-8")
@@ -817,11 +914,11 @@ def _ensure_apply_units(box_dir: Path) -> None:
             err=True,
         )
         return
-    path_unit = f"{APPLY_UNIT}.path"
     if changed:
         run([systemctl, "daemon-reload"])
-    if changed or run([systemctl, "is-enabled", "--quiet", path_unit]) != 0:
-        run([systemctl, "enable", "--now", path_unit])
+    for path_unit in (f"{APPLY_UNIT}.path", f"{UPDATE_REQUEST_UNIT}.path"):
+        if changed or run([systemctl, "is-enabled", "--quiet", path_unit]) != 0:
+            run([systemctl, "enable", "--now", path_unit])
 
 
 @app.command()

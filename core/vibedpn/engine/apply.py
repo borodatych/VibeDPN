@@ -46,22 +46,31 @@ class ApplyState:
     last: ApplyResult | None
 
 
-def request_apply(data_dir: Path, now: float, reason: str) -> None:
-    """Ask the host to run `vibedpn up`."""
+def write_request(path: Path, now: float, reason: str) -> None:
+    """A request to the host: its time, then why; opened and closed, so `PathChanged=` fires"""
     try:
-        with (data_dir / REQUEST_FILE).open("w", encoding="utf-8") as handle:
+        with path.open("w", encoding="utf-8") as handle:
             handle.write(f"{now}\n{reason}\n")
     except OSError as exc:
-        raise ApplyError(f"cannot write {data_dir / REQUEST_FILE}: {exc.strerror or exc}") from exc
+        raise ApplyError(f"cannot write {path}: {exc.strerror or exc}") from exc
+
+
+def request_time(path: Path) -> float | None:
+    """The time of the last request, or None when there is none (or it is unreadable)"""
+    try:
+        return float(path.read_text(encoding="utf-8").splitlines()[0])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def request_apply(data_dir: Path, now: float, reason: str) -> None:
+    """Ask the host to run `vibedpn up`."""
+    write_request(data_dir / REQUEST_FILE, now, reason)
 
 
 def read_request(data_dir: Path) -> float | None:
     """The time of the last request, or ``None`` when there is none (or it is unreadable)."""
-    try:
-        first = (data_dir / REQUEST_FILE).read_text(encoding="utf-8").splitlines()[0]
-        return float(first)
-    except (OSError, IndexError, ValueError):
-        return None
+    return request_time(data_dir / REQUEST_FILE)
 
 
 def write_result(data_dir: Path, result: ApplyResult) -> None:

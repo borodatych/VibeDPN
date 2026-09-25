@@ -211,10 +211,18 @@ def test_up_installs_the_units_once_and_enables_the_path(
     monkeypatch.setattr(cli, "run", fake_run)
     cli._ensure_apply_units(Path("/opt/vibedpn"))
     assert (tmp_path / "vibedpn-apply.path").is_file()
-    assert commands == [["daemon-reload"], ["enable", "--now", "vibedpn-apply.path"]]
+    assert (tmp_path / "vibedpn-update-request.path").is_file()  # the update asked in the panel
+    assert commands == [
+        ["daemon-reload"],
+        ["enable", "--now", "vibedpn-apply.path"],
+        ["enable", "--now", "vibedpn-update-request.path"],
+    ]
     commands.clear()
     cli._ensure_apply_units(Path("/opt/vibedpn"))  # already current and enabled
-    assert commands == [["is-enabled", "--quiet", "vibedpn-apply.path"]]
+    assert commands == [
+        ["is-enabled", "--quiet", "vibedpn-apply.path"],
+        ["is-enabled", "--quiet", "vibedpn-update-request.path"],
+    ]
 
 
 def test_tor_is_turned_on_from_the_panel_and_the_host_asked_to_start_it(tmp_path: Path) -> None:
