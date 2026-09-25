@@ -74,6 +74,10 @@
 
 - [botApi.md](telegram/botApi.md) — Bot API: URL с токеном, ответ `ok`/`description`/`retry_after`, неверный токен — 401, неразборчивый — 404 (замер); `getUpdates` и `offset`, ссылка `?start=` (алфавит, 64 символа), сообщение в секунду на чат; httpx ставит `socket_options` после `connect` — метка выхода опаздывает, поэтому своё соединение на `http.client`; `SO_MARK` — `CAP_NET_ADMIN` или `CAP_NET_RAW`, имя только в Linux; подключение к найденному адресу с проверкой сертификата по имени (проверено на Telegram)
 
+## sentinel
+
+- [recon.md](sentinel/recon.md) — Sentinel dVPN: клиент `sentinel-dvpncli` с официальным образом (WireGuard, V2Ray, Xray, Hysteria2, AmneziaWG), оплата узлу за ГБ или час в P2P (медиана ≈ $0.003/ГБ); с коробки TLS до 82% узлов, `wireguard` и `v2ray` поровну, туннель не проверен — нужны токены владельца
+
 ## xray
 
 - [realityServer.md](xray/realityServer.md) — сервер VLESS/REALITY своими силами на Xray 26.3.27: ключ — тот же X25519, что у WireGuard; `target` и `raw`; прикрытие `www.microsoft.com` не пускает никогда, `dl.google.com` — всегда, а `tls ping` этого не видит — REALITY набирает прикрытие на каждое соединение (исходник `tls.go`); отпечаток `randomized` ломает клиента; `adu`/`rmu` на ходу, им нужен порт, и они выходят с 0 даже при отказе; счётчики на человека через `/debug/vars`; закрыть людям петлю и частные сети; `libcap2-bin` тянет за собой `iproute2`; трафик сервера по uid и ответы людям мимо меток
