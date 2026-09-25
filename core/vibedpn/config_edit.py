@@ -9,7 +9,7 @@ it is written, and written atomically — core reads the file at start.
 from __future__ import annotations
 
 import io
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from ipaddress import IPv4Address
 from pathlib import Path
@@ -98,14 +98,20 @@ def _edit(path: Path, mutate: Mutate) -> tuple[Config, bool]:
 
 
 def set_routing(
-    path: Path, *, mode: RoutingMode | None = None, upstream: str | None = None
+    path: Path,
+    *,
+    mode: RoutingMode | None = None,
+    upstream: str | None = None,
+    fallback: Sequence[str] | None = None,
 ) -> tuple[Config, bool]:
-    """Set ``routing.mode`` and/or ``routing.default_upstream``; returns the validated result and
-    whether the file changed. Nothing is written when the result would not be a valid box."""
+    """Set ``routing.mode``, ``routing.default_upstream`` and/or ``routing.fallback`` (the whole
+    chain; empty removes the key); returns the validated result and whether the file changed.
+    Nothing is written when the result would not be a valid box."""
 
     def mutate(data: CommentedMap) -> None:
         routing = data.get("routing")
-        if not isinstance(routing, dict):
+        # the loader gives every mapping as CommentedMap: the chain is placed by its order
+        if not isinstance(routing, CommentedMap):
             raise ConfigEditError(
                 f"{path} has no routing section: a box of this role routes no LAN"
             )
@@ -113,8 +119,25 @@ def set_routing(
             routing["mode"] = mode.value
         if upstream is not None:
             routing["default_upstream"] = upstream
+        if fallback is not None:
+            _set_fallback(routing, fallback)
 
     return _edit(path, mutate)
+
+
+def _set_fallback(routing: CommentedMap, fallback: Sequence[str]) -> None:
+    """The chain on one line, next to failopen, which it extends; no chain removes the key."""
+    if not fallback:
+        routing.pop("fallback", None)
+        return
+    chain = CommentedSeq(fallback)
+    chain.fa.set_flow_style()
+    if "fallback" in routing:
+        routing["fallback"] = chain
+        return
+    keys = list(routing)
+    after = keys.index("failopen") + 1 if "failopen" in keys else len(keys)
+    routing.insert(after, "fallback", chain)
 
 
 def set_vps_lan_access(path: Path, allowed: bool) -> tuple[Config, bool]:

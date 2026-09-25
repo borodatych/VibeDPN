@@ -41,6 +41,9 @@ class EventAction(StrEnum):
     # uplink: subject is the uplink key
     GATEWAY_ANSWERS = "gateway_answers"
     GATEWAY_SILENT = "gateway_silent"
+    # the traffic of an uplink in use moved to or from a fallback uplink (decision 32); detail:
+    # through — the uplink carrying it now, or direct / held when no uplink answers
+    REROUTED = "rerouted"
 
 
 class EventError(RuntimeError):

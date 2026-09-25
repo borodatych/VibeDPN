@@ -15,7 +15,7 @@ from pathlib import Path
 import httpx
 from pydantic import ValidationError
 
-from vibedpn.api.app import create_app, reconnect_on_failover
+from vibedpn.api.app import create_app, reconnect_on_reroute
 from vibedpn.api.background import BackgroundLoop
 from vibedpn.api.consumer import ConsumerStatus, consumer_round, watch_consumer
 from vibedpn.api.journal import Journal, fan_out, ignore_event, store_journal
@@ -25,7 +25,7 @@ from vibedpn.api.state import BoxState
 from vibedpn.api.telegram import TelegramBot
 from vibedpn.api.traffic import ACCESS_TRAFFIC_DIR, access_samples, watch_traffic
 from vibedpn.api.tunnel import run_servers
-from vibedpn.api.uplink import UplinkWatchers
+from vibedpn.api.uplink import Reroute, UplinkWatchers
 from vibedpn.api.wifi import watch_wifi
 from vibedpn.config import Config, ConfigError, load_config
 from vibedpn.engine import hostapd
@@ -61,7 +61,7 @@ from vibedpn.engine.router import (
     apply_firewall,
     apply_router,
     apply_tunnel_egress,
-    uplink_table,
+    exit_plan,
 )
 from vibedpn.engine.telegram import TelegramError, resolver_lookup, system_lookup
 from vibedpn.engine.wg import WgError, ensure_server
@@ -164,10 +164,9 @@ def main() -> None:
     devices, events, stored = _lan_stores(config, data_dir)
     # the Telegram bot hears every event the store keeps; it drains them on its own loop
     inbox: deque[Event] = deque()
-    # box_state is built below, before any watcher runs and journals
-    failover = reconnect_on_failover(lambda: box_state.config)
-    journal = fan_out(stored, inbox.append, failover)
-    watchers = _watchers(config, uplinks, journal)
+    journal = fan_out(stored, inbox.append)
+    # box_state is built below, before any watcher runs and moves a table
+    watchers = _watchers(config, uplinks, journal, reconnect_on_reroute(lambda: box_state.config))
     box_state, resolver, smart, lists = _box_state(
         config, config_path, watchers, secrets_dir, data_dir
     )
@@ -427,7 +426,9 @@ def _lan_stores(
     return devices, events, store_journal(events)
 
 
-def _watchers(config: Config, uplinks: Sequence[str], journal: Journal) -> UplinkWatchers:
-    """A watcher for every uplink the router just put in use; state changes go to the journal."""
-    table = uplink_table(config)
-    return UplinkWatchers({key: table[key] for key in uplinks}, journal=journal)
+def _watchers(
+    config: Config, uplinks: Sequence[str], journal: Journal, reroute: Reroute
+) -> UplinkWatchers:
+    """A watcher for every uplink the router just put in use and for the fallback chain; state
+    changes go to the journal, moved tables to ``reroute``."""
+    return UplinkWatchers(exit_plan(config, uplinks), journal=journal, reroute=reroute)

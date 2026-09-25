@@ -9,7 +9,7 @@ from vibedpn.api import background
 from vibedpn.api.uplink import Report, UplinkState, UplinkWatchers, watch_uplink
 from vibedpn.config import Upstream
 from vibedpn.engine import probe
-from vibedpn.engine.router import UPLINKS, RouterError, Uplink
+from vibedpn.engine.router import UPLINKS, ExitPlan, RouterError, Uplink
 
 
 def test_echo_request_carries_a_valid_checksum() -> None:
@@ -46,11 +46,11 @@ def run_watcher(answers: list[bool | OSError], failing_applies: int = 0) -> list
             raise answer
         return answer
 
-    def fake_apply(uplink: Uplink, alive: bool) -> None:
+    def fake_apply(_key: str, alive: bool) -> None:
         if failures[0]:
             failures[0] -= 1
             raise RouterError("ip route replace failed")
-        applied.append(("vps" if uplink == UPLINKS[Upstream.VPS] else uplink.gateway, alive))
+        applied.append(("vps", alive))
 
     async def fake_sleep(_seconds: float) -> None:
         if not remaining:
@@ -59,7 +59,7 @@ def run_watcher(answers: list[bool | OSError], failing_applies: int = 0) -> list
     with pytest.raises(StopWatcherError):
         asyncio.run(
             watch_uplink(
-                "vps", UPLINKS[Upstream.VPS], probe=fake_probe, apply=fake_apply, sleep=fake_sleep
+                "vps", UPLINKS[Upstream.VPS], probe=fake_probe, settle=fake_apply, sleep=fake_sleep
             )
         )
     return applied
@@ -79,7 +79,7 @@ def test_watcher_sets_the_route_on_every_round() -> None:
 def test_watcher_logs_only_changes(capsys: pytest.CaptureFixture[str]) -> None:
     run_watcher([True, True, True, False])
     err = capsys.readouterr().err
-    assert err.count("answers; LAN traffic goes through it") == 1
+    assert err.count("10.77.0.10 answers") == 1
     assert err.count("does not answer") == 1
 
 
@@ -112,7 +112,7 @@ def test_an_uplink_watcher_that_raises_is_started_again(
         await asyncio.Event().wait()
 
     async def scenario() -> None:
-        watchers = UplinkWatchers({"vps": UPLINKS[Upstream.VPS]}, watch=watch)
+        watchers = UplinkWatchers(ExitPlan.of({"vps": UPLINKS[Upstream.VPS]}), watch=watch)
         runner = asyncio.ensure_future(watchers.run())
         await asyncio.sleep(0.01)
         assert watchers.watched() == ["vps"]
@@ -136,7 +136,7 @@ def test_watchers_started_again_start_every_watcher_anew() -> None:
         await asyncio.Event().wait()
 
     async def scenario() -> None:
-        watchers = UplinkWatchers({"vps": UPLINKS[Upstream.VPS]}, watch=watch)
+        watchers = UplinkWatchers(ExitPlan.of({"vps": UPLINKS[Upstream.VPS]}), watch=watch)
         for _ in range(2):
             runner = asyncio.ensure_future(watchers.run())
             await asyncio.sleep(0.01)

@@ -70,6 +70,8 @@ network:
 # default_upstream: vps | dpn | tor | wg-<имя> — куда идёт трафик в full; у роли home есть dpn
 #   и собственные выходы по файлу WireGuard из upstreams.wg (имя берётся оттуда).
 # failopen: false — упал аплинк, трафик стоит (kill-switch); true — уходит напрямую, осознанно.
+# fallback: запасные выходы по порядку — трафик замолчавшего выхода идёт через первый живой
+#   из списка (второй VPS как wg-<имя>, tor, xray); failopen решает, только когда молчат все.
 # domains: правила режима smart. Домен покрывает поддомены; via: vps | dpn | tor | direct;
 #   country — страна выхода для dpn; learn — CDN, которые сайт вызывает, идут за ним сами;
 #   also — CDN, закреплённые за сайтом вручную.
@@ -81,6 +83,11 @@ routing:
   mode: {{ config.routing.mode.value }}
   default_upstream: {{ config.routing.default_upstream }}
   failopen: {{ config.routing.failopen | tojson }}
+{% if config.routing.fallback %}
+  fallback: [{{ config.routing.fallback | join(", ") }}]
+{% else %}
+  # fallback: [wg-second, tor]
+{% endif %}
 {% if config.routing.domains %}
   domains:
 {% for rule in config.routing.domains %}

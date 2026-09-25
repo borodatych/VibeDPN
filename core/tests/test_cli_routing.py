@@ -29,7 +29,7 @@ def make_box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw: dict[str, obj
 
 
 def core_down(monkeypatch: pytest.MonkeyPatch) -> None:
-    def unreachable(*_args: object) -> RoutingView:
+    def unreachable(*_args: object, **_kwargs: object) -> RoutingView:
         raise core_api.CoreUnreachableError("ConnectError: refused")
 
     monkeypatch.setattr(core_api, "set_routing", unreachable)
@@ -46,7 +46,13 @@ def test_mode_goes_through_core_and_restarts_nothing(
     recorder = make_box(tmp_path, monkeypatch, client_config())
     asked: list[tuple[int, RoutingMode | None, Upstream | None]] = []
 
-    def set_routing(port: int, mode: RoutingMode | None, upstream: Upstream | None) -> RoutingView:
+    def set_routing(
+        port: int,
+        mode: RoutingMode | None,
+        upstream: Upstream | None,
+        fallback: list[str] | None = None,
+    ) -> RoutingView:
+        assert fallback is None
         asked.append((port, mode, upstream))
         return RoutingView(mode="off", default_upstream="vps", adguard="applied")
 
@@ -54,7 +60,10 @@ def test_mode_goes_through_core_and_restarts_nothing(
     before = (tmp_path / "config.yaml").read_text(encoding="utf-8")
     code, output = invoke(tmp_path, "mode", "off")
     assert code == 0, output
-    assert "routing: mode=off default_upstream=vps (applied live, nothing restarted)" in output
+    assert (
+        "routing: mode=off default_upstream=vps fallback=- (applied live, nothing restarted)"
+        in output
+    )
     assert asked == [(4480, RoutingMode.OFF, None)]
     assert recorder.calls == []  # no compose restart
     assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == before  # core writes it
@@ -65,7 +74,9 @@ def test_a_silent_adguard_is_reported(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr(
         core_api,
         "set_routing",
-        lambda *_args: RoutingView(mode="full", default_upstream="vps", adguard="pending"),
+        lambda *_args, **_kwargs: RoutingView(
+            mode="full", default_upstream="vps", adguard="pending"
+        ),
     )
     code, output = invoke(tmp_path, "mode", "full")
     assert code == 0 and "AdGuard catches up at the next start of core" in output
@@ -76,7 +87,7 @@ def test_a_refusal_of_core_fails_the_command(
 ) -> None:
     make_box(tmp_path, monkeypatch, client_config())
 
-    def refused(*_args: object) -> RoutingView:
+    def refused(*_args: object, **_kwargs: object) -> RoutingView:
         raise core_api.RoutingRequestError("router refused the change, config.yaml restored: x")
 
     monkeypatch.setattr(core_api, "set_routing", refused)
@@ -128,3 +139,60 @@ def test_upstream_to_a_disabled_uplink_is_refused_unchanged(
     assert code == 1 and "config.yaml not changed" in output and "dpn" in output
     assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == before
     assert recorder.calls == []
+
+
+def test_fallback_goes_through_core_as_a_whole_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_box(tmp_path, monkeypatch, client_config())
+    asked: list[list[str] | None] = []
+
+    def set_routing(
+        _port: int, _mode: object, _upstream: object, fallback: list[str] | None = None
+    ) -> RoutingView:
+        asked.append(fallback)
+        return RoutingView(
+            mode="full", default_upstream="vps", fallback=fallback or [], adguard="applied"
+        )
+
+    monkeypatch.setattr(core_api, "set_routing", set_routing)
+    code, output = invoke(tmp_path, "fallback", "wg-second", "tor")
+    assert code == 0 and "fallback=wg-second,tor (applied live" in output
+    code, output = invoke(tmp_path, "fallback", "--clear")
+    assert code == 0 and "fallback=- (applied live" in output
+    assert asked == [["wg-second", "tor"], []]
+
+
+def test_fallback_without_uplinks_shows_the_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = client_config()
+    raw["upstreams"]["tor"] = {"enabled": True}
+    raw["routing"]["fallback"] = ["tor"]
+    make_box(tmp_path, monkeypatch, raw)
+    code, output = invoke(tmp_path, "fallback")
+    assert code == 0 and "fallback=tor" in output
+    code, output = invoke(tmp_path, "fallback", "tor", "--clear")
+    assert code == 1 and "not both" in output
+
+
+def test_fallback_on_a_stopped_box_is_saved_or_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = client_config()
+    raw["upstreams"]["tor"] = {"enabled": True}
+    make_box(tmp_path, monkeypatch, raw)
+    core_down(monkeypatch)
+    code, output = invoke(tmp_path, "fallback", "tor")
+    assert code == 0 and "fallback=tor" in output and "(saved;" in output
+    routing = load_config(tmp_path / "config.yaml").routing
+    assert routing is not None and routing.fallback == ["tor"]
+    before = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    code, output = invoke(tmp_path, "fallback", "dpn")  # off on this box
+    assert code == 1 and "routing.fallback: 'dpn' is not an enabled uplink" in output
+    assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == before
+    code, output = invoke(tmp_path, "fallback", "--clear")
+    assert code == 0
+    routing = load_config(tmp_path / "config.yaml").routing
+    assert routing is not None and routing.fallback == []
+    assert "\n  fallback:" not in (tmp_path / "config.yaml").read_text(encoding="utf-8")

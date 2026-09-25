@@ -26,7 +26,7 @@ from vibedpn.config_edit import (
     unset_device,
 )
 from vibedpn.engine.devices import DeviceStore, Neighbour
-from vibedpn.engine.router import UPLINKS, RouterError, Uplink
+from vibedpn.engine.router import UPLINKS, ExitPlan, RouterError, Uplink
 
 from .conftest import client_config
 
@@ -107,17 +107,17 @@ def test_watchers_follow_the_uplinks_in_use() -> None:
             cancelled.append(key)
 
     async def scenario() -> None:
-        watchers = UplinkWatchers({"vps": vps}, watch=watch)
+        watchers = UplinkWatchers(ExitPlan.of({"vps": vps}), watch=watch)
         runner = asyncio.ensure_future(watchers.run())
         await asyncio.sleep(0)
-        watchers.sync({"vps": vps, "dpn": dpn})
+        watchers.sync(ExitPlan.of({"vps": vps, "dpn": dpn}))
         await asyncio.sleep(0.01)
         assert watchers.watched() == ["vps", "dpn"]
-        watchers.sync({"dpn": dpn})
+        watchers.sync(ExitPlan.of({"dpn": dpn}))
         await asyncio.sleep(0.01)
         assert watchers.watched() == ["dpn"]
         # a renumbered country: the same key with another uplink gets a fresh watcher
-        watchers.sync({"dpn": vps})
+        watchers.sync(ExitPlan.of({"dpn": vps}))
         await asyncio.sleep(0.01)
         assert watchers.watched() == ["dpn"]
         runner.cancel()
@@ -132,8 +132,8 @@ class FakeWatchers:
     def __init__(self) -> None:
         self.synced: list[list[Upstream]] = []
 
-    def sync(self, uplinks: list[Upstream]) -> None:
-        self.synced.append(list(uplinks))
+    def sync(self, plan: ExitPlan) -> None:
+        self.synced.append([Upstream(key) for key in plan.routed])
 
 
 def app_for(

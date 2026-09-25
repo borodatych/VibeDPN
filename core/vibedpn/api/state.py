@@ -19,7 +19,7 @@ from pathlib import Path
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.atomic import write_like
 from vibedpn.config import Config, load_config
-from vibedpn.engine.router import RouterError, apply_router, uplink_table
+from vibedpn.engine.router import RouterError, apply_router, exit_plan
 
 Apply = Callable[[Config], Sequence[str]]  # the keys of the uplinks in use
 Change = Callable[[Path], tuple[Config, bool]]
@@ -86,8 +86,7 @@ class BoxState:
             if self._saved is not None:
                 self._saved = written
             if uplinks is not None and self._watchers is not None:
-                table = uplink_table(config)
-                self._watchers.sync({key: table[key] for key in uplinks})
+                self._watchers.sync(exit_plan(config, uplinks))
             return config
 
     def reread(self) -> tuple[Config, bool]:

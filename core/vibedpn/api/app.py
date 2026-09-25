@@ -159,7 +159,7 @@ from vibedpn.engine.ddns import load_state as load_ddns_state
 from vibedpn.engine.ddns import load_url as load_ddns_url
 from vibedpn.engine.ddns import save_url as save_ddns_url
 from vibedpn.engine.devices import DeviceError, DeviceStore, SeenDevice
-from vibedpn.engine.events import DEFAULT_LIMIT, Event, EventError, EventKind, EventStore
+from vibedpn.engine.events import DEFAULT_LIMIT, EventError, EventKind, EventStore
 from vibedpn.engine.learned import LearnedError
 from vibedpn.engine.myst import MystError, ProviderStats, TequilaClient, provider_stats
 from vibedpn.engine.router import (
@@ -168,6 +168,7 @@ from vibedpn.engine.router import (
     RouterError,
     RoutingFacts,
     dns_uplink,
+    fallback_uplinks,
     read_routing,
     uplink_table,
     used_uplinks,
@@ -763,6 +764,7 @@ def _uplink_statuses(
     box: Config, watchers: UplinkWatchers | None, facts: RoutingFacts
 ) -> list[UplinkStatus]:
     in_use = used_uplinks(box)
+    chain = fallback_uplinks(box)
     states = {} if watchers is None else watchers.states()
     result = []
     for key in uplink_table(box):
@@ -780,6 +782,8 @@ def _uplink_statuses(
                 gateway_route=facts.gateway_routes.get(key),
                 kill_switch_route=facts.last_resort_routes.get(key),
                 lan_access=box.upstreams.vps.lan_access if key == Upstream.VPS.value else None,
+                exit_through=facts.exits.get(key),
+                fallback=key in chain,
             )
         )
     return result
@@ -1294,9 +1298,11 @@ def _add_routing_routes(
             mode=routing.mode.value,
             default_upstream=routing.default_upstream,
             failopen=routing.failopen,
+            fallback=routing.fallback,
             rules_current=routing_reader(box).rules_current,
             lan_without_exit=routing.mode is RoutingMode.FULL
             and mode_uplink.gateway_alive is False
+            and mode_uplink.exit_through is None
             and not routing.failopen,
             uplinks=uplinks,
             dpn=dpn,
@@ -1308,14 +1314,17 @@ def _add_routing_routes(
         box = current()
         if state is None or box is None or box.routing is None:
             raise HTTPException(status_code=404, detail=NO_LAN)
-        if request.mode is None and request.default_upstream is None:
+        if request.mode is None and request.default_upstream is None and request.fallback is None:
             raise HTTPException(
-                status_code=422, detail="nothing to change: give mode or default_upstream"
+                status_code=422,
+                detail="nothing to change: give mode, default_upstream or fallback",
             )
         mode = None if request.mode is None else RoutingMode(request.mode)
         try:
             updated = state.edit(
-                lambda path: set_routing(path, mode=mode, upstream=request.default_upstream)
+                lambda path: set_routing(
+                    path, mode=mode, upstream=request.default_upstream, fallback=request.fallback
+                )
             )
         except ConfigEditError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1330,6 +1339,7 @@ def _add_routing_routes(
         return RoutingView(
             mode=routing.mode.value,
             default_upstream=routing.default_upstream,
+            fallback=routing.fallback,
             adguard=adguard,
         )
 
@@ -1468,23 +1478,30 @@ def reconnect_dns(box: Config, exchange: Exchange = netlink_exchange) -> None:
         )
 
 
-def reconnect_on_failover(
+def reconnect_on_reroute(
     current: Callable[[], Config], reconnect: DnsReconnect = reconnect_dns
-) -> Callable[[Event], None]:
-    """A journal that closes the old connections of AdGuard when routing.failopen moves its queries
+) -> Callable[[str, str | None, str | None], None]:
+    """What the watchers call when a table moves: AdGuard closes its connections of the old path
 
-    With failopen, a silent gateway sends them direct and an answering one takes them back
-    Either way the connections opened along the other path are dead
-    Without failopen a silent gateway stops them all, and they come back along the same path
+    The table of routing.mode full carries AdGuard's queries; a move to another gateway, or direct
+    (failopen), leaves the connections opened along the old path dead
+    A table that loses every gateway without failopen holds them: they wait and go on along the
+    same path once it answers, so a return to the path they were opened on closes nothing
     """
+    # per uplink key: the last path its traffic took, a gateway key or "direct"; its own at start
+    last: dict[str, str] = {}
 
-    def follow(event: Event) -> None:
-        if event.kind is not EventKind.UPLINK:
-            return
+    def follow(key: str, _before: str | None, through: str | None) -> None:
         config = current()
+        if key != dns_uplink(config):
+            return
         failopen = config.routing is not None and config.routing.failopen
-        if failopen and event.subject == dns_uplink(config):
+        path = through if through is not None else ("direct" if failopen else None)
+        if path is None:
+            return  # held: nothing moves
+        if last.get(key, key) != path:
             reconnect(config)
+        last[key] = path
 
     return follow
 

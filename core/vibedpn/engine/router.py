@@ -14,8 +14,8 @@ import os
 import shlex
 import shutil
 import subprocess
-from collections.abc import Callable, Collection
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import StrEnum
 from ipaddress import IPv4Address, IPv4Network
 from itertools import takewhile
@@ -458,6 +458,65 @@ def dns_uplink(config: Config) -> str | None:
     return active if active is not None and config.dns.enabled else None
 
 
+def fallback_uplinks(config: Config) -> list[str]:
+    """The uplinks of routing.fallback in the owner's order: what takes the traffic of a silent
+    uplink in use (decision 32). Only a box that routes a LAN has any."""
+    if config.network is None or config.routing is None:
+        return []
+    return list(config.routing.fallback)
+
+
+@dataclass(frozen=True)
+class ExitPlan:
+    """What the uplink watchers probe and route: every uplink they watch, the ones among them whose
+    table carries LAN traffic (each has its ip rule), and the fallback chain for a silent one."""
+
+    uplinks: Mapping[str, Uplink]
+    routed: tuple[str, ...]
+    fallback: tuple[str, ...] = ()
+    failopen: bool = False
+
+    @classmethod
+    def of(cls, uplinks: Mapping[str, Uplink]) -> ExitPlan:
+        """Every uplink routed through its own gateway only: no fallback chain."""
+        return cls(dict(uplinks), tuple(uplinks))
+
+
+def exit_plan(config: Config, used: Sequence[str]) -> ExitPlan:
+    """The plan of the watchers for the uplinks the router just put in use: they and the fallback
+    uplinks are probed, only they are routed."""
+    table = uplink_table(config)
+    fallback = fallback_uplinks(config)
+    watched = [*used, *(key for key in fallback if key not in used)]
+    return ExitPlan(
+        uplinks={key: table[key] for key in watched},
+        routed=tuple(used),
+        fallback=tuple(fallback),
+        failopen=config.routing is not None and config.routing.failopen,
+    )
+
+
+def exit_routes(
+    routed: Iterable[str], fallback: Sequence[str], alive: Mapping[str, bool]
+) -> dict[str, str | None]:
+    """Uplink in use → the uplink whose gateway carries its traffic now: itself while its gateway
+    answers, else the first answering uplink of the fallback chain, else ``None`` — then the kill
+    switch holds the traffic or it goes direct, as routing.failopen says.
+
+    An uplink not probed yet is left out: its table stays as it is until its watcher knows."""
+    result: dict[str, str | None] = {}
+    for key in routed:
+        if key not in alive:
+            continue
+        if alive[key]:
+            result[key] = key
+        else:
+            result[key] = next(
+                (other for other in fallback if other != key and alive.get(other)), None
+            )
+    return result
+
+
 def used_uplinks(config: Config) -> list[str]:
     """Every uplink some LAN traffic may take, by key: the one of routing.mode full, the ones device
     policies name, and in smart the ones domain rules name (a rule country has its own). Each needs
@@ -788,18 +847,52 @@ def last_resort_route(uplink: Uplink) -> list[str]:
     return ["unreachable", "default", "metric", str(LAST_RESORT_METRIC), "table", str(uplink.table)]
 
 
-def gateway_route(uplink: Uplink) -> list[str]:
-    return ["default", "via", uplink.gateway, "dev", UPSTREAMS_BRIDGE, "table", str(uplink.table)]
+def set_exit_route(uplink: Uplink, via: Uplink | None) -> None:
+    """Point the table of an uplink at the gateway that carries its traffic now: its own, or the
+    one of a fallback uplink; ``None`` withdraws it. Then the last-resort route holds the traffic
+    (``failopen: false``) or, without one, the lookup falls through to the main table.
+
+    ``replace`` swaps one gateway for another in a single step: the route of metric 0 is one per
+    table, and the last-resort route has a metric of its own. A withdrawal removes every gateway
+    route of the table, whichever gateway it names: a route through a fallback left behind would
+    carry the traffic on after the chain moved on."""
+    table = str(uplink.table)
+    if via is not None:
+        _ip(
+            [
+                "route",
+                "replace",
+                "default",
+                "via",
+                via.gateway,
+                "dev",
+                UPSTREAMS_BRIDGE,
+                "table",
+                table,
+            ]
+        )
+        return
+    listing = _ip(["-j", "route", "show", "table", table], missing_ok=True)
+    for gateway in _gateways(listing):
+        _ip(
+            ["route", "del", "default", "via", gateway, "dev", UPSTREAMS_BRIDGE, "table", table],
+            missing_ok=True,
+        )
 
 
-def set_gateway_route(uplink: Uplink, alive: bool) -> None:
-    """Point the uplink table at its gateway while the container answers, withdraw it when it
-    does not: then the last-resort route holds the traffic (``failopen: false``) or, without
-    one, the lookup falls through to the main table (``failopen: true``)."""
-    if alive:
-        _ip(["route", "replace", *gateway_route(uplink)])
-    else:
-        _ip(["route", "del", *gateway_route(uplink)], missing_ok=True)
+def _gateways(listing: str) -> list[str]:
+    """The gateways of the default routes through the bridge of the gateways in ``ip -j route``."""
+    try:
+        entries = json.loads(listing or "[]")
+    except json.JSONDecodeError as exc:
+        raise RouterError(f"cannot read the routes of an uplink table: {exc}") from exc
+    return [
+        str(entry["gateway"])
+        for entry in entries
+        if entry.get("dst") == "default"
+        and entry.get("dev") == UPSTREAMS_BRIDGE
+        and "gateway" in entry
+    ]
 
 
 def apply_router(config: Config) -> list[str]:
@@ -860,11 +953,14 @@ def apply_firewall(config: Config) -> bool:
 @dataclass(frozen=True)
 class RoutingFacts:
     """The LAN router as the host has it: rules for the uplinks in use, and per uplink its gateway
-    route and its kill-switch route."""
+    route, its kill-switch route and the uplink whose gateway its table points at."""
 
     rules_current: bool | None
     gateway_routes: dict[str, bool | None]
     last_resort_routes: dict[str, bool | None]
+    # key → the uplink carrying its traffic (itself or a fallback), None: no gateway route
+    # (kill switch or direct); a table that could not be read is absent
+    exits: dict[str, str | None] = field(default_factory=dict)
 
 
 def read_routing(config: Config) -> RoutingFacts:
@@ -884,6 +980,8 @@ def read_routing(config: Config) -> RoutingFacts:
         return RoutingFacts(None, {}, {})
     gateways: dict[str, bool | None] = {}
     last_resorts: dict[str, bool | None] = {}
+    exits: dict[str, str | None] = {}
+    by_gateway = {uplink.gateway: key for key, uplink in table.items()}
     for key in uplinks:
         uplink = table[key]
         try:
@@ -902,4 +1000,13 @@ def read_routing(config: Config) -> RoutingFacts:
             entry.get("type") == "unreachable" and entry.get("metric") == LAST_RESORT_METRIC
             for entry in entries
         )
-    return RoutingFacts(not delete and not add, gateways, last_resorts)
+        through = next(
+            (
+                str(entry["gateway"])
+                for entry in entries
+                if entry.get("dst") == "default" and "gateway" in entry
+            ),
+            None,
+        )
+        exits[key] = None if through is None else by_gateway.get(through, through)
+    return RoutingFacts(not delete and not add, gateways, last_resorts, exits)

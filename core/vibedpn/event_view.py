@@ -56,8 +56,18 @@ def event_text(event: EventView) -> str:
         "ap_disabled": "is down",
         "gateway_answers": "the gateway answers",
         "gateway_silent": "the gateway does not answer",
+        "rerouted": _rerouted_text(event),
     }
     return phrases.get(event.action, event.action)
+
+
+def _rerouted_text(event: EventView) -> str:
+    through = str(event.detail.get("through", ""))
+    if through == "direct":
+        return "its traffic goes direct"
+    if through == "held":
+        return "its traffic is held (kill switch)"
+    return f"its traffic goes through {through}"
 
 
 def event_line(event: EventView) -> str:

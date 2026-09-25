@@ -505,6 +505,28 @@ class NetworkRule(DomainChannel):
         return str(self.network)
 
 
+def uplink_key(value: str, field: str) -> str:
+    """An uplink key the owner may name: a fixed uplink or wg-<name> of upstreams.wg
+
+    The consumers of rule countries (dpn-<cc>) are not in it: they serve their rules only
+    Whether the uplink is enabled is checked against upstreams, by the box
+    """
+    if value.startswith(WG_KEY_PREFIX):
+        if not WG_UPLINK_NAME.fullmatch(value.removeprefix(WG_KEY_PREFIX)):
+            raise ValueError(
+                f"{field}: {value!r} names no usable uplink "
+                "(lowercase letters, digits and '-' after 'wg-')"
+            )
+        return value
+    try:
+        return Upstream(value).value
+    except ValueError:
+        raise ValueError(
+            f"{field}: {value!r} is not an uplink"
+            " (vps, dpn, tor, xray, or wg-<name> of upstreams.wg)"
+        ) from None
+
+
 class RoutingConfig(StrictModel):
     """LAN traffic policy: everything direct, everything via an uplink, or by domain rules."""
 
@@ -513,6 +535,9 @@ class RoutingConfig(StrictModel):
     # the named uplinks are the owner's, and their keys are known only from the configuration.
     default_upstream: str
     failopen: bool = False
+    # Uplink keys in order (decision 32): the traffic of a silent uplink goes through the first one
+    # that answers; failopen decides only once none of them does.
+    fallback: list[str] = Field(default_factory=list)
     domains: list[DomainRule] = Field(default_factory=list)
     lists: list[DomainList] = Field(default_factory=list)
     networks: list[NetworkRule] = Field(default_factory=list)
@@ -536,20 +561,16 @@ class RoutingConfig(StrictModel):
     @classmethod
     def check_default_upstream(cls, value: str) -> str:
         """A key of an uplink; whether that uplink is enabled is checked against upstreams."""
-        if value.startswith(WG_KEY_PREFIX):
-            if not WG_UPLINK_NAME.fullmatch(value.removeprefix(WG_KEY_PREFIX)):
-                raise ValueError(
-                    f"routing.default_upstream: {value!r} names no usable uplink "
-                    "(lowercase letters, digits and '-' after 'wg-')"
-                )
-            return value
-        try:
-            return Upstream(value).value
-        except ValueError:
-            raise ValueError(
-                f"routing.default_upstream: {value!r} is not an uplink "
-                "(vps, dpn, or wg-<name> of upstreams.wg)"
-            ) from None
+        return uplink_key(value, "routing.default_upstream")
+
+    @field_validator("fallback")
+    @classmethod
+    def check_fallback(cls, value: list[str]) -> list[str]:
+        keys = [uplink_key(key, "routing.fallback") for key in value]
+        repeated = sorted({key for key in keys if keys.count(key) > 1})
+        if repeated:
+            raise ValueError(f"routing.fallback names an uplink twice: {', '.join(repeated)}")
+        return keys
 
     @model_validator(mode="before")
     @classmethod
@@ -1048,6 +1069,12 @@ class Config(StrictModel):
             errors.append(
                 f"routing.default_upstream: '{self.routing.default_upstream}' is not an enabled"
                 " uplink"
+            )
+        if self.routing is not None:
+            errors.extend(
+                f"routing.fallback: '{key}' is not an enabled uplink"
+                for key in self.routing.fallback
+                if not self.upstreams.is_key_enabled(key)
             )
         if self.wg_server is not None:
             errors.append("wg_server: only role 'vps' runs the WireGuard server")

@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vibedpn.api import client as core_api
-from vibedpn.api.app import create_app, reconnect_dns, reconnect_on_failover
+from vibedpn.api.app import create_app, reconnect_dns, reconnect_on_reroute
 from vibedpn.api.consumer import ConsumerStatus
 from vibedpn.api.state import BoxState
 from vibedpn.api.uplink import UplinkState, UplinkWatchers, watch_uplink
@@ -18,9 +18,8 @@ from vibedpn.bootstrap import render_config
 from vibedpn.config import Config, RoutingMode, Upstream, load_config
 from vibedpn.engine.adguard import CORE_USER, AdguardError, adguard_text, set_dns_mode
 from vibedpn.engine.consumer import ConsumerState, CountryOffer
-from vibedpn.engine.events import Event, EventAction, EventKind
 from vibedpn.engine.myst import MystError
-from vibedpn.engine.router import UPLINKS, RouterError, RoutingFacts, Uplink
+from vibedpn.engine.router import UPLINKS, ExitPlan, RouterError, RoutingFacts, Uplink
 from vibedpn.engine.sockdiag import SockDiagError
 
 from .conftest import client_config, home_config, vps_config
@@ -34,8 +33,8 @@ class FakeWatchers:
         self._states = states
         self.synced: list[list[Upstream]] = []
 
-    def sync(self, uplinks: list[Upstream]) -> None:
-        self.synced.append(list(uplinks))
+    def sync(self, plan: ExitPlan) -> None:
+        self.synced.append([Upstream(key) for key in plan.routed])
 
     def states(self) -> dict[Upstream, UplinkState]:
         return dict(self._states)
@@ -113,7 +112,12 @@ def test_routing_changes_live_and_reports_adguard(tmp_path: Path) -> None:
     client, path = box(tmp_path, dns=dns)
     response = client.put("/routing", json={"mode": "off"})
     assert response.status_code == 200, response.text
-    assert response.json() == {"mode": "off", "default_upstream": "vps", "adguard": "applied"}
+    assert response.json() == {
+        "mode": "off",
+        "default_upstream": "vps",
+        "fallback": [],
+        "adguard": "applied",
+    }
     routing = load_config(path).routing
     assert routing is not None and routing.mode is RoutingMode.OFF
     assert told == [RoutingMode.OFF]
@@ -176,15 +180,33 @@ def test_failopen_reconnects_adguard_when_the_gateway_of_its_queries_changes_sta
     raw["upstreams"] = {"vps": {"enabled": True}, "tor": {"enabled": True}}
     config = Config.model_validate(raw)
     reconnected: list[Config] = []
-    follow = reconnect_on_failover(lambda: config, reconnected.append)
-    follow(Event(1.0, EventKind.UPLINK, "vps", EventAction.GATEWAY_SILENT))
-    follow(Event(2.0, EventKind.UPLINK, "vps", EventAction.GATEWAY_ANSWERS))
-    follow(Event(3.0, EventKind.UPLINK, "tor", EventAction.GATEWAY_SILENT))  # not its uplink
-    follow(Event(4.0, EventKind.WIFI, "wlan0", EventAction.AP_DISABLED))
+    follow = reconnect_on_reroute(lambda: config, reconnected.append)
+    follow("vps", "vps", None)
+    follow("vps", None, "vps")
+    follow("tor", "tor", None)  # not the uplink of its queries
     assert len(reconnected) == 2
     raw["routing"]["failopen"] = False  # the kill switch: nothing moves, the path stays
     config = Config.model_validate(raw)
-    follow(Event(5.0, EventKind.UPLINK, "vps", EventAction.GATEWAY_SILENT))
+    follow("vps", "vps", None)
+    follow("vps", None, "vps")
+    assert len(reconnected) == 2
+
+
+def test_a_fallback_moves_adguard_to_the_new_path_and_back() -> None:
+    """A move to a fallback uplink and back each close the connections of the old path; a hold in
+    between closes nothing, and a return to the same path after it closes nothing either."""
+    raw = client_config()
+    raw["routing"] = {"mode": "full", "default_upstream": "vps", "fallback": ["tor"]}
+    raw["upstreams"] = {"vps": {"enabled": True}, "tor": {"enabled": True}}
+    config = Config.model_validate(raw)
+    reconnected: list[Config] = []
+    follow = reconnect_on_reroute(lambda: config, reconnected.append)
+    follow("vps", "vps", "tor")
+    assert len(reconnected) == 1
+    follow("vps", "tor", None)  # tor went silent too: held, the connections wait
+    follow("vps", None, "tor")  # tor again: the path they were opened on
+    assert len(reconnected) == 1
+    follow("vps", "tor", "vps")
     assert len(reconnected) == 2
 
 
@@ -286,7 +308,7 @@ def test_the_watcher_reports_every_round() -> None:
                 "vps",
                 UPLINKS[Upstream.VPS],
                 probe=probe,
-                apply=lambda _upstream, _alive: None,
+                settle=lambda _key, _alive: None,
                 sleep=sleep,
                 report=reports.append,
             )
@@ -303,12 +325,12 @@ def test_watchers_keep_the_state_of_the_uplinks_in_use() -> None:
 
     async def scenario() -> None:
         watchers = UplinkWatchers(
-            {"vps": UPLINKS[Upstream.VPS], "dpn": UPLINKS[Upstream.DPN]}, watch=watch
+            ExitPlan.of({"vps": UPLINKS[Upstream.VPS], "dpn": UPLINKS[Upstream.DPN]}), watch=watch
         )
         runner = asyncio.ensure_future(watchers.run())
         await asyncio.sleep(0.01)
         assert {k: v.alive for k, v in watchers.states().items()} == {"vps": True, "dpn": False}
-        watchers.sync({"vps": UPLINKS[Upstream.VPS]})
+        watchers.sync(ExitPlan.of({"vps": UPLINKS[Upstream.VPS]}))
         await asyncio.sleep(0.01)
         assert list(watchers.states()) == ["vps"]
         runner.cancel()

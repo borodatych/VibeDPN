@@ -85,6 +85,7 @@ from vibedpn.engine.router import (
     ROUTER_TABLE,
     UPSTREAMS_BRIDGE,
     RouterError,
+    RoutingFacts,
     docker_user_chain,
     docker_user_rules,
     find_ip,
@@ -247,6 +248,8 @@ class DoctorFacts:
     # Per uplink in use: its gateway route, and its kill-switch route; None: not readable.
     uplink_routes: dict[str, bool | None] = field(default_factory=dict)
     last_resort_routes: dict[str, bool | None] = field(default_factory=dict)
+    # uplink in use → the uplink its table points at (itself or a fallback); None: no gateway
+    uplink_exits: dict[str, str | None] = field(default_factory=dict)
     rp_filter: int | None = None  # max of all and the gateway bridge, as the kernel uses it
     lan_ipv6: bool | None = None  # a global IPv6 address on lan_interface; None: not checked
     # The kernel closes sockets (CONFIG_INET_DIAG_DESTROY); None: not asked or not answered
@@ -622,6 +625,15 @@ def _egress_result(config: Config, facts: DoctorFacts) -> CheckResult:
     return CheckResult("tunnel egress", Verdict.OK, f"peers of {subnet} leave through this VPS")
 
 
+def _silent_fate(through: str | None, *, failopen: bool) -> str:
+    """Where the traffic of an uplink whose gateway is silent goes, as the host routes it."""
+    if through is not None:
+        return f"its traffic goes through {through} (routing.fallback)"
+    return (
+        "traffic goes direct (failopen: true)" if failopen else "its traffic is held (kill switch)"
+    )
+
+
 def _router_result(config: Config, facts: DoctorFacts) -> CheckResult:  # noqa: PLR0911 - a verdict per fact, in order
     """The LAN router is loaded as config.yaml says, and every uplink in use has its gateway."""
     hint = "" if facts.is_root else SUDO_HINT
@@ -676,11 +688,7 @@ def _router_result(config: Config, facts: DoctorFacts) -> CheckResult:  # noqa: 
                 restart,
             )
         if not gateway:
-            fate = (
-                "traffic goes direct (failopen: true)"
-                if failopen
-                else "its traffic is held (kill switch)"
-            )
+            fate = _silent_fate(facts.uplink_exits.get(uplink), failopen=failopen)
             return CheckResult(
                 "router",
                 Verdict.WARN,
@@ -688,7 +696,11 @@ def _router_result(config: Config, facts: DoctorFacts) -> CheckResult:  # noqa: 
                 f"vibedpn logs {uplink_service(uplink)}",
             )
     in_use = ", ".join(f"{uplink} ({known[uplink].gateway})" for uplink in uplinks)
-    return CheckResult("router", Verdict.OK, f"routing.mode {mode}, uplinks in use: {in_use}")
+    chain = config.routing.fallback if config.routing is not None else []
+    fallback = f"; fallback: {', '.join(chain)}" if chain else ""
+    return CheckResult(
+        "router", Verdict.OK, f"routing.mode {mode}, uplinks in use: {in_use}{fallback}"
+    )
 
 
 def _lan_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
@@ -1127,20 +1139,13 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
                 docker_user_rules(config), EGRESS_COMMENT
             )
     router_table, router_error = None, ""
-    router_rules: bool | None = None
-    uplink_routes: dict[str, bool | None] = {}
-    last_resort_routes: dict[str, bool | None] = {}
+    routing = RoutingFacts(None, {}, {})
     lan_ipv6: bool | None = None
     rp_filter = None
     router_docker_user, router_docker_user_error = None, ""
     if config is not None and config.network is not None:
         router_table, router_error = _table_present(ROUTER_TABLE)
         routing = read_routing(config)
-        router_rules, uplink_routes, last_resort_routes = (
-            routing.rules_current,
-            routing.gateway_routes,
-            routing.last_resort_routes,
-        )
         rp_filter = _read_rp_filter()
         router_docker_user, router_docker_user_error = _docker_user_current(
             router_docker_user_rules(config), ROUTER_COMMENT
@@ -1173,11 +1178,12 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         router_table=router_table,
         dns_uplink=_chain_present(ROUTER_TABLE, DNS_UPLINK_CHAIN) if router_table else None,
         router_error=router_error,
-        router_rules=router_rules,
+        router_rules=routing.rules_current,
         router_docker_user=router_docker_user,
         router_docker_user_error=router_docker_user_error,
-        uplink_routes=uplink_routes,
-        last_resort_routes=last_resort_routes,
+        uplink_routes=routing.gateway_routes,
+        last_resort_routes=routing.last_resort_routes,
+        uplink_exits=routing.exits,
         rp_filter=rp_filter,
         lan_ipv6=lan_ipv6,
         socket_destroy=_socket_destroy(config),

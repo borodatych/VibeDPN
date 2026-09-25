@@ -93,6 +93,10 @@ class UplinkStatus(BaseModel):
     gateway_route: bool | None  # None: the route table could not be read
     kill_switch_route: bool | None
     lan_access: bool | None  # upstreams.vps.lan_access; None for an uplink without the setting
+    # An uplink in use: the uplink whose gateway its table points at on the host now — itself, or
+    # one of routing.fallback; None: no gateway (kill switch or direct), or the table was unreadable
+    exit_through: str | None = None
+    fallback: bool = False  # it is in routing.fallback
 
 
 class DpnStatus(BaseModel):
@@ -113,8 +117,10 @@ class BoxStatus(BaseModel):
     mode: str
     default_upstream: str
     failopen: bool
+    fallback: list[str] = []  # routing.fallback in its order
     rules_current: bool | None
-    # routing.mode full, its uplink does not answer and failopen is false: the LAN has no exit.
+    # routing.mode full, its uplink does not answer, no fallback uplink carries its traffic and
+    # failopen is false: the LAN has no exit.
     lan_without_exit: bool
     uplinks: list[UplinkStatus]
     dpn: DpnStatus | None = None  # None: uplink dpn is off, or core has not asked the consumer yet
@@ -128,11 +134,14 @@ class RoutingUpdate(BaseModel):
     mode: Literal["off", "full", "smart"] | None = None
     # An uplink key: vps, dpn, or wg-<name>; the box refuses one it does not run.
     default_upstream: str | None = None
+    # routing.fallback as a whole, in order; [] empties it
+    fallback: list[str] | None = None
 
 
 class RoutingView(BaseModel):
     mode: str
     default_upstream: str
+    fallback: list[str] = []
     # applied: AdGuard follows the mode already; pending: it did not answer and catches up at the
     # next start of core; none: this box runs no AdGuard.
     adguard: Literal["applied", "pending", "none"]

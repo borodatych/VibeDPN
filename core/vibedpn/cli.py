@@ -38,6 +38,7 @@ from vibedpn.api.models import (
     PeerFile,
     TelegramUpdate,
     TelegramView,
+    UplinkStatus,
 )
 from vibedpn.atomic import write_private
 from vibedpn.bootstrap import (
@@ -825,6 +826,7 @@ def _routing_line(config: Config) -> str:
         f"routing: mode={config.routing.mode.value}"
         f" default_upstream={config.routing.default_upstream}"
         f" failopen={str(config.routing.failopen).lower()}"
+        f" fallback={','.join(config.routing.fallback) or '-'}"
     )
 
 
@@ -837,13 +839,17 @@ class SwitchableMode(StrEnum):
 
 
 def _switch_routing(
-    box_dir: Path, *, mode: RoutingMode | None = None, upstream: str | None = None
+    box_dir: Path,
+    *,
+    mode: RoutingMode | None = None,
+    upstream: str | None = None,
+    fallback: list[str] | None = None,
 ) -> None:
     """Change routing through core when it runs: config.yaml, the router and AdGuard follow live
     and nothing restarts. Without core the file is changed and applies at `vibedpn up`."""
     config = _prepare(box_dir, refresh=False)
     try:
-        view = core_api.set_routing(config.api.port, mode, upstream)
+        view = core_api.set_routing(config.api.port, mode, upstream, fallback=fallback)
     except core_api.CoreUnreachableError:
         pass
     except (core_api.CoreNoAnswerError, core_api.RoutingRequestError) as exc:
@@ -854,10 +860,16 @@ def _switch_routing(
             if view.adguard == "pending"
             else "applied live, nothing restarted"
         )
-        typer.echo(f"routing: mode={view.mode} default_upstream={view.default_upstream} ({note})")
+        chain = ",".join(view.fallback) or "-"
+        typer.echo(
+            f"routing: mode={view.mode} default_upstream={view.default_upstream}"
+            f" fallback={chain} ({note})"
+        )
         return
     try:
-        saved, changed = set_routing(box_dir / CONFIG_FILE, mode=mode, upstream=upstream)
+        saved, changed = set_routing(
+            box_dir / CONFIG_FILE, mode=mode, upstream=upstream, fallback=fallback
+        )
     except ConfigEditError as exc:
         raise _fail(str(exc)) from None
     if not changed:
@@ -888,6 +900,27 @@ def upstream(
 ) -> None:
     """Switch routing.default_upstream and apply it."""
     _switch_routing(box_dir, upstream=value)
+
+
+@app.command()
+def fallback(
+    uplinks: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help="Uplinks in order: vps, dpn, tor, xray, or wg-<name>."
+            " The traffic of a silent uplink goes through the first one that answers."
+        ),
+    ] = None,
+    clear: Annotated[bool, typer.Option("--clear", help="Empty the chain.")] = False,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Show or set routing.fallback, the chain of uplinks for a silent one, and apply it."""
+    if clear and uplinks:
+        raise _fail("give the uplinks of the chain or --clear, not both")
+    if not clear and not uplinks:
+        typer.echo(_routing_line(check_box(box_dir)))
+        return
+    _switch_routing(box_dir, fallback=[] if clear else uplinks)
 
 
 def _ensure_apply_units(box_dir: Path) -> None:
@@ -1378,9 +1411,9 @@ def _router_lines(config: Config) -> list[str]:
         return [f"router: {exc}"]
     answers = {True: "answers", False: "does not answer", None: "not probed yet"}
     lines = [
-        f"uplink {item.name}: gateway {answers[item.gateway_alive]}"
+        f"uplink {item.name}: gateway {answers[item.gateway_alive]}{_exit_note(item)}"
         for item in status.uplinks
-        if item.in_use
+        if item.in_use or item.fallback
     ]
     if status.lan_without_exit:
         lines.append(
@@ -1388,6 +1421,15 @@ def _router_lines(config: Config) -> list[str]:
             " failopen is false, the kill switch holds the LAN"
         )
     return lines
+
+
+def _exit_note(item: UplinkStatus) -> str:
+    """Where the traffic of an uplink in use goes when not through its own gateway."""
+    if not item.in_use:
+        return " (fallback)"
+    if item.exit_through is not None and item.exit_through != item.name:
+        return f", traffic through {item.exit_through} (fallback)"
+    return ""
 
 
 def _node_lines(config: Config) -> list[str]:

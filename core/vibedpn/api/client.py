@@ -7,6 +7,7 @@ reader and writer through it keeps one place to change when the API moves behind
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TypeVar
 from urllib.parse import quote
 
@@ -275,9 +276,14 @@ def set_routing(
     mode: RoutingMode | None = None,
     upstream: str | None = None,
     transport: httpx.BaseTransport | None = None,
+    fallback: Sequence[str] | None = None,
 ) -> RoutingView:
     body = RoutingUpdate.model_validate(
-        {"mode": None if mode is None else mode.value, "default_upstream": upstream}
+        {
+            "mode": None if mode is None else mode.value,
+            "default_upstream": upstream,
+            "fallback": None if fallback is None else list(fallback),
+        }
     ).model_dump(mode="json", exclude_none=True)
     response = _send(port, "PUT", "/routing", body=body, transport=transport)
     if response.status_code != httpx.codes.OK:

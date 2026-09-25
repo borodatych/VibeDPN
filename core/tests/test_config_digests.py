@@ -151,6 +151,7 @@ REACH = {
     "routing.mode": LIVE,
     "routing.default_upstream": LIVE,
     "routing.failopen": CORE,
+    "routing.fallback": LIVE,
     "routing.domains": LIVE,
     "routing.lists": LIVE,
     "routing.networks": LIVE,
@@ -285,6 +286,7 @@ CHANGES: dict[str, tuple[Box, str, object]] = {
     "routing.mode": (rich_home, "routing.mode", RoutingMode.FULL),
     "routing.default_upstream": (rich_home, "routing.default_upstream", "tor"),
     "routing.failopen": (rich_home, "routing.failopen", True),
+    "routing.fallback": (rich_home, "routing.fallback", ["tor"]),
     "routing.domains": (
         rich_home,
         "routing.domains",

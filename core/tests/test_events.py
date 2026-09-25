@@ -27,7 +27,7 @@ from vibedpn.engine.events import (
     EventStore,
 )
 from vibedpn.engine.hostapd import hostapd_conf
-from vibedpn.engine.router import UPLINKS, Uplink
+from vibedpn.engine.router import UPLINKS
 from vibedpn.engine.wifi import (
     DEFAULT_CTRL_DIR,
     ApEvent,
@@ -304,7 +304,7 @@ def test_the_uplink_watcher_journals_changes_only() -> None:
     def fake_probe(_address: str, _timeout: float) -> bool:
         return answers.pop(0)
 
-    def fake_apply(_uplink: Uplink, _alive: bool) -> None:
+    def fake_apply(_key: str, _alive: bool) -> None:
         return None
 
     async def fake_sleep(_seconds: float) -> None:
@@ -317,7 +317,7 @@ def test_the_uplink_watcher_journals_changes_only() -> None:
                 "vps",
                 UPLINKS[Upstream.VPS],
                 probe=fake_probe,
-                apply=fake_apply,
+                settle=fake_apply,
                 sleep=fake_sleep,
                 journal=journaled.append,
             )

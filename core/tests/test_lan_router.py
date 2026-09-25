@@ -26,7 +26,7 @@ from vibedpn.engine.router import (
     remove_router,
     router_docker_user_rules,
     router_ruleset,
-    set_gateway_route,
+    set_exit_route,
     used_uplinks,
     wg_uplinks,
 )
@@ -253,11 +253,11 @@ def test_mode_off_and_a_vps_remove_every_rule(monkeypatch: pytest.MonkeyPatch) -
 
 def test_gateway_route_follows_the_watcher(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = fake_host(monkeypatch)
-    set_gateway_route(UPLINKS[Upstream.VPS], alive=True)
-    set_gateway_route(UPLINKS[Upstream.VPS], alive=False)  # missing already: not an error
+    set_exit_route(UPLINKS[Upstream.VPS], UPLINKS[Upstream.VPS])
+    set_exit_route(UPLINKS[Upstream.VPS], None)  # no gateway route listed: nothing to delete
     assert [" ".join(argv) for argv in calls] == [
         "ip route replace default via 10.77.0.10 dev vibedpn0 table 7710",
-        "ip route del default via 10.77.0.10 dev vibedpn0 table 7710",
+        "ip -j route show table 7710",
     ]
 
 

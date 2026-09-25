@@ -25,6 +25,7 @@ from vibedpn.engine.domainlists import (
     ListState,
 )
 from vibedpn.engine.resolver import Resolver, RuleIndex
+from vibedpn.engine.router import ExitPlan
 
 from .conftest import home_config
 
@@ -148,7 +149,9 @@ def test_lists_are_added_shown_and_removed_through_the_api(tmp_path: Path) -> No
     path = tmp_path / "config.yaml"
     config = smart_config([])
     path.write_text(render_config(config), encoding="utf-8")
-    state = BoxState(load_config(path), path, apply=lambda _config: [], watchers=UplinkWatchers({}))
+    state = BoxState(
+        load_config(path), path, apply=lambda _config: [], watchers=UplinkWatchers(ExitPlan.of({}))
+    )
     status = ListsStatus()
     client = TestClient(create_app(state.config, state=state, lists=status))
 
