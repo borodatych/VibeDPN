@@ -203,6 +203,7 @@ const table = {
   'lists.copy.fetching': 'fetching…',
   'lists.copy.none': 'no copy yet',
   'lists.copy.domains': '{count} domains',
+  'lists.copy.networks': '{domains} domains, {networks} networks',
 
   'sniffer.title': 'Sniffer',
   'sniffer.description': 'What a device asks, live, and which channel each name took',

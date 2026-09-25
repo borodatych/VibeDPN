@@ -23,7 +23,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from ipaddress import IPv4Address, IPv4Network
+from ipaddress import IPv4Address, IPv4Network, collapse_addresses
 
 import dns.exception
 import dns.message
@@ -64,6 +64,30 @@ def channel_set(channel: DomainChannel) -> str:
     if channel.via is DomainVia.WG:
         return f"smart_wg_{(channel.uplink or '').replace('-', '_')}"
     return DIRECT_SET if channel.via is DomainVia.DIRECT else f"smart_{channel.via.value}"
+
+
+LIST_NETWORK_SET_SUFFIX = "_lnet"
+
+
+def list_network_set(channel: DomainChannel) -> str:
+    """The interval set of the networks the lists of one channel name; core fills it, no template"""
+    return f"{channel_set(channel)}{LIST_NETWORK_SET_SUFFIX}"
+
+
+def list_network_sets(config: Config) -> list[str]:
+    """Every such set the lists of this box need, in a stable order"""
+    lists = config.routing.lists if config.routing is not None else []
+    return sorted({list_network_set(item) for item in lists})
+
+
+def networks_script(set_name: str, networks: list[IPv4Network]) -> str:
+    """One nft transaction that replaces the whole content of a set of list networks"""
+    family, table = ROUTER_FAMILY_TABLE
+    script = f"flush set {family} {table} {set_name}\n"
+    if networks:
+        elements = ", ".join(str(network) for network in networks)
+        script += f"add element {family} {table} {set_name} {{ {elements} }}\n"
+    return script
 
 
 def smart_set_names(config: Config) -> list[str]:
@@ -219,6 +243,10 @@ class Resolver:
     cnames: dict[str, str] = field(default_factory=dict)  # CNAME target → the name that led to it
     learned: dict[str, str] = field(default_factory=dict)  # CDN → the site it follows
     lists: dict[str, list[str]] = field(default_factory=dict)  # URL of routing.lists → its domains
+    # URL of routing.lists → its networks, and what the sets of list networks hold now
+    list_networks: dict[str, list[IPv4Network]] = field(default_factory=dict)
+    network_sets: dict[str, list[IPv4Network]] = field(default_factory=dict)
+    last_error: str = ""
 
     def resolve(self, query: dns.message.Message) -> dns.message.Message:
         if query.question and query.question[0].rdtype == dns.rdatatype.AAAA:
@@ -270,10 +298,48 @@ class Resolver:
         if self.learned.pop(name, None) is not None:
             self.index.remove(name)
 
-    def set_lists(self, config: Config, lists: Mapping[str, list[str]]) -> None:
-        """New domains of routing.lists: rebuild the index with them and fill the sets again."""
+    def set_lists(
+        self,
+        config: Config,
+        lists: Mapping[str, list[str]],
+        networks: Mapping[str, list[IPv4Network]] | None = None,
+    ) -> None:
+        """New content of routing.lists: rebuild the index with its domains, fill every set again"""
         self.lists = dict(lists)
+        self.list_networks = dict(networks or {})
         self.reload(config)
+
+    def listed(self, address: IPv4Address) -> str | None:
+        """The channel set whose list networks hold the address, a direct one first, as in steer"""
+        for set_name, networks in sorted(
+            self.network_sets.items(), key=lambda item: not item[0].startswith(DIRECT_SET)
+        ):
+            if any(address in network for network in networks):
+                return set_name.removesuffix(LIST_NETWORK_SET_SUFFIX)
+        return None
+
+    def _fill_list_networks(self, config: Config) -> None:
+        """Every set of list networks gets the networks of its lists, merged, in one nft call each
+
+        The router rebuilt its table, or a list changed: a set left as it was would keep what an
+        old list held
+        """
+        wanted: dict[str, list[IPv4Network]] = {name: [] for name in list_network_sets(config)}
+        lists = config.routing.lists if config.routing is not None else []
+        for item in lists:
+            wanted[list_network_set(item)].extend(self.list_networks.get(item.url, ()))
+        filled: dict[str, list[IPv4Network]] = {}
+        for name, values in wanted.items():
+            networks = list(collapse_addresses(values))
+            try:
+                self.nft(networks_script(name, networks))
+            except ResolverError as exc:
+                if str(exc) != self.last_error:
+                    sys.stderr.write(f"vibedpn-core: resolver: {exc}\n")
+                    self.last_error = str(exc)
+            else:
+                filled[name] = networks
+        self.network_sets = filled
 
     def reload(self, config: Config) -> None:
         """config.yaml changed (rules, mode) and the router rebuilt its table: take the new rules,
@@ -290,6 +356,7 @@ class Resolver:
             else:
                 self.index.add(name, set_name)
         self.replay()
+        self._fill_list_networks(config)
 
     def replay(self) -> None:
         """Fill every set again from the last answers: the router rebuilt its table."""

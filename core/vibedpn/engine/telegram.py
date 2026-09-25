@@ -128,14 +128,20 @@ def endpoint(url: str) -> Endpoint:
 
 Rule = Callable[[str], str | None]  # a name → the channel set of the rule it falls under
 Addresses = Callable[[str], list[str]]  # a name → its IPv4 addresses
+Listed = Callable[[IPv4Address], str | None]  # an address → the channel set of a list network
+
+
+def _unlisted(_address: IPv4Address) -> str | None:
+    return None
 
 
 @dataclass(frozen=True)
 class Lookup:
-    """How the bot finds Telegram's address and the rule over its name."""
+    """How the bot finds Telegram's address, the rule over its name and a list over its address"""
 
     rule: Rule
     addresses: Addresses
+    listed: Listed = _unlisted
 
 
 def resolver_lookup(resolver: Resolver) -> Lookup:
@@ -145,7 +151,7 @@ def resolver_lookup(resolver: Resolver) -> Lookup:
     def rule(name: str) -> str | None:
         return resolver.index.match(name)  # a reload replaces the index, never changes it in place
 
-    return Lookup(rule=rule, addresses=resolver.lookup)
+    return Lookup(rule=rule, addresses=resolver.lookup, listed=resolver.listed)
 
 
 def _no_rule(_name: str) -> str | None:
@@ -179,7 +185,7 @@ def route_to(config: Config, where: Endpoint, lookup: Lookup) -> Route:
         address, rule = literal, None
     else:
         address, rule = _resolved(where.host, lookup), lookup.rule(where.host)
-    key = exit_for(config, rule, IPv4Address(address))
+    key = exit_for(config, rule, IPv4Address(address), lookup.listed)
     return Route(address, key, None if key is None else uplink_table(config)[key].mark)
 
 

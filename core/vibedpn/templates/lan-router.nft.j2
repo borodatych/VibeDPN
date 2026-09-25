@@ -32,6 +32,12 @@ table inet vibedpn_router {
     elements = { {{ net.elements | join(", ") }} }
   }
 {% endfor %}
+{% for set in list_network_sets %}
+  set {{ set }} {
+    type ipv4_addr
+    flags interval
+  }
+{% endfor %}
   chain prerouting {
     type filter hook prerouting priority mangle; policy accept;
     iifname != "{{ lan_interface }}" return
@@ -55,6 +61,13 @@ table inet vibedpn_router {
     ip daddr @{{ net.name }} meta mark set {{ net.mark }} return comment "routing.mode smart: a network rule through its uplink"
 {% else %}
     ip daddr @{{ net.name }} return comment "routing.mode smart: a network rule kept direct"
+{% endif %}
+{% endfor %}
+{% for net in smart_list_networks %}
+{% if net.mark %}
+    ip daddr @{{ net.name }} meta mark set {{ net.mark }} return comment "routing.mode smart: a network of a list through its uplink"
+{% else %}
+    ip daddr @{{ net.name }} return comment "routing.mode smart: a network of a list kept direct"
 {% endif %}
 {% endfor %}
 {% for mark in smart_marks %}

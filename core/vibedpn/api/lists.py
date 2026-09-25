@@ -13,6 +13,7 @@ from vibedpn.engine.domainlists import (
     LIST_REFRESH_SECONDS,
     Fetch,
     ListCache,
+    ListContent,
     ListError,
     ListState,
     refresh_list,
@@ -61,13 +62,15 @@ async def watch_lists(
     attempted: dict[str, float] = {}
     while True:
         config = current()
-        # the resolver holds the domains in use: a restarted round picks up where the last one was
+        # the resolver holds what is in use: a restarted round picks up where the last one was
         domains = dict(resolver.lists)
+        networks = dict(resolver.list_networks)
         urls = [item.url for item in config.routing.lists] if config.routing is not None else []
         states = {url: state for url, state in status.states.items() if url in urls}
-        gone = [url for url in domains if url not in urls]
+        gone = [url for url in {*domains, *networks} if url not in urls]
         for url in gone:
-            del domains[url]
+            domains.pop(url, None)
+            networks.pop(url, None)
             attempted.pop(url, None)
         changed = bool(gone)
         for url in urls:
@@ -78,18 +81,20 @@ async def watch_lists(
             try:
                 got, state = await asyncio.to_thread(refresh_list, url, cache, fetch)
             except ListError as exc:
-                got = domains.get(url, [])
-                state = ListState(url, len(got), None, str(exc))
+                got = ListContent(domains.get(url, []), networks.get(url, []))
+                state = ListState(url, len(got.domains), None, str(exc), len(got.networks))
             if state.error and (previous is None or previous.error != state.error):
                 _log(f"domain list {state.error}")
             states[url] = state
-            if got != domains.get(url):
-                domains[url] = got
+            if got.domains != domains.get(url) or got.networks != networks.get(url):
+                domains[url] = got.domains
+                networks[url] = got.networks
                 changed = True
         status.states = states
         if changed:
             await asyncio.to_thread(cache.prune, urls)
-            resolver.set_lists(config, domains)
-            total = sum(len(names) for names in domains.values())
-            _log(f"domain lists: {total} domains from {len(domains)} lists in use")
+            resolver.set_lists(config, domains, networks)
+            names = sum(len(items) for items in domains.values())
+            nets = sum(len(items) for items in networks.values())
+            _log(f"lists: {names} domains and {nets} networks from {len(urls)} lists in use")
         await sleep(every)

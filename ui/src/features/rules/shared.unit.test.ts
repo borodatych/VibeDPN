@@ -91,12 +91,14 @@ describe('rules', () => {
       country: null,
       uplink: null,
       domains: 0,
+      networks: 0,
       fetched_at: null,
       error: '',
     }
     expect(listCopyText(list, baseT)).toBe('fetching…')
     expect(listCopyText({ ...list, error: 'HTTP 503' }, baseT)).toBe('no copy yet')
     expect(listCopyText({ ...list, domains: 12, fetched_at: 1_700_000_000 }, baseT)).toBe('12 domains')
+    expect(listCopyText({ ...list, networks: 919, fetched_at: 1_700_000_000 }, baseT)).toBe('0 domains, 919 networks')
   })
 
   test('a WireGuard exit is named by its channel, its set and the uplink keys of the status', () => {

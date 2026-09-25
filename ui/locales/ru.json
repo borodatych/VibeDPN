@@ -170,6 +170,7 @@
   "lists.copy.fetching": "скачивается…",
   "lists.copy.none": "копии нет",
   "lists.copy.domains": "доменов: {count}",
+  "lists.copy.networks": "доменов: {domains}, сетей: {networks}",
   "sniffer.title": "Снифер",
   "sniffer.description": "Что спрашивает устройство, в реальном времени, и каким каналом ушло каждое имя",
   "sniffer.empty": "DNS-запросов пока нет: устройство появится, когда спросит у коробки имя.",

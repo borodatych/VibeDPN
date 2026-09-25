@@ -163,6 +163,7 @@ def test_lists_are_added_shown_and_removed_through_the_api(tmp_path: Path) -> No
             "country": "NL",
             "uplink": None,
             "domains": 42,
+            "networks": 0,
             "fetched_at": 1_700_000_000.0,
             "error": "",
         }
@@ -175,14 +176,50 @@ def test_lists_are_added_shown_and_removed_through_the_api(tmp_path: Path) -> No
 
 def test_the_cli_line_says_what_copy_is_in_use() -> None:
     fetching = DomainListView(
-        url=URL, via="direct", country=None, uplink=None, domains=0, fetched_at=None, error=""
+        url=URL,
+        via="direct",
+        country=None,
+        uplink=None,
+        domains=0,
+        networks=0,
+        fetched_at=None,
+        error="",
     )
     assert render_domain_list(fetching) == f"{URL}  direct  (fetching)"
     down = fetching.model_copy(update={"error": f"{URL}: HTTP 503"})
     assert render_domain_list(down) == f"{URL}  direct  (no copy yet) — {URL}: HTTP 503"
     kept = DomainListView(
-        url=OTHER, via="dpn", country="DE", uplink=None, domains=7, fetched_at=0.0, error=""
+        url=OTHER,
+        via="dpn",
+        country="DE",
+        uplink=None,
+        domains=7,
+        networks=0,
+        fetched_at=0.0,
+        error="",
     )
     assert render_domain_list(kept).startswith(f"{OTHER}  dpn DE  (7 domains, fetched ")
     exit_list = kept.model_copy(update={"via": "wg", "country": None, "uplink": "proton"})
     assert render_domain_list(exit_list).startswith(f"{OTHER}  wg proton  (7 domains, fetched ")
+    networks = kept.model_copy(update={"domains": 0, "networks": 919})
+    assert render_domain_list(networks).startswith(f"{OTHER}  dpn DE  (0 domains, 919 networks, ")
+
+
+def test_the_round_carries_the_networks_of_a_list_to_their_set(tmp_path: Path) -> None:
+    configs = [smart_config([{"url": URL, "via": "dpn"}])]
+    scripts: list[str] = []
+    resolver = Resolver(RuleIndex.from_config(configs[0]), lambda q: q, scripts.append)
+    status = ListsStatus()
+
+    def fetch(_url: str) -> str:
+        return "198.18.0.0/24\n198.18.1.0/24\nvideo.example\n"
+
+    run_rounds(1, lambda: configs[-1], resolver, ListCache(tmp_path), fetch, status)
+    assert [str(item) for item in resolver.list_networks[URL]] == ["198.18.0.0/24", "198.18.1.0/24"]
+    assert (status.states[URL].domains, status.states[URL].networks) == (1, 2)
+    assert any(
+        "add element inet vibedpn_router smart_dpn_any_lnet { 198.18.0.0/23 }" in s for s in scripts
+    )
+    configs.append(smart_config([]))  # the list is gone: its networks go with it
+    run_rounds(1, lambda: configs[-1], resolver, ListCache(tmp_path), fetch, status)
+    assert resolver.list_networks == {}

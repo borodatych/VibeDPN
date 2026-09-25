@@ -194,6 +194,8 @@ export type DomainListView = {
   uplink: string | null
   /** 0 until core has a first copy */
   domains: number
+  /** IPv4 networks of the list, its a.b.c.d/nn lines */
+  networks: number
   /** unix seconds of the copy in use */
   fetched_at: number | null
   /** why the copy in use is not newer, or why there is none */
@@ -208,6 +210,9 @@ export type DomainListView = {
 export const listCopyText = (item: DomainListView, t: T): string => {
   if (item.fetched_at === null) {
     return item.error ? t('lists.copy.none') : t('lists.copy.fetching')
+  }
+  if (item.networks > 0) {
+    return t('lists.copy.networks', { domains: item.domains, networks: item.networks })
   }
   return t('lists.copy.domains', { count: item.domains })
 }

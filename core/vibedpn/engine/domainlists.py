@@ -1,9 +1,13 @@
-"""Ready domain lists of routing.lists (docs/decisions.md, 21): parse, cache, fetch.
+"""Ready lists of routing.lists (docs/decisions.md, 21): parse, cache, fetch.
 
 A list is a text file by URL. Three line forms are read, because the lists people publish come in
 them: a bare domain, a hosts-file line (``0.0.0.0 example.org``) and the domain form of adblock
 rules (``||example.org^``). Anything else — paths, wildcards, regular expressions, exceptions — is
 skipped: a channel is chosen per domain, and a guess at a pattern would route the wrong sites.
+
+A line that is an IPv4 network, ``a.b.c.d/nn``, is a network of the list (antifilter publishes lists
+of networks this way): the addresses in it take the channel of the list, as routing.networks does
+The slash is required: a bare address alone on a line is no network anyone meant
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ import hashlib
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from ipaddress import ip_address
+from ipaddress import IPv4Network, ip_address
 from pathlib import Path
 
 import httpx
@@ -24,6 +28,8 @@ LIST_REFRESH_SECONDS = 24 * 3600.0
 LIST_TIMEOUT_SECONDS = 30.0
 MAX_LIST_BYTES = 16 * 1024 * 1024
 MAX_LIST_DOMAINS = 500_000
+MAX_LIST_NETWORKS = 100_000
+NETWORK_MARK = "/"
 CACHE_NAME_CHARS = 16  # of the sha256 of the URL
 HTTP_OK = 200
 COMMENT_MARKS = ("#", "!")
@@ -55,26 +61,54 @@ def _line_names(line: str) -> list[str]:
     tokens = line.split()
     if len(tokens) > 1 and _is_address(tokens[0]):
         return tokens[1:]
-    return tokens if len(tokens) == 1 else []
+    # an address alone on a line is no name: normalize_domain would take it for one
+    return tokens if len(tokens) == 1 and not _is_address(tokens[0]) else []
 
 
-def parse_list(text: str) -> list[str]:
-    """The domains of a list in their order, each once; lines that are not a domain are skipped."""
+@dataclass(frozen=True)
+class ListContent:
+    """What one list names: its domains in their order and its networks, each once"""
+
+    domains: list[str]
+    networks: list[IPv4Network]
+
+    def empty(self) -> bool:
+        return not self.domains and not self.networks
+
+
+def _line_network(line: str) -> IPv4Network | None:
+    if NETWORK_MARK not in line or " " in line:
+        return None
+    try:
+        # strict=False: a list that writes 10.1.2.3/24 means the network 10.1.2.0/24
+        return IPv4Network(line, strict=False)
+    except ValueError:
+        return None
+
+
+def parse_list(text: str) -> ListContent:
+    """The domains and the networks of a list; lines that are neither are skipped."""
     found: dict[str, None] = {}
+    networks: dict[IPv4Network, None] = {}
     for raw in text.splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line or line.startswith(COMMENT_MARKS):
+            continue
+        network = _line_network(line)
+        if network is not None:
+            if len(networks) < MAX_LIST_NETWORKS:
+                networks[network] = None
+            continue
+        if len(found) >= MAX_LIST_DOMAINS:
             continue
         for name in _line_names(line):
             try:
                 domain = normalize_domain(name)
             except ValueError:
                 continue
-            if domain not in HOST_NAMES:
+            if domain not in HOST_NAMES and len(found) < MAX_LIST_DOMAINS:
                 found[domain] = None
-            if len(found) >= MAX_LIST_DOMAINS:
-                return list(found)
-    return list(found)
+    return ListContent(list(found), list(networks))
 
 
 class ListCache:
@@ -147,12 +181,13 @@ def list_client() -> httpx.Client:
 
 @dataclass(frozen=True)
 class ListState:
-    """What core has of one list: how many domains, from when, and why it is not newer."""
+    """What core has of one list: how many domains and networks, from when, why it is not newer."""
 
     url: str
     domains: int
     fetched_at: float | None  # unix seconds of the copy in use; None: no copy at all
     error: str = ""
+    networks: int = 0
 
 
 def refresh_list(
@@ -162,23 +197,27 @@ def refresh_list(
     *,
     now: Callable[[], float] = time.time,
     max_age: float = LIST_REFRESH_SECONDS,
-) -> tuple[list[str], ListState]:
-    """The domains of a list: from a copy younger than ``max_age``, otherwise fetched anew. A
-    failed fetch keeps the copy in use and says why; a list without a single domain is refused, so
-    a broken page never replaces a good copy."""
+) -> tuple[ListContent, ListState]:
+    """The domains and networks of a list: from a copy younger than ``max_age``, otherwise fetched
+    anew. A failed fetch keeps the copy in use and says why; a list without a single domain or
+    network is refused, so a broken page never replaces a good copy."""
     cached = cache.load(url)
     if cached is not None and now() - cached[1] < max_age:
-        domains = parse_list(cached[0])
-        return domains, ListState(url, len(domains), cached[1])
+        content = parse_list(cached[0])
+        return content, _state(url, content, cached[1])
     try:
         text = fetch(url)
-        domains = parse_list(text)
-        if not domains:
-            raise ListError(f"{url}: not a single domain in it")
+        content = parse_list(text)
+        if content.empty():
+            raise ListError(f"{url}: not a single domain or network in it")
         cache.save(url, text)
     except ListError as exc:
         if cached is None:
-            return [], ListState(url, 0, None, str(exc))
-        domains = parse_list(cached[0])
-        return domains, ListState(url, len(domains), cached[1], f"{exc}; the last copy is in use")
-    return domains, ListState(url, len(domains), now())
+            return ListContent([], []), ListState(url, 0, None, str(exc))
+        content = parse_list(cached[0])
+        return content, _state(url, content, cached[1], f"{exc}; the last copy is in use")
+    return content, _state(url, content, now())
+
+
+def _state(url: str, content: ListContent, fetched_at: float, error: str = "") -> ListState:
+    return ListState(url, len(content.domains), fetched_at, error, len(content.networks))

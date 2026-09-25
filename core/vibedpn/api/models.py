@@ -244,6 +244,7 @@ class DomainListView(BaseModel):
     country: str | None
     uplink: str | None
     domains: int  # 0 until core has a first copy
+    networks: int  # IPv4 networks of the list, a.b.c.d/nn lines
     fetched_at: float | None  # unix seconds of the copy in use
     error: str  # why the copy in use is not newer, or why there is none
 

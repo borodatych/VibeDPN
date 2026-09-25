@@ -32,6 +32,9 @@ INTERNET_GATEWAY=198.18.0.1
 WEB=e2e-web
 WEB_IP=198.18.0.10
 WEB_PORT=8080
+# A second echo server for the list of networks: no domain rule of the stand ever named its address
+NET_WEB=e2e-net-web
+NET_WEB_IP=198.18.0.60
 VPS=e2e-vps
 VPS_IP=198.18.0.20
 VPS_PORT=51899
@@ -97,7 +100,7 @@ cleanup() {
   if [ -n "${PY:-}" ] && [ -x "$PY" ]; then
     sudo "$PY" -c "from vibedpn.engine.router import remove_router; remove_router()" >/dev/null 2>&1 || true
   fi
-  docker rm -f "$WEB" "$VPS" "$EXIT" "$XRAY" "$TG" "$LISTENER" e2e-person-anna e2e-person-boris >/dev/null 2>&1 || true
+  docker rm -f "$WEB" "$NET_WEB" "$VPS" "$EXIT" "$XRAY" "$TG" "$LISTENER" e2e-person-anna e2e-person-boris >/dev/null 2>&1 || true
   docker network rm "$INTERNET" >/dev/null 2>&1 || true
   sudo ip netns del "$NETNS" 2>/dev/null || true
   sudo ip netns del "$NETNS2" 2>/dev/null || true
@@ -855,6 +858,56 @@ print(".".join(map(str, r[-4:])) if struct.unpack("!H", r[6:8])[0] else "")' "$S
   await_exit "$EXIT_IP" "in mode smart the rule via wg does not send the device through the named exit"
   echo "smart: $SMART_NAME through wg-$EXIT_NAME ($EXIT_IP)"
   sudo "$CLI" rule rm "$SMART_NAME" --dir "$BOX" | grep -q "rule removed" || fail "vibedpn rule rm of the wg rule failed"
+
+  log "smart: a list of networks sends the addresses in it through the channel of the list"
+  docker run -d --name "$NET_WEB" --network "$INTERNET" --ip "$NET_WEB_IP" --entrypoint python "$CORE_IMAGE" -c "
+import http.server
+class Echo(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = self.client_address[0].encode()
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args):
+        pass
+http.server.ThreadingHTTPServer(('0.0.0.0', $WEB_PORT), Echo).serve_forever()
+" >/dev/null
+  net_exit() {
+    in_device curl -s --max-time 4 "http://$NET_WEB_IP:$WEB_PORT/" 2>/dev/null || true
+  }
+  i=0
+  until [ "$(net_exit)" = "$INTERNET_GATEWAY" ]; do
+    i=$((i + 1))
+    [ "$i" -lt "$TIMEOUT" ] || fail "in mode smart $NET_WEB_IP is not reached direct before its list ($(net_exit))"
+    sleep 1
+  done
+  printf '# e2e networks\n%s/32\n' "$NET_WEB_IP" >"$WORK/lists/networks.txt"
+  NET_URL="http://127.0.0.1:18080/networks.txt"
+  sudo "$CLI" lists add "$NET_URL" vps --dir "$BOX" | grep -q "via vps" || fail "vibedpn lists add of a list of networks failed"
+  i=0
+  until sudo "$CLI" lists show --dir "$BOX" | grep -q "(0 domains, 1 networks, fetched "; do
+    i=$((i + 2))
+    [ "$i" -lt 60 ] || fail "core did not read the list of networks: $(sudo "$CLI" lists show --dir "$BOX")"
+    sleep 2
+  done
+  sudo nft list set inet vibedpn_router smart_vps_lnet | grep -q "$NET_WEB_IP" ||
+    fail "the network of the list is not in smart_vps_lnet: $(sudo nft list set inet vibedpn_router smart_vps_lnet)"
+  i=0
+  until [ "$(net_exit)" = "$VPS_IP" ]; do
+    i=$((i + 1))
+    [ "$i" -lt "$TIMEOUT" ] || fail "a list of networks did not send the device through the VPS ($(net_exit))"
+    sleep 1
+  done
+  sudo "$CLI" lists rm "$NET_URL" --dir "$BOX" | grep -q "list removed" || fail "vibedpn lists rm of the list of networks failed"
+  i=0
+  until [ "$(net_exit)" = "$INTERNET_GATEWAY" ]; do
+    i=$((i + 1))
+    [ "$i" -lt "$TIMEOUT" ] || fail "the device kept the VPS after its list of networks was removed ($(net_exit))"
+    sleep 1
+  done
+  docker rm -f "$NET_WEB" >/dev/null
+  echo "list of networks: $NET_WEB_IP through the VPS while listed, direct again after"
 
   sudo "$CLI" lists rm "$LIST_URL" --dir "$BOX" | grep -q "list removed" || fail "vibedpn lists rm failed"
   kill "$LIST_SERVER" 2>/dev/null || true

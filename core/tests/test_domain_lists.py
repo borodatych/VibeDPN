@@ -94,7 +94,7 @@ example.org   # the same domain again
 not_a_domain
 single
 """
-    assert parse_list(text) == [
+    assert parse_list(text).domains == [
         "example.org",
         "ads.example.net",
         "tracker.example.net",
@@ -123,16 +123,16 @@ def test_a_fresh_copy_is_used_without_fetching(tmp_path: Path) -> None:
         fetched.append(url)
         return "new.example\n"
 
-    domains, state = refresh_list(URL, cache, fetch)
-    assert domains == ["example.org"] and fetched == [] and state.error == ""
+    got, state = refresh_list(URL, cache, fetch)
+    assert got.domains == ["example.org"] and fetched == [] and state.error == ""
 
 
 def test_a_stale_copy_is_fetched_anew_and_saved(tmp_path: Path) -> None:
     cache = ListCache(tmp_path)
     cache.save(URL, "example.org\n")
     os.utime(cache.path(URL), (1_000.0, 1_000.0))
-    domains, state = refresh_list(URL, cache, lambda _url: "new.example\n", now=lambda: 200_000.0)
-    assert domains == ["new.example"] and state.fetched_at == 200_000.0
+    got, state = refresh_list(URL, cache, lambda _url: "new.example\n", now=lambda: 200_000.0)
+    assert got.domains == ["new.example"] and state.fetched_at == 200_000.0
     loaded = cache.load(URL)
     assert loaded is not None and loaded[0] == "new.example\n"
 
@@ -145,14 +145,14 @@ def test_a_failed_fetch_keeps_the_copy_and_says_why(tmp_path: Path) -> None:
     def down(url: str) -> str:
         raise ListError(f"{url}: HTTP 503")
 
-    domains, state = refresh_list(URL, cache, down, now=lambda: 200_000.0)
-    assert domains == ["example.org"] and state.fetched_at == 1_000.0
+    got, state = refresh_list(URL, cache, down, now=lambda: 200_000.0)
+    assert got.domains == ["example.org"] and state.fetched_at == 1_000.0
     assert "HTTP 503; the last copy is in use" in state.error
-    # a page without a domain never replaces a good copy
-    domains, state = refresh_list(URL, cache, lambda _url: "<html>", now=lambda: 200_000.0)
-    assert domains == ["example.org"] and "not a single domain" in state.error
-    domains, state = refresh_list("https://new.example/x", cache, down)
-    assert domains == [] and state.fetched_at is None and "HTTP 503" in state.error
+    # a page without a domain or a network never replaces a good copy
+    got, state = refresh_list(URL, cache, lambda _url: "<html>", now=lambda: 200_000.0)
+    assert got.domains == ["example.org"] and "not a single domain or network" in state.error
+    got, state = refresh_list("https://new.example/x", cache, down)
+    assert got.empty() and state.fetched_at is None and "HTTP 503" in state.error
 
 
 def test_the_fetch_wants_200_and_a_bounded_body() -> None:
@@ -169,3 +169,26 @@ def test_the_fetch_wants_200_and_a_bounded_body() -> None:
         fetch("https://lists.example/missing")
     with pytest.raises(ListError, match="larger than 16 MiB"):
         fetch("https://lists.example/huge")
+
+
+def test_a_list_of_networks_names_networks_and_a_mixed_one_both() -> None:
+    """antifilter publishes lists of networks, one a.b.c.d/nn a line: the slash makes a network"""
+    text = """1.1.1.1/32
+2.16.6.0/24
+10.1.2.3/24
+2.16.6.0/24
+not.a.network/24
+0.0.0.0 ads.example.net
+192.0.2.7
+2001:db8::/32
+example.org
+"""
+    content = parse_list(text)
+    assert [str(item) for item in content.networks] == ["1.1.1.1/32", "2.16.6.0/24", "10.1.2.0/24"]
+    assert content.domains == ["ads.example.net", "example.org"]  # a bare address is no network
+
+
+def test_a_list_with_networks_only_is_a_list(tmp_path: Path) -> None:
+    got, state = refresh_list(URL, ListCache(tmp_path), lambda _url: "198.18.0.0/24\n")
+    assert got.domains == [] and [str(item) for item in got.networks] == ["198.18.0.0/24"]
+    assert (state.domains, state.networks, state.error) == (0, 1, "")

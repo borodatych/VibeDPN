@@ -2010,13 +2010,14 @@ def rule_forget(
 
 
 def render_domain_list(item: DomainListView) -> str:
-    """One line of `vibedpn lists show`: the channel, the domains in use and their age."""
+    """One line of `vibedpn lists show`: the channel, the domains and networks in use, their age."""
     country = f" {item.country or item.uplink}" if item.country or item.uplink else ""
     if item.fetched_at is None:
         copy = "no copy yet" if item.error else "fetching"
     else:
         fetched = time.strftime("%Y-%m-%d %H:%M", time.localtime(item.fetched_at))
-        copy = f"{item.domains} domains, fetched {fetched}"
+        networks = f", {item.networks} networks" if item.networks else ""
+        copy = f"{item.domains} domains{networks}, fetched {fetched}"
     error = f" — {item.error}" if item.error else ""
     return f"{item.url}  {item.via}{country}  ({copy}){error}"
 
@@ -2034,7 +2035,9 @@ def lists_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
 
 @lists_app.command("add")
 def lists_add(
-    url: Annotated[str, typer.Argument(help="An http(s) URL of a text list of domains.")],
+    url: Annotated[
+        str, typer.Argument(help="An http(s) URL of a text list of domains or a.b.c.d/nn networks.")
+    ],
     via: Annotated[DomainVia, typer.Argument(help="vps | dpn | wg | tor | direct.")],
     country: Annotated[
         str | None, typer.Option("--country", help="Exit country of via dpn (ISO code).")
@@ -2044,7 +2047,7 @@ def lists_add(
     ] = None,
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
-    """Give every domain of a list a channel; a list with that URL gets the new channel."""
+    """Give every domain and network of a list a channel; the same URL again changes the channel."""
     config = _lan_box(box_dir)
     update = DomainListUpdate(url=url, via=via.value, country=country, uplink=uplink)
     item = _core_call(lambda: core_api.set_domain_list(config.api.port, update))

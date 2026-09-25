@@ -23,7 +23,7 @@
   файл (600, умолчания), ядро правит только свои ключи, bcrypt `$2b$` принимается, `aaaa_disabled`; перезапись имени коробки в `filtering.rewrites` — без `enabled: true` не действует; режим DNS на лету — `disable_ipv6` через API служебным пользователем ядра; смена выхода запросов (`full` ↔ `off`, смена `default_upstream`) рвёт соединения DoH старого пути — ядро закрывает их сразу (`SOCK_DESTROY`); замер: перезапуск DNS-сервера AdGuard хуже — теряет запросы без ответа и сбрасывает кеш, а `upstream_dns` перезапускает его даже с прежним значением
 - [behindForwarder.md](adguard/behindForwarder.md) — за dnsmasq AdGuard пишет все запросы от адреса dnsmasq (`add-subnet`, `add-mac` не помогают); `ipset` — только Linux ipset, `trusted_proxies` — только DoH
 - [domainUpstreams.md](adguard/domainUpstreams.md) — `[/домен/]апстрим` покрывает поддомены, кэш отсчитывает TTL своего апстрима, `querylog` отдаёт клиента, время, апстрим и `cached`
-- [listFormats.md](adguard/listFormats.md) — `||домен^` покрывает домен с поддоменами, строка hosts — адрес и имена, `!` и `#` — комментарии: что читает `routing.lists`
+- [listFormats.md](adguard/listFormats.md) — `||домен^` покрывает домен с поддоменами, строка hosts — адрес и имена, `!` и `#` — комментарии: что читает `routing.lists`; строка `a.b.c.d/nn` — сеть, как у antifilter (919 сетей в `community.lst`, 16 618 в `ipsum.lst`, путь `community.lst` на основном домене — 404)
 
 ## compose
 

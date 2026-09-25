@@ -1052,6 +1052,7 @@ def _list_view(item: DomainList, lists: ListsStatus | None) -> DomainListView:
         country=item.country,
         uplink=item.uplink,
         domains=0 if state is None else state.domains,
+        networks=0 if state is None else state.networks,
         fetched_at=None if state is None else state.fetched_at,
         error="" if state is None else state.error,
     )

@@ -14,7 +14,7 @@ import os
 import shlex
 import shutil
 import subprocess
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from enum import StrEnum
 from ipaddress import IPv4Address, IPv4Network
@@ -33,7 +33,12 @@ from vibedpn.config import (
 )
 from vibedpn.detect import SBIN_DIRS
 from vibedpn.engine.myst import NODEUI_PORT
-from vibedpn.engine.resolver import channel_set, smart_set_names
+from vibedpn.engine.resolver import (
+    channel_set,
+    list_network_set,
+    list_network_sets,
+    smart_set_names,
+)
 from vibedpn.templating import template_environment
 
 NFT = "nft"
@@ -570,11 +575,39 @@ def smart_networks(config: Config) -> list[NetworkSet]:
     )
 
 
-def exit_for(config: Config, rule_set: str | None, address: IPv4Address) -> str | None:
+def smart_list_networks(config: Config) -> list[NetworkSet]:
+    """routing.mode smart: the sets of list networks with their marks, direct ones first
+
+    Their elements are not rendered: core fills them after the router (engine/resolver.py)
+    They are matched after routing.networks: a network the owner named wins over a list
+    """
+    if config.routing is None or config.routing.mode is not RoutingMode.SMART:
+        return []
+    table = uplink_table(config)
+    marks = {
+        list_network_set(item): _channel_mark(item, table) or "" for item in config.routing.lists
+    }
+    return sorted(
+        (NetworkSet(name, mark, []) for name, mark in marks.items()),
+        key=lambda item: (item.mark != "", item.name),
+    )
+
+
+def _no_list(_address: IPv4Address) -> str | None:
+    return None
+
+
+def exit_for(
+    config: Config,
+    rule_set: str | None,
+    address: IPv4Address,
+    listed: Callable[[IPv4Address], str | None] = _no_list,
+) -> str | None:
     """The uplink a device at home without a policy of its own leaves through to ``address``, the
     address of a name under the channel set ``rule_set`` (``None``: under no rule); ``None`` means
     direct. The order is the one of the chain ``steer``: routing.mode full takes everything; in
-    smart a network rule comes first, a direct one before the others, then the rule of the name.
+    smart a network rule comes first, a direct one before the others, then a network of a list
+    (``listed``: its channel set), then the rule of the name.
 
     Core's own traffic is never steered, so what core sends on behalf of the owner as a device at
     home would (the Telegram bot) carries the mark of this uplink itself."""
@@ -588,6 +621,9 @@ def exit_for(config: Config, rule_set: str | None, address: IPv4Address) -> str 
     for net in smart_networks(config):
         if any(address in IPv4Network(element) for element in net.elements):
             return keys[net.name.removesuffix(NETWORK_SET_SUFFIX)]
+    in_list = listed(address)
+    if in_list is not None and in_list in keys:
+        return keys[in_list]
     return keys.get(rule_set) if rule_set is not None else None
 
 
@@ -612,6 +648,9 @@ def router_ruleset(config: Config) -> str | None:
             smart_marks=smart_marks(config),
             # networks of routing.networks: static interval sets, matched before the domain sets
             smart_networks=smart_networks(config),
+            # networks of routing.lists: declared here, filled by core after every apply
+            list_network_sets=list_network_sets(config),
+            smart_list_networks=smart_list_networks(config),
             block_mark=hex(BLOCK_MARK),
             uplink_policies=[
                 UplinkPolicy(policy.value, hex(UPLINKS[upstream].mark))
