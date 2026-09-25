@@ -707,6 +707,73 @@ if [ "$OFFLINE" != 1 ]; then
   closed_since "$switched" "vibedpn upstream vps"
 fi
 
+log "routing.fallback: a silent VPS hands the LAN to wg-$EXIT_NAME and takes it back (decision 32)"
+# A second VPS is a named exit; the chain moves the table of vps to its gateway while the VPS is
+# silent. failopen is true here, so a chain with nobody answering sends the device direct.
+core_before="$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)"
+sudo "$CLI" fallback "wg-$EXIT_NAME" --dir "$BOX" | grep -q "fallback=wg-$EXIT_NAME (applied live" ||
+  fail "vibedpn fallback wg-$EXIT_NAME was not applied live"
+grep -q "^  fallback: \[wg-$EXIT_NAME\]$" "$BOX/config.yaml" || fail "config.yaml does not keep routing.fallback"
+await_exit "$VPS_IP" "a chain with an answering VPS moved the device off it"
+if [ "$OFFLINE" != 1 ]; then
+  fresh_answers "$(fresh_name 30)" >/dev/null # AdGuard holds a connection through the VPS
+fi
+switched="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+docker stop vibedpn-wg-client-1 >/dev/null
+await_exit "$EXIT_IP" "a silent VPS did not hand the device to the fallback wg-$EXIT_NAME"
+echo "VPS stopped: the device leaves as $EXIT_IP through wg-$EXIT_NAME"
+if [ "$OFFLINE" != 1 ]; then
+  first_answer 31 "the fallback wg-$EXIT_NAME with the VPS stopped"
+  closed_since "$switched" "the fallback wg-$EXIT_NAME with the VPS stopped"
+fi
+fallback_report="$(sudo "$CLI" doctor --dir "$BOX" 2>&1 || true)"
+printf '%s\n' "$fallback_report" | grep -q "its traffic goes through wg-$EXIT_NAME (routing.fallback)" ||
+  fail "doctor does not name the fallback that carries the LAN: $(printf '%s\n' "$fallback_report" | grep router)"
+sudo "$CLI" status --dir "$BOX" | grep -q "uplink vps: gateway does not answer, traffic through wg-$EXIT_NAME" ||
+  fail "vibedpn status does not name the fallback that carries the LAN"
+sudo "$CLI" events --kind uplink --dir "$BOX" | grep -q "uplink vps  its traffic goes through wg-$EXIT_NAME" ||
+  fail "the journal does not tell the move to wg-$EXIT_NAME"
+log "routing.fallback: nobody of the chain answers, failopen sends the device direct"
+docker stop "vibedpn-wg-$EXIT_NAME-1" >/dev/null
+await_exit "$INTERNET_GATEWAY" "a dry chain with failopen true did not let the device out directly"
+docker start "vibedpn-wg-$EXIT_NAME-1" >/dev/null
+wait_healthy "vibedpn-wg-$EXIT_NAME-1"
+await_exit "$EXIT_IP" "the fallback wg-$EXIT_NAME did not take the device back once it answered"
+switched="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+docker start vibedpn-wg-client-1 >/dev/null
+wait_healthy vibedpn-wg-client-1
+await_exit "$VPS_IP" "the VPS did not take the device back from the fallback"
+if [ "$OFFLINE" != 1 ]; then
+  first_answer 32 "the VPS back from the fallback"
+  closed_since "$switched" "the VPS back from the fallback"
+fi
+[ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)" = "$core_before" ] ||
+  fail "the fallback chain restarted core"
+log "routing.fallback: the VPS dies behind a running gateway, and the chain still takes over"
+# Only the far end is gone: the gateway container keeps running and would answer a plain ping.
+# It stops answering the probe of core once its last handshake is older than 180 s (images/wg),
+# so this wait is long by design. `docker pause` would not kill the VPS: it freezes processes, and
+# WireGuard lives in the kernel and goes on answering; the VPS drops everything it gets instead.
+printf 'table inet e2e_dead {\n  chain input {\n    type filter hook input priority -300; policy drop;\n  }\n}\n' |
+  docker exec -i "$VPS" nft -f -
+i=0
+until [ "$(exit_address)" = "$EXIT_IP" ]; do
+  i=$((i + 5))
+  [ "$i" -lt 300 ] || fail "a dead VPS behind a running gateway did not hand the device to wg-$EXIT_NAME"
+  sleep 5
+done
+echo "VPS dead: after ${i}s the device leaves as $EXIT_IP"
+docker exec "$VPS" nft delete table inet e2e_dead
+i=0
+until [ "$(exit_address)" = "$VPS_IP" ]; do
+  i=$((i + 5))
+  [ "$i" -lt 300 ] || fail "the VPS back from the dead did not take the device back"
+  sleep 5
+done
+echo "VPS back: after ${i}s the device leaves as $VPS_IP again"
+sudo "$CLI" fallback --clear --dir "$BOX" | grep -q "fallback=- (applied live" || fail "vibedpn fallback --clear failed"
+echo "fallback: VPS, then wg-$EXIT_NAME, then direct, and back — core never restarted"
+
 if [ "$OFFLINE" != 1 ]; then
   log "routing.mode smart: a domain rule through the VPS, everything else direct"
   # nip.io answers 198-18-0-10.nip.io with the web server of the stand: a real name for a stand address
