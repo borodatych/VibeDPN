@@ -71,6 +71,28 @@ describe('summarizeStatus', () => {
     expect(summarizeStatus({ ...base, rules_current: false }).tone).toBe('warning')
   })
 
+  test('smart names the exits its rules use, not default_upstream', () => {
+    const uplink = base.uplinks[0]
+    const status: BoxStatus = {
+      ...base,
+      mode: 'smart',
+      default_upstream: 'dpn',
+      uplinks: [
+        { ...uplink, name: 'dpn', in_use: false },
+        { ...uplink, name: 'tor', in_use: true },
+      ],
+    }
+    const summary = summarizeStatus(status)
+    expect(baseT(summary.headline.key, summary.headline.params)).toBe(
+      'Sites by the rules go out through tor, the rest directly',
+    )
+  })
+
+  test('smart without rules says the LAN goes direct', () => {
+    const status: BoxStatus = { ...base, mode: 'smart', uplinks: base.uplinks.map((u) => ({ ...u, in_use: false })) }
+    expect(summarizeStatus(status).headline.key).toBe('status.headline.smartNoRules')
+  })
+
   test('mode off says the LAN goes direct', () => {
     expect(summarizeStatus({ ...base, mode: 'off' }).headline.key).toBe('status.headline.direct')
   })

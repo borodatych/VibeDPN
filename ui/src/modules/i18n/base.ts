@@ -88,6 +88,8 @@ const table = {
   'status.headline.rulesDiffer': 'The router rules differ from config.yaml: restart the box',
   'status.headline.direct': 'The LAN goes out directly; devices with their own policy keep it',
   'status.headline.through': 'The LAN goes out through {uplink}',
+  'status.headline.smart': 'Sites by the rules go out through {uplinks}, the rest directly',
+  'status.headline.smartNoRules': 'No rules: the LAN goes out directly',
 
   'uplink.inUse': 'in use',
   'uplink.notInUse': 'not in use',

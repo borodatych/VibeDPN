@@ -72,6 +72,8 @@
   "status.headline.rulesDiffer": "Правила роутера расходятся с config.yaml: перезапустите коробку",
   "status.headline.direct": "LAN выходит напрямую; устройства со своей политикой её сохраняют",
   "status.headline.through": "LAN выходит через {uplink}",
+  "status.headline.smart": "Сайты по правилам — через {uplinks}, остальное напрямую",
+  "status.headline.smartNoRules": "Правил нет: LAN выходит напрямую",
   "uplink.inUse": "используется",
   "uplink.notInUse": "не используется",
   "uplink.gateway": "Шлюз",

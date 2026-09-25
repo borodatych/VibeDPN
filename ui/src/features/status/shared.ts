@@ -90,6 +90,15 @@ export const summarizeStatus = (status: BoxStatus): { tone: StatusTone; headline
   if (status.mode === 'off') {
     return { tone: 'ok', headline: { key: 'status.headline.direct' } }
   }
+  if (status.mode === 'smart') {
+    // smart has no exit of its own: the rules name theirs, and default_upstream carries nothing
+    const used = status.uplinks
+      .filter((item) => item.in_use && !item.name.startsWith(COUNTRY_KEY_PREFIX))
+      .map((item) => item.name)
+    return used.length === 0
+      ? { tone: 'ok', headline: { key: 'status.headline.smartNoRules' } }
+      : { tone: 'ok', headline: { key: 'status.headline.smart', params: { uplinks: used.join(', ') } } }
+  }
   return { tone: 'ok', headline: { key: 'status.headline.through', params: { uplink } } }
 }
 
