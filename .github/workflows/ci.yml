@@ -264,16 +264,18 @@ jobs:
             cat > /tmp/router.py <<"PY"
           import sys
           from vibedpn.config import Config, Upstream
-          from vibedpn.engine.router import UPLINKS, apply_router, remove_router, set_gateway_route
+          from vibedpn.engine.router import UPLINKS, apply_router, remove_router, set_exit_route
           def box(mode, failopen=False):
               return Config.model_validate({"version": 1, "role": "client", "network": {"lan_interface": "eth0", "lan_subnet": "192.168.1.0/24", "lan_address": "192.168.1.50"}, "routing": {"mode": mode, "default_upstream": "vps", "failopen": failopen}, "upstreams": {"vps": {"enabled": True}}})
           step = sys.argv[1]
           if step == "full":
               assert apply_router(box("full")) == [Upstream.VPS]
           elif step == "alive":
-              set_gateway_route(UPLINKS[Upstream.VPS], True)
+              set_exit_route(UPLINKS[Upstream.VPS], UPLINKS[Upstream.VPS])
+          elif step == "fallback":
+              set_exit_route(UPLINKS[Upstream.VPS], UPLINKS[Upstream.TOR])
           elif step == "dead":
-              set_gateway_route(UPLINKS[Upstream.VPS], False)
+              set_exit_route(UPLINKS[Upstream.VPS], None)
           elif step == "failopen":
               apply_router(box("full", failopen=True))
           elif step == "off":
@@ -298,8 +300,12 @@ jobs:
             # The gateway answers: its route wins; it goes quiet: only the kill switch is left.
             python /tmp/router.py alive
             ip route show table 7710 | grep -q "default via 10.77.0.10 dev vibedpn0"
+            # A fallback takes the table in one step, and a withdrawal removes it whichever gateway it names.
+            python /tmp/router.py fallback
+            test "$(ip route show table 7710 | grep -c "default via")" = 1
+            ip route show table 7710 | grep -q "default via 10.77.0.60 dev vibedpn0"
             python /tmp/router.py dead
-            if ip route show table 7710 | grep -q "via 10.77.0.10"; then echo "gateway route survived"; exit 1; fi
+            if ip route show table 7710 | grep -q "default via"; then echo "gateway route survived"; exit 1; fi
             ip route show table 7710 | grep -q "unreachable default"
             python /tmp/router.py failopen
             if ip route show table 7710 | grep -q unreachable; then echo "failopen kept the kill switch"; exit 1; fi

@@ -739,6 +739,9 @@ await_exit "$INTERNET_GATEWAY" "a dry chain with failopen true did not let the d
 docker start "vibedpn-wg-$EXIT_NAME-1" >/dev/null
 wait_healthy "vibedpn-wg-$EXIT_NAME-1"
 await_exit "$EXIT_IP" "the fallback wg-$EXIT_NAME did not take the device back once it answered"
+if [ "$OFFLINE" != 1 ]; then
+  fresh_answers "$(fresh_name 33)" >/dev/null # AdGuard holds a connection through wg-$EXIT_NAME
+fi
 switched="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 docker start vibedpn-wg-client-1 >/dev/null
 wait_healthy vibedpn-wg-client-1
