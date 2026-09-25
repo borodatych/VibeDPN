@@ -87,12 +87,12 @@ export const generalLayout = root.lets
               >
                 VibeDPN
               </NavLink>
-              <nav className="hidden items-center gap-6 md:flex">
+              <nav className="hidden items-center gap-6 xl:flex">
                 <NavItems links={navLinks(t)} />
               </nav>
             </div>
 
-            <div className="hidden items-center gap-6 md:flex">
+            <div className="hidden items-center gap-6 xl:flex">
               <nav className="flex items-center gap-6">
                 <NavItems links={accountLinks(me, t)} />
               </nav>
@@ -100,7 +100,7 @@ export const generalLayout = root.lets
               <ThemeSwitcher compact />
             </div>
 
-            <div className="flex items-center gap-1 md:hidden">
+            <div className="flex items-center gap-1 xl:hidden">
               <LanguageSwitcher />
               <ThemeSwitcher compact />
               <Drawer open={menuOpen} onOpenChange={setMenuOpen} direction="right">
