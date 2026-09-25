@@ -1,5 +1,6 @@
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { useT } from '@/modules/i18n/use-t'
 import { cn } from '@/utils'
 import { XIcon } from 'lucide-react'
 import { useCallback, useState, useSyncExternalStore, type ReactNode } from 'react'
@@ -34,6 +35,7 @@ export const XAlert = ({
   children,
 }: XAlertProps) => {
   const dismissControlled = dismissedProvided !== undefined
+  const t = useT()
   const [dismissedInternal, setDismissedInternal] = useState(false)
   const onDismiss = useCallback(() => {
     onDismissProvided?.()
@@ -60,7 +62,7 @@ export const XAlert = ({
         <AlertAction>
           <Button type="button" variant="ghost" size="icon-sm" onClick={onDismiss}>
             <XIcon />
-            <span className="sr-only">Dismiss</span>
+            <span className="sr-only">{t('ui.dismiss')}</span>
           </Button>
         </AlertAction>
       )}

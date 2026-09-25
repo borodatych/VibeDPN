@@ -5,6 +5,7 @@ import { CalendarIcon } from 'lucide-react'
 import { Calendar } from '@/components/ui/calendar'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { useT } from '@/modules/i18n/use-t'
 import { formatDate } from '@/utils/date'
 
 const formatDatePickerValue = (date: Date | undefined) => {
@@ -41,7 +42,7 @@ export const XDatePicker = React.forwardRef<HTMLInputElement, XDatePickerProps>(
     defaultValue,
     onValueChange,
     onInputChange,
-    placeholder = 'June 01, 2025',
+    placeholder,
     inputGroupProps,
     inputAddonProps,
     inputButtonProps,
@@ -51,6 +52,7 @@ export const XDatePicker = React.forwardRef<HTMLInputElement, XDatePickerProps>(
     onKeyDown,
     ...inputProps
   } = props
+  const t = useT()
   const [open, setOpen] = React.useState(false)
   const [uncontrolledDate, setUncontrolledDate] = React.useState<Date | undefined>(defaultValue)
   const selectedDate = isControlled ? value : uncontrolledDate
@@ -78,7 +80,7 @@ export const XDatePicker = React.forwardRef<HTMLInputElement, XDatePickerProps>(
         {...inputProps}
         ref={ref}
         value={inputValue}
-        placeholder={placeholder}
+        placeholder={placeholder ?? t('ui.datePicker.placeholder')}
         onChange={(event) => {
           onInputChange?.(event)
           const nextValue = event.target.value
@@ -108,11 +110,11 @@ export const XDatePicker = React.forwardRef<HTMLInputElement, XDatePickerProps>(
               id={inputProps.id ? `${inputProps.id}-date-picker` : undefined}
               variant="ghost"
               size="icon-xs"
-              aria-label="Select date"
+              aria-label={t('ui.datePicker.select')}
               {...inputButtonProps}
             >
               <CalendarIcon />
-              <span className="sr-only">Select date</span>
+              <span className="sr-only">{t('ui.datePicker.select')}</span>
             </InputGroupButton>
           </PopoverTrigger>
           <PopoverContent

@@ -64,6 +64,11 @@ const useTorEnabled = () =>
 
 const SHOWN_QUERIES = 100
 
+// Sample values for the empty inputs: data in the form the field takes, the same in every language
+const EXAMPLE_DOMAIN = 'kinopoisk.ru'
+const EXAMPLE_LIST_URL = 'https://example.org/list.txt'
+const EXAMPLE_NETWORK = '149.154.160.0/20'
+
 const unixDate = (seconds: number, language: string) => formatDate(new Date(seconds * 1000), 'date-time', language)
 
 /** One rule: the channel, the country of Mysterium, learning, pinned CDNs; every change applies at once. */
@@ -193,7 +198,7 @@ const AddRule = () => {
     <div className="mt-4 flex flex-wrap items-center gap-2">
       <Input
         value={domain}
-        placeholder="kinopoisk.ru"
+        placeholder={EXAMPLE_DOMAIN}
         className="max-w-xs"
         aria-label={t('rules.site')}
         onChange={(event) => setDomain(event.target.value)}
@@ -285,7 +290,7 @@ const AddDomainList = () => {
     <div className="mt-4 flex flex-wrap items-center gap-2">
       <Input
         value={url}
-        placeholder="https://example.org/list.txt"
+        placeholder={EXAMPLE_LIST_URL}
         className="max-w-md"
         aria-label={t('lists.url')}
         onChange={(event) => setUrl(event.target.value)}
@@ -415,7 +420,7 @@ const AddNetwork = ({ existing }: { existing: string[] }) => {
       <div className="flex flex-wrap items-center gap-2">
         <Input
           value={network}
-          placeholder="149.154.160.0/20"
+          placeholder={EXAMPLE_NETWORK}
           className="max-w-xs font-mono"
           aria-label={t('networks.network')}
           onChange={(event) => setNetworkText(event.target.value)}

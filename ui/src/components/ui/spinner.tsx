@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 
+import { useT } from '@/modules/i18n/use-t'
 import { cn } from '@/utils'
 
 const spinnerVariants = cva(
@@ -41,8 +42,14 @@ function Spinner({
   type,
   ...props
 }: React.ComponentProps<'span'> & VariantProps<typeof spinnerVariants>) {
+  const t = useT()
   return (
-    <span role="status" aria-label="Loading" className={cn(spinnerVariants({ size, type }), className)} {...props} />
+    <span
+      role="status"
+      aria-label={t('app.loading')}
+      className={cn(spinnerVariants({ size, type }), className)}
+      {...props}
+    />
   )
 }
 

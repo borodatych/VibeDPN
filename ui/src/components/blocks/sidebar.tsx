@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Icon, type IconType } from '@/components/ui/icon'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useT } from '@/modules/i18n/use-t'
 import { cn } from '@/utils'
 import { Link } from '@/lib/navigation'
 import { useLocation } from '@point0/core/navigation'
@@ -136,17 +137,18 @@ const XSidebarItemButton = ({ item, pathname }: { item: XSidebarSectionItemDef; 
 }
 
 const XSidebarExtraAction = ({ extra, isSubItem }: { extra: XSidebarSectionItemExtraDef; isSubItem: boolean }) => {
+  const t = useT()
   const action = extra.to ? (
     <SidebarMenuAction asChild>
       <Link to={extra.to} className={cn(isSubItem && '-mt-2')}>
         <Icon icon={extra.icon} />
-        <span className="sr-only">{extra.tooltip ?? 'Open action'}</span>
+        <span className="sr-only">{extra.tooltip ?? t('ui.sidebar.openAction')}</span>
       </Link>
     </SidebarMenuAction>
   ) : (
     <SidebarMenuAction onClick={extra.onClick} className={cn(isSubItem && '-mt-2')}>
       <Icon icon={extra.icon} />
-      <span className="sr-only">{extra.tooltip ?? 'Open action'}</span>
+      <span className="sr-only">{extra.tooltip ?? t('ui.sidebar.openAction')}</span>
     </SidebarMenuAction>
   )
 
@@ -172,21 +174,24 @@ const XSidebarDropdownAction = ({
   dropdown: Array<XSidebarSectionDropdownItemDef>
   isSubItem: boolean
   isMobile: boolean
-}) => (
-  <XDropdown
-    items={dropdown}
-    contentProps={{
-      className: 'w-36 rounded-lg',
-      side: isMobile ? 'bottom' : 'right',
-      align: isMobile ? 'end' : 'start',
-    }}
-  >
-    <SidebarMenuAction className={cn('rounded-sm data-[state=open]:bg-accent', isSubItem && '-mt-2')}>
-      <Icon icon={Ellipsis} />
-      <span className="sr-only">More</span>
-    </SidebarMenuAction>
-  </XDropdown>
-)
+}) => {
+  const t = useT()
+  return (
+    <XDropdown
+      items={dropdown}
+      contentProps={{
+        className: 'w-36 rounded-lg',
+        side: isMobile ? 'bottom' : 'right',
+        align: isMobile ? 'end' : 'start',
+      }}
+    >
+      <SidebarMenuAction className={cn('rounded-sm data-[state=open]:bg-accent', isSubItem && '-mt-2')}>
+        <Icon icon={Ellipsis} />
+        <span className="sr-only">{t('ui.more')}</span>
+      </SidebarMenuAction>
+    </XDropdown>
+  )
+}
 
 const XSidebarSubItem = ({
   item,

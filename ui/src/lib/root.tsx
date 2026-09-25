@@ -13,6 +13,14 @@ import { Point0 } from '@point0/core'
 import { zodSchemaHelper } from '@point0/core/schema/zod'
 import superjson from 'superjson'
 import { sharedEnv } from '@/modules/env/shared'
+import { useT } from '@/modules/i18n/use-t'
+import { useHead } from '@unhead/react'
+
+// The loading title is set here, not in head(): head() runs outside React and cannot read the language of the panel
+const PageLoading = () => {
+  useHead({ title: useT()('app.loading') })
+  return <Spinner size="3xl" className="m-auto" />
+}
 
 /**
  * Project-wide Point0 root. Wires shared transformer, schema helper, error class, query defaults, error/loading
@@ -54,16 +62,15 @@ export const root = Point0.lets
       },
     })
   })
-  .head('global', ({ loading, error }) => {
+  .head('global', ({ error }) => {
     return {
-      ...(loading ? { title: 'Loading...' } : {}),
       ...(error ? { title: error.message } : {}),
       titleTemplate: '%s | VibeDPN',
       // <html lang> is the language of the panel: generalLayout sets it from the language query
     }
   })
   .loading(() => {
-    return <Spinner size="3xl" className="m-auto" />
+    return <PageLoading />
   })
   .error(({ error }) => {
     return <ErrorPageComponent error={error} />

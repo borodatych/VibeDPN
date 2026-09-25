@@ -3,6 +3,7 @@ import { Dialog as DialogPrimitive } from 'radix-ui'
 
 import { cn } from '@/utils'
 import { Button } from '@/components/ui/button'
+import { useT } from '@/modules/i18n/use-t'
 import { XIcon } from 'lucide-react'
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
@@ -53,6 +54,7 @@ const DialogContent = React.forwardRef<
     showCloseButton?: boolean
   }
 >(({ className, children, showCloseButton = true, ...props }, ref) => {
+  const t = useT()
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -70,7 +72,7 @@ const DialogContent = React.forwardRef<
           <DialogPrimitive.Close data-slot="dialog-close" asChild>
             <Button variant="ghost" className="absolute top-4 right-4" size="icon-sm">
               <XIcon />
-              <span className="sr-only">Close</span>
+              <span className="sr-only">{t('ui.close')}</span>
             </Button>
           </DialogPrimitive.Close>
         )}
@@ -92,6 +94,7 @@ function DialogFooter({
 }: React.ComponentProps<'div'> & {
   showCloseButton?: boolean
 }) {
+  const t = useT()
   return (
     <div
       data-slot="dialog-footer"
@@ -101,7 +104,7 @@ function DialogFooter({
       {children}
       {showCloseButton && (
         <DialogPrimitive.Close asChild>
-          <Button variant="outline">Close</Button>
+          <Button variant="outline">{t('ui.close')}</Button>
         </DialogPrimitive.Close>
       )}
     </div>

@@ -2,6 +2,7 @@ import { Badge, type BadgeVariant } from '@/components/ui/badge'
 import { XInput } from '@/components/ui/input-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Link, type AppLinkProps } from '@/lib/navigation'
+import { useT } from '@/modules/i18n/use-t'
 import { cn } from '@/utils'
 import type { FormatDateVariant } from '@/utils/date'
 import { formatDate, isDateCanBeRealtive } from '@/utils/date'
@@ -14,14 +15,19 @@ import React, { useEffect, useReducer } from 'react'
 
 type UsualReactNode = Exclude<React.ReactNode, Promise<any>>
 
-const defaultEmpty: UsualReactNode = (
+// The defaults are components, not ready elements: the word is translated when it renders, in the current language
+const DefaultEmpty = () => (
   <Badge variant="secondary" className="text-muted-foreground opacity-50">
-    empty
+    {useT()('ui.value.empty')}
   </Badge>
 )
-const defaultNegative: UsualReactNode = <Badge variant="destructive">no</Badge>
-const defaultPositive: UsualReactNode = <Badge variant="success">yes</Badge>
-const defaultUnknown: UsualReactNode = <Badge variant="warning">unknown</Badge>
+const DefaultNegative = () => <Badge variant="destructive">{useT()('ui.value.no')}</Badge>
+const DefaultPositive = () => <Badge variant="success">{useT()('ui.value.yes')}</Badge>
+const DefaultUnknown = () => <Badge variant="warning">{useT()('ui.value.unknown')}</Badge>
+const defaultEmpty: UsualReactNode = <DefaultEmpty />
+const defaultNegative: UsualReactNode = <DefaultNegative />
+const defaultPositive: UsualReactNode = <DefaultPositive />
+const defaultUnknown: UsualReactNode = <DefaultUnknown />
 
 type ValuePropsByVariant = {
   any: React.ComponentProps<typeof ValueAny>
@@ -445,11 +451,12 @@ export const ValueList = <TData extends Record<string, unknown>>({
   only,
   items,
   filterable,
-  filterPlaceholder = 'Filter',
-  filterEmpty = 'No matches',
+  filterPlaceholder,
+  filterEmpty,
   className,
   listClassName,
 }: ValueListProps<TData>) => {
+  const t = useT()
   const [query, setQuery] = React.useState('')
 
   const defaults: Record<string, unknown> = {
@@ -516,7 +523,7 @@ export const ValueList = <TData extends Record<string, unknown>>({
   const list =
     finalItems.length === 0 && trimmedQuery ? (
       <div data-slot="value-list-empty" className="text-sm text-muted-foreground">
-        {filterEmpty}
+        {filterEmpty ?? t('ui.value.noMatches')}
       </div>
     ) : (
       <div
@@ -552,7 +559,7 @@ export const ValueList = <TData extends Record<string, unknown>>({
         type="search"
         value={query}
         onChange={(event) => setQuery(event.currentTarget.value)}
-        placeholder={filterPlaceholder}
+        placeholder={filterPlaceholder ?? t('ui.value.filter')}
       />
 
       {list}

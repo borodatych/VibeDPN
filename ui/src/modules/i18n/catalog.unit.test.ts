@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const LOCALES = join(import.meta.dir, '../../../locales')
+const SRC = join(import.meta.dir, '../..')
+const BASE_FILE = join(import.meta.dir, 'base.ts')
 
 const shipped = readdirSync(LOCALES)
   .filter((name) => name.endsWith('.json'))
@@ -24,6 +26,20 @@ describe('i18n catalog', () => {
 
   test.each(shipped)('$name has every key of the base and no other', ({ strings }) => {
     expect(panelKeys(strings).sort()).toEqual(Object.keys(baseStrings).sort())
+  })
+
+  test('every key of the base is used by the code: a dead key is a string nobody sees', () => {
+    const code = [...new Bun.Glob('**/*.{ts,tsx}').scanSync(SRC)]
+      .filter((file) => !file.includes('.test.') && join(SRC, file) !== BASE_FILE)
+      .map((file) => readFileSync(join(SRC, file), 'utf8'))
+      .join('\n')
+    // A key built at run time, t(`journal.kind.${kind}`), uses every key under its prefix
+    const prefixes = [...code.matchAll(/t\(`([\w.]+)\$\{/g)].map(([, prefix]) => prefix)
+    const unused = Object.keys(baseStrings).filter(
+      (key) =>
+        !code.includes(`'${key}'`) && !code.includes(`"${key}"`) && !prefixes.some((prefix) => key.startsWith(prefix)),
+    )
+    expect(unused).toEqual([])
   })
 
   test("no key of the panel takes core's prefix: the two gates never check the same key", () => {

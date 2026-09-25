@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ErrorComponent } from '@/components/other/error'
+import { useT } from '@/modules/i18n/use-t'
 import { cn } from '@/utils'
 import type { InfiniteData, UseInfiniteQueryResult, UseQueryResult } from '@tanstack/react-query'
 import { useWindowVirtualizer } from '@tanstack/react-virtual'
@@ -73,14 +74,18 @@ const subscribeToMount = () => () => {}
 const getClientSnapshot = () => true
 const getServerSnapshot = () => false
 
-const renderLoadMore = (loadMore: InfiniteScrollLoadMore, state: InfiniteScrollLoadMoreState): React.ReactNode => {
+const renderLoadMore = (
+  loadMore: InfiniteScrollLoadMore,
+  state: InfiniteScrollLoadMoreState,
+  label: string,
+): React.ReactNode => {
   if (typeof loadMore === 'function') {
     return loadMore(state)
   }
 
   return (
     <Button variant="link" type="button" onClick={() => void state.onLoadMore?.()}>
-      {loadMore === true ? 'Load More' : loadMore}
+      {loadMore === true ? label : loadMore}
     </Button>
   )
 }
@@ -90,7 +95,7 @@ export const InfiniteScroll = <TData,>({
   query,
   loading,
   error,
-  empty = 'No results.',
+  empty,
   getItemKey,
   as: List = 'div',
   itemAs: ItemWrapper,
@@ -101,7 +106,7 @@ export const InfiniteScroll = <TData,>({
   canLoadMore: _canLoadMore,
   onLoadMore: _onLoadMore,
   loadMoreOnReachEnd,
-  loadingMore = 'Loading more...',
+  loadingMore,
   loadMore,
 
   className,
@@ -114,6 +119,7 @@ export const InfiniteScroll = <TData,>({
 
   ...rest
 }: InfiniteScrollProps<TData>) => {
+  const t = useT()
   const renderItem = rest.renderItem ?? rest.children
   const Item = ItemWrapper || Slot.Root
   const hasMounted = React.useSyncExternalStore(subscribeToMount, getClientSnapshot, getServerSnapshot)
@@ -137,9 +143,9 @@ export const InfiniteScroll = <TData,>({
   const manualLoadMore = !!loadMore && !loadMoreOnReachEnd
   const showExtraItem = !!isLoadingMore || (manualLoadMore && (canLoadMore ?? true))
   const extraItemContent = isLoadingMore
-    ? loadingMore
+    ? (loadingMore ?? t('ui.list.loadingMore'))
     : manualLoadMore
-      ? renderLoadMore(loadMore, { onLoadMore, canLoadMore, isLoadingMore })
+      ? renderLoadMore(loadMore, { onLoadMore, canLoadMore, isLoadingMore }, t('ui.list.loadMore'))
       : null
 
   const shouldVirtualize = !!loadMoreOnReachEnd || !!virtualizerOptions
@@ -201,7 +207,9 @@ export const InfiniteScroll = <TData,>({
         <Spinner size="xl" className="text-muted-foreground" />
       </div>
     ) : data.length === 0 ? (
-      <div className={cn('min-h-24 content-center text-center text-muted-foreground', emptyClassName)}>{empty}</div>
+      <div className={cn('min-h-24 content-center text-center text-muted-foreground', emptyClassName)}>
+        {empty ?? t('ui.list.noResults')}
+      </div>
     ) : virtualizeNow ? (
       <>
         {virtualPaddingTop > 0 ? <div aria-hidden style={{ height: virtualPaddingTop }} /> : null}

@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/pagination'
 import { XSelect } from '@/components/ui/select'
 import { type AnyUseFFormReturn } from '@/modules/form/core/hook'
+import { useT } from '@/modules/i18n/use-t'
 import { useFValues } from '@/modules/form/core/values'
 import type { AppLinkProps } from '@/lib/navigation'
 import { cn } from '@/utils'
@@ -113,17 +114,21 @@ const XPaginationLimit = ({
   onLimitChange?: (limit: number) => void
   limitOptions?: number[]
 }) => {
+  const t = useT()
   return (
     <div className={cn('flex flex-wrap items-center justify-between gap-3 py-4', className)}>
       <div className="text-sm text-muted-foreground">
         {onLimitChange ? (
           <XSelect
-            options={limitOptions.map((option) => ({ value: option, label: `${option} per page` }))}
+            options={limitOptions.map((option) => ({
+              value: option,
+              label: t('ui.pagination.perPage', { count: option }),
+            }))}
             value={limit}
             onValueChange={(value) => onLimitChange(Number(value))}
           />
         ) : (
-          <span>{limit} per page</span>
+          <span>{t('ui.pagination.perPage', { count: limit })}</span>
         )}
       </div>
     </div>
@@ -183,6 +188,7 @@ const XPaginationPagesRich = ({
   onPageChange,
   className,
 }: XPaginationPagesProps) => {
+  const t = useT()
   if (!pagesCount) {
     return (
       <XPaginationPagesPoor
@@ -206,7 +212,7 @@ const XPaginationPagesRich = ({
       <PaginationContent>
         <XPaginationAction
           page={prevPage}
-          label="Go to previous page"
+          label={t('ui.pagination.goPrevious')}
           type="previous"
           to={to}
           replace={replace}
@@ -238,7 +244,7 @@ const XPaginationPagesRich = ({
         ) : null}
         <XPaginationAction
           page={nextPage}
-          label="Go to next page"
+          label={t('ui.pagination.goNext')}
           type="next"
           to={to}
           replace={replace}
@@ -259,6 +265,7 @@ const XPaginationPagesPoor = ({
   onPageChange,
   className,
 }: XPaginationPagesProps) => {
+  const t = useT()
   return (
     <Pagination className={cn('mx-0 w-auto', className)}>
       <PaginationContent>
@@ -266,7 +273,7 @@ const XPaginationPagesPoor = ({
           <XPaginationAction
             page={1}
             disabled={page <= 1}
-            label="Go to first page"
+            label={t('ui.pagination.goFirst')}
             type="first"
             to={to}
             replace={replace}
@@ -276,7 +283,7 @@ const XPaginationPagesPoor = ({
         ) : null}
         <XPaginationAction
           page={prevPage}
-          label="Go to previous page"
+          label={t('ui.pagination.goPrevious')}
           type="previous"
           to={to}
           replace={replace}
@@ -292,7 +299,7 @@ const XPaginationPagesPoor = ({
         />
         <XPaginationAction
           page={nextPage}
-          label="Go to next page"
+          label={t('ui.pagination.goNext')}
           type="next"
           to={to}
           replace={replace}
@@ -302,7 +309,7 @@ const XPaginationPagesPoor = ({
           <XPaginationAction
             page={pagesCount}
             disabled={page >= pagesCount}
-            label="Go to last page"
+            label={t('ui.pagination.goLast')}
             type="last"
             to={to}
             replace={replace}

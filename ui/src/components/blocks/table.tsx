@@ -10,6 +10,7 @@ apply: ...
 import { XDropdown, type XDropdownItemDef } from '@/components/blocks/dropdown'
 import { useDefined } from '@/components/hooks/use-defined'
 import { Button, type ButtonIconType } from '@/components/ui/button'
+import { useT } from '@/modules/i18n/use-t'
 import { Spinner } from '@/components/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableRow } from '@/components/ui/table'
 import { TableHeaderSticky } from '@/components/ui/table-header-sticky'
@@ -68,7 +69,7 @@ export type XTableProps<TData> = {
 
   virtualizer?: XTableVirtualizerOptions | true
   isLoadingMore?: boolean
-  loadingMore?: React.ReactNode // defaults to "Loading more..."
+  loadingMore?: React.ReactNode
   canLoadMore?: boolean
   loadMore?: React.ReactNode
   onLoadMore?: () => unknown | Promise<unknown>
@@ -312,7 +313,7 @@ export const XTable = <TData,>({
   error,
   actions,
   columns: columnsProvided,
-  empty = 'No results.',
+  empty,
   onRowClick,
   onRowDoubleClick,
   to,
@@ -324,7 +325,7 @@ export const XTable = <TData,>({
   canLoadMore: _canLoadMore,
   onLoadMore: _onLoadMore,
   loadMoreOnReachEnd,
-  loadingMore = 'Loading more...',
+  loadingMore,
   loadMore,
 
   className,
@@ -340,6 +341,7 @@ export const XTable = <TData,>({
   variant,
   ...tableOptions
 }: XTableProps<TData>) => {
+  const t = useT()
   const scrollRef = React.useRef<HTMLDivElement>(null)
   const [hasMounted, setHasMounted] = React.useState(false)
   React.useEffect(() => {
@@ -421,10 +423,10 @@ export const XTable = <TData,>({
   const manualLoadMore = !!loadMore && !loadMoreOnReachEnd
   const showExtraRow = isLoadingMore || (manualLoadMore && (canLoadMore ?? true))
   const extraRowContent = isLoadingMore ? (
-    loadingMore
+    (loadingMore ?? t('ui.list.loadingMore'))
   ) : manualLoadMore ? (
     <Button variant="link" type="button" onClick={() => void onLoadMore?.()}>
-      {loadMore === true ? 'Load More' : loadMore}
+      {loadMore === true ? t('ui.list.loadMore') : loadMore}
     </Button>
   ) : null
   const virtualRowCount = rows.length + (showExtraRow ? 1 : 0)
@@ -486,7 +488,7 @@ export const XTable = <TData,>({
           ) : rows.length === 0 ? (
             <TableRow>
               <TableCell colSpan={colSpan} className={cn('h-24 text-center text-muted-foreground', emptyCellClassName)}>
-                {empty}
+                {empty ?? t('ui.list.noResults')}
               </TableCell>
             </TableRow>
           ) : virtualizeNow ? (

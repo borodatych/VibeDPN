@@ -10,11 +10,17 @@ import { ThemeProvider } from '@/components/ui/theme'
 import { ErrorPageComponent } from '@/components/other/error'
 import { queryClient } from '@/lib/query-client'
 import { LanguageProvider } from '@/modules/i18n/provider'
+import { useT } from '@/modules/i18n/use-t'
 import { AuthDrawer } from '@/modules/auth/components/drawer'
 import { MixpanelTrackAuth } from '@/modules/mixpanel/track-auth'
 import { MixpanelTrackPage } from '@/modules/mixpanel/track-page'
 import { SentryTrackAuth } from '@/modules/sentry/track-auth'
 import { Head } from '@unhead/react'
+
+const NotFoundPage = () => {
+  const t = useT()
+  return <ErrorPageComponent title="404" description={t('error.pageNotFound')} />
+}
 
 export default function App() {
   return (
@@ -42,7 +48,7 @@ export default function App() {
             {/* gate={false}: the app renders through connecting and even a failed connect — the socket is an enhancement here */}
             <appChannel.Connection gate={false}>
               <AuthSocketSync />
-              <RouterRoutes Page404={() => <ErrorPageComponent title="404" description="Page not found" />} />
+              <RouterRoutes Page404={NotFoundPage} />
             </appChannel.Connection>
           </Router>
         </UnheadProvider>

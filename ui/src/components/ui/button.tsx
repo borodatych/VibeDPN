@@ -1,5 +1,6 @@
 import { Spinner } from '@/components/ui/spinner'
 import { Link, type AppLinkProps } from '@/lib/navigation'
+import { useT } from '@/modules/i18n/use-t'
 import { cn } from '@/utils'
 import { splitLinkProps } from '@point0/react-dom/router'
 import { cva, type VariantProps } from 'class-variance-authority'
@@ -103,6 +104,7 @@ const Button = React.forwardRef<
     ...props
   } = restProps
   const [popoverOpen, setPopoverOpen] = React.useState(false)
+  const t = useT()
   const linkProps = isLink ? { ...linkPropsRaw, ...(target !== undefined ? { target } : {}) } : {}
   const Comp = asChild ? Slot.Root : isLink ? (Link as unknown as 'button') : 'button'
 
@@ -253,7 +255,7 @@ const Button = React.forwardRef<
             document.body.focus()
           }}
         >
-          No
+          {t('common.no')}
         </Button>
         <Button
           variant="destructive"
@@ -264,7 +266,7 @@ const Button = React.forwardRef<
             onClick?.(e)
           }}
         >
-          Yes
+          {t('common.yes')}
         </Button>
       </div>
     </PopoverContent>

@@ -15,6 +15,12 @@ import tseslint from 'typescript-eslint'
 
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url))
 
+// The props a person reads or hears: a string literal in them is interface text
+const TEXT_ATTRIBUTES =
+  '/^(aria-label|aria-description|aria-valuetext|title|placeholder|alt|label|hint|confirm|description|empty|tooltip)$/'
+// A string with a letter in it: numbers and signs like "404" or "/" are the same in every language
+const WORD = '/[A-Za-zА-Яа-яЁё]/'
+
 export default defineConfig([
   {
     ignores: [
@@ -150,13 +156,24 @@ export default defineConfig([
   },
 
   {
-    // The panel speaks through the catalog (src/modules/i18n): no bare text in the markup of its screens.
-    files: ['src/pages/**/*.tsx', 'src/layouts/**/*.tsx', 'src/components/other/**/*.tsx', 'src/modules/auth/**/*.tsx'],
+    // The panel speaks through the catalog (src/modules/i18n): no bare text in any markup it can render
+    // A primitive counts too: its words show up on every screen that uses it, so a list of screens is not enough
+    files: ['src/**/*.tsx'],
+    ignores: ['**/*.test.tsx'],
     plugins: { react },
     rules: {
       'react/jsx-no-literals': [
         'error',
-        { noStrings: true, ignoreProps: true, allowedStrings: ['VibeDPN', '×', '·', '—', ' '] },
+        { noStrings: true, ignoreProps: true, allowedStrings: ['VibeDPN', '×', '·', '—', '/', ' '] },
+      ],
+      // jsx-no-literals skips props and the branches of an expression: the words that hide there
+      'no-restricted-syntax': [
+        'error',
+        ...[
+          `JSXAttribute[name.name=${TEXT_ATTRIBUTES}] > Literal[value=${WORD}]`,
+          `JSXAttribute[name.name=${TEXT_ATTRIBUTES}] > JSXExpressionContainer > Literal[value=${WORD}]`,
+          `:matches(JSXElement, JSXFragment) > JSXExpressionContainer > :matches(ConditionalExpression, LogicalExpression) > Literal[value=${WORD}]`,
+        ].map((selector) => ({ selector, message: 'Text of the interface goes through the catalog: t(key)' })),
       ],
     },
   },

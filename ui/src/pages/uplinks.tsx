@@ -170,6 +170,9 @@ const XrayCard = ({ xray }: { xray: XrayExit }) => {
           {t('uplinks.xray.save')}
         </Button>
         {problem && <p className="text-sm text-destructive">{t(`uplinks.xray.problem.${problem}`)}</p>}
+        {save.isSuccess && save.variables.link !== null && (
+          <p className="text-muted-foreground">{t('uplinks.xray.saved')}</p>
+        )}
         {save.isError && <p className="text-destructive">{save.error.message}</p>}
         <ApplyLine apply={xray.apply} />
         <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
