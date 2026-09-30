@@ -220,6 +220,58 @@ device_exit="$(sudo ip netns exec "$NETNS" curl -s --max-time 15 --resolve "$exi
 [ "$device_exit" = "$host_exit" ] || fail "the device leaves as '${device_exit:-nothing}', the box as $host_exit"
 echo "the device leaves as the box"
 
+log "a new passphrase through core, as the panel sets it: the device is dropped and joins only with it"
+NEW_PASSPHRASE=stand-wifi-new-2026
+joins() {
+  docker logs vibedpn-hostapd-1 2>&1 | grep -c "EAPOL-4WAY-HS-COMPLETED $DEVICE_MAC" || true
+}
+drops() {
+  docker logs vibedpn-hostapd-1 2>&1 | grep -c "AP-STA-DISCONNECTED $DEVICE_MAC" || true
+}
+started() {
+  docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1 vibedpn-hostapd-1
+}
+before_start="$(started)"
+before_joins="$(joins)"
+before_drops="$(drops)"
+answer="$(curl -s --max-time 15 -X PUT -H 'Content-Type: application/json' \
+  -d "{\"passphrase\":\"$NEW_PASSPHRASE\"}" http://127.0.0.1:4480/wifi/passphrase)"
+printf '%s\n' "$answer" | grep -q '"result":"applied"' || fail "core did not apply the new passphrase: $answer"
+i=0
+until [ "$(drops)" -gt "$before_drops" ]; do
+  i=$((i + 1))
+  [ "$i" -lt 30 ] || fail "the access point did not drop the device after the new passphrase"
+  sleep 1
+done
+# the device still has the old passphrase and keeps trying it: the access point must not take it
+sleep 15
+[ "$(joins)" = "$before_joins" ] || fail "the device joined again with the old passphrase"
+[ "$(started)" = "$before_start" ] || fail "the new passphrase restarted core or hostapd"
+sudo "$CLI" wifi show --dir "$BOX" | grep -q "^passphrase: $NEW_PASSPHRASE$" ||
+  fail "vibedpn wifi show does not print the new passphrase"
+old_station="$(sudo cat "$WORK/wpa.pid")"
+sudo kill "$old_station"
+i=0
+while sudo kill -0 "$old_station" 2>/dev/null; do
+  i=$((i + 1))
+  [ "$i" -lt 20 ] || fail "wpa_supplicant with the old passphrase did not stop"
+  sleep 0.5
+done
+(
+  umask 077
+  printf 'sae_pwe=2\nnetwork={\n ssid="%s"\n key_mgmt=SAE\n ieee80211w=2\n sae_password="%s"\n}\n' \
+    "$SSID" "$NEW_PASSPHRASE" >"$WORK/station.conf"
+)
+sudo ip netns exec "$NETNS" wpa_supplicant -B -D nl80211 -i "$STA_IF" -c "$WORK/station.conf" \
+  -P "$WORK/wpa.pid" -f "$WORK/wpa.log" || fail "wpa_supplicant did not start with the new passphrase"
+i=0
+until [ "$(joins)" -gt "$before_joins" ]; do
+  i=$((i + 2))
+  [ "$i" -lt 60 ] || fail "the device did not join with the new passphrase"
+  sleep 2
+done
+echo "dropped, refused with the old passphrase, joined with the new one; core and hostapd not restarted"
+
 log "doctor"
 report="$(sudo "$CLI" doctor --dir "$BOX" || true)"
 printf '%s\n' "$report" | grep -q "\[ ok \] wifi" || fail "doctor does not confirm the access point: $report"
