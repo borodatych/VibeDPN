@@ -530,25 +530,25 @@ if [ "$OFFLINE" != 1 ]; then
   echo "gateway back: AdGuard resolves new names through the uplink"
 fi
 
-log "failopen true: the gateway stops and the device goes direct ($INTERNET_GATEWAY)"
-# An edit of the file and `up`, no restart: nothing but the file changes failopen, so the
-# fingerprint of core carries it and up recreates core (decision 25).
-sudo sed -i 's/^  failopen: false$/  failopen: true/' "$BOX/config.yaml"
-sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up after failopen true failed"
-wait_healthy vibedpn-core-1
-wait_healthy vibedpn-wg-client-1
-await_exit "$VPS_IP" "the device does not leave through the VPS after switching to failopen true"
+log "vibedpn failopen on, live: the held device goes direct ($INTERNET_GATEWAY), nothing restarts"
+# The gateway stops under the kill switch, then failopen turns on through core: no gateway moves,
+# yet the device and the queries of AdGuard leave the held path for the direct one.
+core_before="$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)"
 if [ "$OFFLINE" != 1 ]; then
   fresh_answers "$(fresh_name 27)" >/dev/null # AdGuard holds a connection through the VPS
 fi
-switched="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 docker stop vibedpn-wg-client-1 >/dev/null
-await_exit "$INTERNET_GATEWAY" "failopen true did not let the device out directly"
-echo "gateway stopped: exit address $(exit_address)"
+await_exit none "the device reaches the internet with the gateway stopped and failopen false"
+switched="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+sudo "$CLI" failopen on --dir "$BOX" | tee "$WORK/failopen.txt"
+grep -q "applied live, nothing restarted" "$WORK/failopen.txt" || fail "vibedpn failopen on did not apply live through core"
+await_exit "$INTERNET_GATEWAY" "failopen on did not let the held device out directly"
+[ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)" = "$core_before" ] || fail "vibedpn failopen on restarted core"
+echo "failopen on: exit address $(exit_address)"
 if [ "$OFFLINE" != 1 ]; then
   # failopen moves the queries of AdGuard too: direct now, and back through the VPS below
-  first_answer 28 "failopen true with the gateway stopped"
-  closed_since "$switched" "failopen true with the gateway stopped"
+  first_answer 28 "failopen on with the gateway stopped"
+  closed_since "$switched" "failopen on with the gateway stopped"
 fi
 switched="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 docker start vibedpn-wg-client-1 >/dev/null
@@ -1025,9 +1025,14 @@ log "uplink xray: a masking transport by a share link, and the device leaves thr
 # and what Reality adds to the rendered configuration is covered by the unit tests of engine/xray.
 # The stand left failopen true a few checks ago, and with it a dead gateway means "go direct" by
 # design. The kill switch of a live gateway with a dead server is a different thing, and it is the
-# one checked here, so the box goes back to failopen false first.
+# one checked here, so the box goes back to failopen false first. By hand this time: an edit of
+# the file and `up`, which asks the running core to reread it rather than recreating it.
+core_before="$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)"
 sudo sed -i 's/^  failopen: true$/  failopen: false/' "$BOX/config.yaml"
 sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up with failopen false before xray failed"
+[ "$(docker inspect -f '{{.State.StartedAt}}' vibedpn-core-1)" = "$core_before" ] || fail "vibedpn up recreated core for failopen"
+curl -s --max-time 5 "http://127.0.0.1:4480/status" | grep -q '"failopen":false' ||
+  fail "core did not take failopen false from the file at vibedpn up"
 # And back to mode full: in smart the default upstream carries nobody — every rule names its own
 # channel — so `upstream xray` would change nothing and the device would go direct.
 sudo "$CLI" mode full --dir "$BOX" >/dev/null || fail "vibedpn mode full before the xray checks failed"
