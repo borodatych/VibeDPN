@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from vibedpn.api.app import create_app
+from vibedpn.api.app import create_app, reload_access_point
 from vibedpn.api.models import WifiPassphraseView
 from vibedpn.config import Config
 from vibedpn.engine.hostapd import CONF_FILE, PASSPHRASE_FILE, write_passphrase
-from vibedpn.engine.wifi import HostapdControl, WifiError
+from vibedpn.engine.wifi import CTRL_DIR_ENV, HostapdControl, WifiError
 
 from .conftest import vps_config
 from .test_events import FakeHostapd, short_dir  # noqa: F401 — a fixture
@@ -23,26 +23,47 @@ NEW = "new home wifi 2"
 
 
 class ReloadingHostapd(FakeHostapd):
-    """hostapd that also answers RELOAD_CONFIG, with OK or FAIL."""
+    """hostapd that also answers RELOAD_CONFIG and PMKSA_FLUSH, with OK or FAIL, in order."""
 
     reply = "OK\n"
 
+    def __init__(self, directory: Path) -> None:
+        self.commands: list[str] = []
+        super().__init__(directory, [])
+
     def _reply(self, command: str) -> str:
-        if command == "RELOAD_CONFIG":
+        if command in ("RELOAD_CONFIG", "PMKSA_FLUSH"):
+            self.commands.append(command)
             return self.reply
         return super()._reply(command)
 
 
 def test_the_control_socket_reloads_or_says_it_could_not(short_dir: Path) -> None:  # noqa: F811
-    hostapd = ReloadingHostapd(short_dir, [])
+    hostapd = ReloadingHostapd(short_dir)
     try:
         with HostapdControl("wlan0", short_dir) as control:
             control.reload_config()
+            control.flush_pmksa()
             hostapd.reply = "FAIL\n"
             with pytest.raises(WifiError, match="could not read its configuration again"):
                 control.reload_config()
+            with pytest.raises(WifiError, match="could not forget the keys"):
+                control.flush_pmksa()
     finally:
         hostapd.close()
+
+
+def test_the_keys_of_old_logins_go_on_both_sides_of_the_reload(
+    short_dir: Path,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hostapd = ReloadingHostapd(short_dir)
+    monkeypatch.setenv(CTRL_DIR_ENV, str(short_dir))
+    try:
+        reload_access_point("wlan0")
+    finally:
+        hostapd.close()
+    assert hostapd.commands == ["PMKSA_FLUSH", "RELOAD_CONFIG", "PMKSA_FLUSH"]
 
 
 def box_app(tmp_path: Path, reload: object) -> tuple[TestClient, Path, Path]:

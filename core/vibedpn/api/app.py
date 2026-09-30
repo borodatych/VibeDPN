@@ -320,9 +320,16 @@ def read_stations(interface: str) -> list[Station]:
 
 
 def reload_access_point(interface: str) -> None:
-    """hostapd reads hostapd.conf again: the new passphrase, every client dropped."""
+    """hostapd reads hostapd.conf again: the new passphrase, every client dropped
+
+    The keys of earlier SAE logins go before the reload and again after it: kept, they let a device
+    back in with the old passphrase, and the dropped devices come back at once, so a flush after
+    the reload alone races them (tests/e2e/wifi.sh caught it)
+    """
     with HostapdControl(interface) as control:
+        control.flush_pmksa()
         control.reload_config()
+        control.flush_pmksa()
 
 
 def _add_wifi_routes(

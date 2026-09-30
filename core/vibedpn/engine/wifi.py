@@ -161,11 +161,20 @@ class HostapdControl:
     def reload_config(self) -> None:
         """Make hostapd read hostapd.conf again, as SIGHUP does (``RELOAD_CONFIG``, hostapd 2.11)
 
-        It derives the key from the passphrase anew and drops every client: they join again with
-        the new one. Channel and band stay as they run (knowledge linux/hostapdControl.md)
+        It derives the key from the passphrase anew and drops every client
+        Channel and band stay as they run (knowledge linux/hostapdControl.md)
         """
         if self.request("RELOAD_CONFIG").strip() != REPLY_OK:
             raise WifiError("the access point could not read its configuration again")
+
+    def flush_pmksa(self) -> None:
+        """Forget the keys of earlier WPA3 (SAE) logins (``PMKSA_FLUSH``)
+
+        A reload keeps them, and a device holding one joins again without the passphrase
+        (knowledge linux/hostapdControl.md)
+        """
+        if self.request("PMKSA_FLUSH").strip() != REPLY_OK:
+            raise WifiError("the access point could not forget the keys of earlier logins")
 
     def receive(self, timeout: float) -> str | None:
         """The next message within ``timeout`` seconds, or ``None`` when nothing came."""
