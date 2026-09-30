@@ -118,9 +118,13 @@ const table = {
   'lanAccess.confirm': 'Let every LAN device reach the node panel and the core API of the VPS?',
 
   'routing.title': 'Routing',
-  'routing.failopen': 'failopen: {state}',
-  'routing.state.on': 'on',
-  'routing.state.off': 'off',
+  'routing.failopen.title': 'No exit answers',
+  'routing.failopen.on': 'the traffic goes direct, past the tunnel (failopen)',
+  'routing.failopen.off': 'the traffic is held (kill switch)',
+  'routing.failopen.enable': 'Let it go direct',
+  'routing.failopen.disable': 'Hold it',
+  'routing.failopen.confirm':
+    'When no exit answers, the devices go out directly, with the home address and past the tunnel. Let them?',
   'routing.mode': 'Mode',
   'routing.modeOff': 'Off — LAN direct',
   'routing.modeFull': 'Full — via uplink',

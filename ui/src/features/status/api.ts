@@ -28,6 +28,8 @@ export const routingUpdateMutation = root.lets
       default_upstream: z.string().optional(),
       // routing.fallback as a whole, in order; [] empties it
       fallback: z.array(z.string()).optional(),
+      // true: the traffic of an uplink without exit goes direct; false: the kill switch holds it
+      failopen: z.boolean().optional(),
     }),
   )
   .loader(async ({ input }) => {

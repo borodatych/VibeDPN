@@ -58,6 +58,7 @@ export type RoutingView = {
   mode: string
   default_upstream: string
   fallback: string[]
+  failopen: boolean
   adguard: 'applied' | 'pending' | 'none'
 }
 

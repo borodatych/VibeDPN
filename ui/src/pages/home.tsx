@@ -139,17 +139,18 @@ const UplinkCard = ({ uplink, failopen }: { uplink: UplinkStatus; failopen: bool
 const RoutingControls = ({ status }: { status: BoxStatus }) => {
   const mutation = routingUpdateMutation.useMutation()
   const t = useT()
-  const change = async (input: { mode?: 'off' | 'full'; default_upstream?: string; fallback?: string[] }) => {
+  const change = async (input: {
+    mode?: 'off' | 'full'
+    default_upstream?: string
+    fallback?: string[]
+    failopen?: boolean
+  }) => {
     await mutation.mutateAsync(input)
     await boxStatusQuery.refetchQuery()
   }
   const enabled = routableUplinks(status)
   return (
-    <Section
-      h2={t('routing.title')}
-      size="lg"
-      description={t('routing.failopen', { state: status.failopen ? t('routing.state.on') : t('routing.state.off') })}
-    >
+    <Section h2={t('routing.title')} size="lg">
       <div className="flex flex-wrap items-center gap-3">
         <span className="font-accent text-sm text-muted-foreground">{t('routing.mode')}</span>
         <Button
@@ -194,6 +195,30 @@ const RoutingControls = ({ status }: { status: BoxStatus }) => {
           onChange={(fallback) => void change({ fallback })}
         />
       )}
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <span className="font-accent text-sm text-muted-foreground">{t('routing.failopen.title')}</span>
+        <span>{status.failopen ? t('routing.failopen.on') : t('routing.failopen.off')}</span>
+        {status.failopen ? (
+          <Button
+            variant="outline-secondary"
+            size="sm"
+            loading={mutation.isPending}
+            onClick={() => void change({ failopen: false })}
+          >
+            {t('routing.failopen.disable')}
+          </Button>
+        ) : (
+          <Button
+            variant="outline-secondary"
+            size="sm"
+            loading={mutation.isPending}
+            confirm={t('routing.failopen.confirm')}
+            onClick={() => void change({ failopen: true })}
+          >
+            {t('routing.failopen.enable')}
+          </Button>
+        )}
+      </div>
       {mutation.isError && <p className="mt-3 text-sm text-destructive">{mutation.error.message}</p>}
       {mutation.data?.routing.adguard === 'pending' && (
         <p className="mt-3 text-sm text-warning">{t('routing.adguardPending')}</p>
