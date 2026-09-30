@@ -976,8 +976,44 @@ http.server.ThreadingHTTPServer(('0.0.0.0', $WEB_PORT), Echo).serve_forever()
     [ "$i" -lt "$TIMEOUT" ] || fail "the device kept the VPS after its list of networks was removed ($(net_exit))"
     sleep 1
   done
-  docker rm -f "$NET_WEB" >/dev/null
   echo "list of networks: $NET_WEB_IP through the VPS while listed, direct again after"
+
+  log "smart: a sticky rule never moves to the fallback, a silent exit holds it (decision 33)"
+  # $1: the address the echo server sees, or "none"; $2: what failed
+  await_net() {
+    i=0
+    while :; do
+      seen="$(net_exit)"
+      [ "$1" = none ] && [ -z "$seen" ] && return 0
+      [ "$seen" = "$1" ] && return 0
+      i=$((i + 1))
+      [ "$i" -lt "$TIMEOUT" ] || fail "$2 (the echo server sees '${seen:-no connection}')"
+      sleep 1
+    done
+  }
+  sudo "$CLI" fallback "wg-$EXIT_NAME" --dir "$BOX" >/dev/null || fail "vibedpn fallback before the sticky rule failed"
+  sudo "$CLI" net add "$NET_WEB_IP/32" vps --dir "$BOX" >/dev/null || fail "vibedpn net add of a plain rule failed"
+  await_net "$VPS_IP" "a network rule via vps did not send the device through the VPS"
+  docker stop vibedpn-wg-client-1 >/dev/null
+  await_net "$EXIT_IP" "a plain rule did not follow the fallback chain to wg-$EXIT_NAME"
+  docker start vibedpn-wg-client-1 >/dev/null
+  wait_healthy vibedpn-wg-client-1
+  await_net "$VPS_IP" "a plain rule did not come back to the VPS"
+  sudo "$CLI" net add "$NET_WEB_IP/32" vps --sticky --dir "$BOX" | grep -q "vps, sticky, applied" ||
+    fail "vibedpn net add --sticky failed"
+  await_net "$VPS_IP" "a sticky rule via vps did not send the device through the VPS"
+  docker stop vibedpn-wg-client-1 >/dev/null
+  await_net none "a sticky rule left through another exit with the VPS silent"
+  # held, not late: it must stay held while the fallback answers
+  sleep 10
+  [ -z "$(net_exit)" ] || fail "a sticky rule moved to the fallback: the echo server sees '$(net_exit)'"
+  docker start vibedpn-wg-client-1 >/dev/null
+  wait_healthy vibedpn-wg-client-1
+  await_net "$VPS_IP" "a sticky rule did not come back to the VPS with its gateway"
+  sudo "$CLI" net rm "$NET_WEB_IP/32" --dir "$BOX" >/dev/null || fail "vibedpn net rm of the sticky rule failed"
+  sudo "$CLI" fallback --clear --dir "$BOX" >/dev/null || fail "vibedpn fallback --clear after the sticky rule failed"
+  docker rm -f "$NET_WEB" >/dev/null
+  echo "sticky: a plain rule went to wg-$EXIT_NAME with the VPS stopped, the sticky one held"
 
   sudo "$CLI" lists rm "$LIST_URL" --dir "$BOX" | grep -q "list removed" || fail "vibedpn lists rm failed"
   kill "$LIST_SERVER" 2>/dev/null || true
