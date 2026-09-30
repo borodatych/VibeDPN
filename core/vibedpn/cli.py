@@ -1345,9 +1345,17 @@ def password(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
         typer.echo("panel password changed: the next sign-in uses it")
 
 
+WIFI_PASSPHRASE_RESULT = {
+    "applied": "the new passphrase is in use, devices join with it now (applied live)",
+    "unchanged": "already has this passphrase: nobody was dropped",
+    "pending": "saved; the access point did not take it and reads it at its next start",
+}
+
+
 @wifi_app.command("passphrase")
 def wifi_passphrase(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
-    """Set your own Wi-Fi passphrase: asked twice without echo, then the access point restarts."""
+    """Set your own Wi-Fi passphrase, asked twice without echo: the access point takes it live
+    through core, or restarts when core is not running; devices join again with it."""
     config = _prepare(box_dir, refresh=False)
     wifi = config.network.wifi if config.network is not None else None
     if wifi is None:
@@ -1358,13 +1366,24 @@ def wifi_passphrase(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
         confirmation_prompt=True,
     )
     try:
+        view = core_api.set_wifi_passphrase(config.api.port, value)
+    except core_api.CoreUnreachableError:
+        pass
+    except core_api.EventRequestError as exc:
+        raise _fail(str(exc)) from None
+    else:
+        typer.echo(f"Wi-Fi {wifi.ssid!r}: {WIFI_PASSPHRASE_RESULT[view.result]}")
+        if view.error:
+            typer.echo(f"hostapd: {view.error}")
+        return
+    try:
         changed = write_passphrase(box_dir / SECRETS_DIR, value)
     except HostapdError as exc:
         raise _fail(str(exc)) from None
     if not changed:
         typer.echo(f"Wi-Fi {wifi.ssid!r} already has this passphrase: nothing to restart")
         return
-    # core renders hostapd.conf from secrets/ at its start, hostapd reads that file at its own
+    # without core: it renders hostapd.conf from secrets/ at its start, hostapd reads it at its own
     _compose(box_dir, "up", "-d", "--force-recreate", "core", "hostapd")
     typer.echo(f"Wi-Fi {wifi.ssid!r}: the new passphrase is in use, devices join with it now")
 

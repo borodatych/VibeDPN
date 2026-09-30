@@ -8,6 +8,8 @@ import pytest
 from typer.testing import CliRunner
 
 from vibedpn import cli
+from vibedpn.api import client as core_api
+from vibedpn.api.models import WifiPassphraseView
 from vibedpn.config import load_config
 from vibedpn.detect import Interface
 from vibedpn.engine.hostapd import HostapdError, check_passphrase
@@ -436,6 +438,11 @@ def wifi_box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Com
     recorder = ComposeRecorder()
     monkeypatch.setattr(cli, "run", recorder.run)
     monkeypatch.setattr(cli, "preflight", lambda: None)
+
+    def core_down(*_args: object) -> None:
+        raise core_api.CoreUnreachableError("ConnectError: refused")
+
+    monkeypatch.setattr(core_api, "set_wifi_passphrase", core_down)
     return tmp_path, recorder
 
 
@@ -478,6 +485,37 @@ def test_wifi_passphrase_stores_what_the_owner_typed_and_restarts_the_access_poi
     )
     assert again.exit_code == 0 and "nothing to restart" in again.output
     assert len(recorder.calls) == 1
+
+
+def test_wifi_passphrase_goes_through_core_and_recreates_nothing(
+    wifi_box: tuple[Path, ComposeRecorder],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    box_dir, recorder = wifi_box
+    new = "new home wifi 2"
+    asked: list[str] = []
+
+    def through_core(_port: int, passphrase: str) -> WifiPassphraseView:
+        asked.append(passphrase)
+        return WifiPassphraseView(result="applied")
+
+    monkeypatch.setattr(core_api, "set_wifi_passphrase", through_core)
+    result = runner.invoke(
+        cli.app, ["wifi", "passphrase", "--dir", str(box_dir)], input=f"{new}\n{new}\n"
+    )
+    assert result.exit_code == 0, result.output
+    assert "applied live" in result.output and new not in result.output
+    assert asked == [new] and recorder.calls == []
+
+    def pending(_port: int, _passphrase: str) -> WifiPassphraseView:
+        return WifiPassphraseView(result="pending", error="cannot reach the access point")
+
+    monkeypatch.setattr(core_api, "set_wifi_passphrase", pending)
+    result = runner.invoke(
+        cli.app, ["wifi", "passphrase", "--dir", str(box_dir)], input=f"{new}\n{new}\n"
+    )
+    assert result.exit_code == 0 and "reads it at its next start" in result.output
+    assert "hostapd: cannot reach the access point" in result.output
 
 
 def test_wifi_passphrase_refuses_a_short_one_and_keeps_the_old(

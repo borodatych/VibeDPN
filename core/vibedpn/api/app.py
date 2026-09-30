@@ -2,6 +2,7 @@
 
 import io
 import sys
+import threading
 import time
 from collections.abc import Callable
 from contextlib import closing
@@ -71,6 +72,8 @@ from vibedpn.api.models import (
     WgUplinksView,
     WgUplinkView,
     WifiClientView,
+    WifiPassphraseUpdate,
+    WifiPassphraseView,
     XrayUplinkUpdate,
     XrayUplinkView,
 )
@@ -160,6 +163,8 @@ from vibedpn.engine.ddns import load_url as load_ddns_url
 from vibedpn.engine.ddns import save_url as save_ddns_url
 from vibedpn.engine.devices import DeviceError, DeviceStore, SeenDevice
 from vibedpn.engine.events import DEFAULT_LIMIT, EventError, EventKind, EventStore
+from vibedpn.engine.hostapd import HostapdError, check_passphrase, ensure_hostapd, write_passphrase
+from vibedpn.engine.hostapd import core_dir as hostapd_core_dir
 from vibedpn.engine.learned import LearnedError
 from vibedpn.engine.myst import MystError, ProviderStats, TequilaClient, provider_stats
 from vibedpn.engine.router import (
@@ -305,12 +310,56 @@ NO_JOURNAL = "this box keeps no event journal: it routes no LAN"
 NO_ACCESS_POINT = "this box runs no access point (network.wifi)"
 
 WifiStations = Callable[[str], list[Station]]
+WifiReload = Callable[[str], None]
 
 
 def read_stations(interface: str) -> list[Station]:
     """The clients of the access point now, asked over its control socket."""
     with HostapdControl(interface) as control:
         return control.stations()
+
+
+def reload_access_point(interface: str) -> None:
+    """hostapd reads hostapd.conf again: the new passphrase, every client dropped."""
+    with HostapdControl(interface) as control:
+        control.reload_config()
+
+
+def _add_wifi_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    secrets_dir: Path | None,
+    hostapd_dir: Path,
+    reload: WifiReload,
+) -> None:
+    """``/wifi/passphrase``: the owner sets the Wi-Fi passphrase in the panel, and the running
+    hostapd takes it: no container is recreated, the clients join again with the new one"""
+    lock = threading.Lock()
+
+    @application.put("/wifi/passphrase", response_model=WifiPassphraseView)
+    def put_wifi_passphrase(request: WifiPassphraseUpdate) -> WifiPassphraseView:
+        box = current()
+        if box is None or box.network is None or box.network.wifi is None or secrets_dir is None:
+            raise HTTPException(status_code=404, detail=NO_ACCESS_POINT)
+        try:
+            check_passphrase(request.passphrase)
+        except HostapdError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        with lock:
+            try:
+                saved = write_passphrase(secrets_dir, request.passphrase)
+                # the running network renders it: a saved network change waits for the restart
+                rendered = ensure_hostapd(box, hostapd_dir, secrets_dir)
+            except HostapdError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            # either one changed: an earlier attempt may have saved the passphrase and failed later
+            if not saved and not rendered:
+                return WifiPassphraseView(result="unchanged")
+            try:
+                reload(box.network.lan_interface)
+            except WifiError as exc:
+                return WifiPassphraseView(result="pending", error=str(exc))
+        return WifiPassphraseView(result="applied")
 
 
 def device_names(box: Config | None, device_store: DeviceStore | None) -> dict[str, str]:
@@ -1397,6 +1446,8 @@ def create_app(
     access_dir: Path | None = None,
     access_owner: int | None = ACCESS_UID,
     telegram: TelegramBot | None = None,
+    hostapd_dir: Path | None = None,
+    wifi_reload: WifiReload | None = None,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -1463,6 +1514,13 @@ def create_app(
         ),
     )
 
+    _add_wifi_routes(
+        application,
+        current,
+        secrets_dir,
+        hostapd_dir or hostapd_core_dir(),
+        wifi_reload or reload_access_point,
+    )
     _add_peer_routes(application, tunnel, link_source, data_dir)
     _add_access_routes(
         application,

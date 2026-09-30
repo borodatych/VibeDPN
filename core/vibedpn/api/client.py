@@ -44,6 +44,8 @@ from vibedpn.api.models import (
     TelegramUpdate,
     TelegramView,
     WifiClientView,
+    WifiPassphraseUpdate,
+    WifiPassphraseView,
 )
 from vibedpn.config import DevicePolicy, RoutingMode
 from vibedpn.engine.myst import STATS_DEADLINE_SECONDS, ProviderStats
@@ -558,6 +560,27 @@ def list_wifi_clients(
     except (ValueError, ValidationError) as exc:
         raise EventRequestError(
             f"core answered something that is not a Wi-Fi client list ({VERSION_HINT})"
+        ) from exc
+
+
+def set_wifi_passphrase(
+    port: int, passphrase: str, transport: httpx.BaseTransport | None = None
+) -> WifiPassphraseView:
+    body = WifiPassphraseUpdate(passphrase=passphrase).model_dump()
+    response = _peer_request(
+        port,
+        "PUT",
+        "/wifi/passphrase",
+        httpx.codes.OK,
+        body=body,
+        transport=transport,
+        error=EventRequestError,
+    )
+    try:
+        return WifiPassphraseView.model_validate(response.json())
+    except (ValueError, ValidationError) as exc:
+        raise EventRequestError(
+            f"core answered something that is not a Wi-Fi passphrase result ({VERSION_HINT})"
         ) from exc
 
 

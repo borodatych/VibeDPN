@@ -26,7 +26,8 @@ DEFAULT_CTRL_DIR = Path("/run/vibedpn/hostapd")  # compose.yaml shares it with h
 CLIENT_PREFIX = "vibedpn-core-"
 REPLY_BYTES = 8192
 COMMAND_TIMEOUT_SECONDS = 3.0
-ATTACHED = "OK"
+# what hostapd answers a command that succeeded; a failed one gets FAIL
+REPLY_OK = "OK"
 NO_MORE_STATIONS = ("", "FAIL")
 
 EVENT_LINE = re.compile(r"^<\d+>(?P<name>[A-Z0-9-]+)(?:\s+(?P<argument>\S+))?")
@@ -154,8 +155,17 @@ class HostapdControl:
             raise WifiError(f"the access point did not answer {command}: {exc}") from exc
 
     def attach(self) -> None:
-        if self.request("ATTACH").strip() != ATTACHED:
+        if self.request("ATTACH").strip() != REPLY_OK:
             raise WifiError("the access point refused to send its events (ATTACH)")
+
+    def reload_config(self) -> None:
+        """Make hostapd read hostapd.conf again, as SIGHUP does (``RELOAD_CONFIG``, hostapd 2.11)
+
+        It derives the key from the passphrase anew and drops every client: they join again with
+        the new one. Channel and band stay as they run (knowledge linux/hostapdControl.md)
+        """
+        if self.request("RELOAD_CONFIG").strip() != REPLY_OK:
+            raise WifiError("the access point could not read its configuration again")
 
     def receive(self, timeout: float) -> str | None:
         """The next message within ``timeout`` seconds, or ``None`` when nothing came."""

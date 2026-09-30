@@ -318,6 +318,18 @@ class WifiClientView(BaseModel):
     tx_bytes: int | None
 
 
+class WifiPassphraseUpdate(BaseModel):
+    passphrase: str
+
+
+class WifiPassphraseView(BaseModel):
+    # applied: hostapd reads it now and dropped its clients, they join again with it;
+    # unchanged: the access point has this passphrase already, nobody was dropped;
+    # pending: saved, but hostapd did not take it (error says why): it reads it at its next start
+    result: Literal["applied", "unchanged", "pending"]
+    error: str = ""
+
+
 class WgUplinkCreate(BaseModel):
     """``POST /uplinks/wg``: a name and the text of a provider's WireGuard file."""
 
