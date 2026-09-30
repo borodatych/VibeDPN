@@ -1,7 +1,7 @@
 import { root } from '@/lib/root'
 import { authorizedOnlyPlugin } from '@/modules/auth/plugins'
 import { coreRequest } from '@/modules/core/client'
-import type { NetworkView } from '@/features/network/shared'
+import type { NetworkView, WifiPassphraseView } from '@/features/network/shared'
 import { z } from 'zod'
 
 export const networkQuery = root.lets
@@ -18,5 +18,16 @@ export const networkUpdateMutation = root.lets
   .input(z.object({ lan_interface: z.string().min(1).nullable() }))
   .loader(async ({ input }) => {
     return { network: await coreRequest<NetworkView>('/network', { method: 'PUT', body: input }) }
+  })
+  .mutation()
+
+export const wifiPassphraseMutation = root.lets
+  .mutation()
+  .use(authorizedOnlyPlugin)
+  .input(z.object({ passphrase: z.string().min(1) }))
+  .loader(async ({ input }) => {
+    return {
+      wifi: await coreRequest<WifiPassphraseView>('/wifi/passphrase', { method: 'PUT', body: input }),
+    }
   })
   .mutation()

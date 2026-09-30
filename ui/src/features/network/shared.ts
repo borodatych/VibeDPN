@@ -49,3 +49,35 @@ export const lanOptions = (view: NetworkView, t: T): { value: string; label: str
 }
 
 export const currentChoice = (view: NetworkView): string => (view.mode === 'gateway' ? view.lan_interface : SIDECAR)
+
+/** Core's `PUT /wifi/passphrase` (core/vibedpn/api/models.py: WifiPassphraseView). */
+export type WifiPassphraseView = {
+  result: 'applied' | 'unchanged' | 'pending'
+  error: string
+}
+
+// An ASCII passphrase of WPA-PSK, as core/vibedpn/engine/hostapd.py takes it
+export const PASSPHRASE_MIN = 8
+export const PASSPHRASE_MAX = 63
+const PRINTABLE_ASCII = /^[\x20-\x7e]*$/
+
+export type PassphraseProblem = 'length' | 'characters' | 'spaces' | 'mismatch'
+
+/**
+ * Why a new Wi-Fi passphrase cannot be sent yet; `null` when it can. Only a hint before sending: core checks the same
+ * rules again.
+ *
+ * @tags network
+ */
+export const passphraseProblem = (value: string, repeat: string): PassphraseProblem | null => {
+  if (value.length < PASSPHRASE_MIN || value.length > PASSPHRASE_MAX) {
+    return 'length'
+  }
+  if (!PRINTABLE_ASCII.test(value)) {
+    return 'characters'
+  }
+  if (value !== value.trim()) {
+    return 'spaces'
+  }
+  return value === repeat ? null : 'mismatch'
+}

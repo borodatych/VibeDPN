@@ -1,14 +1,85 @@
 import { useHead } from '@unhead/react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Section, Sections } from '@/components/ui/section'
 import { XSelect } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { eventListQuery, wifiClientsQuery } from '@/features/events/api'
 import { deviceName, DROPS_WINDOW_HOURS, durationText, wifiDrops } from '@/features/events/shared'
-import { networkQuery, networkUpdateMutation } from '@/features/network/api'
-import { currentChoice, lanOptions, SIDECAR } from '@/features/network/shared'
+import { networkQuery, networkUpdateMutation, wifiPassphraseMutation } from '@/features/network/api'
+import {
+  currentChoice,
+  lanOptions,
+  PASSPHRASE_MAX,
+  PASSPHRASE_MIN,
+  passphraseProblem,
+  SIDECAR,
+} from '@/features/network/shared'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import { useT } from '@/modules/i18n/use-t'
+import { useState } from 'react'
+
+/** A new Wi-Fi password: core stores it and the running access point takes it, dropping every device. */
+const PassphraseForm = () => {
+  const t = useT()
+  const save = wifiPassphraseMutation.useMutation()
+  const [value, setValue] = useState('')
+  const [repeat, setRepeat] = useState('')
+  const problem = value || repeat ? passphraseProblem(value, repeat) : null
+  const limits = { min: PASSPHRASE_MIN, max: PASSPHRASE_MAX }
+  const submit = async () => {
+    await save.mutateAsync({ passphrase: value })
+    setValue('')
+    setRepeat('')
+  }
+  const result = save.data?.wifi
+  return (
+    <div className="mt-6 space-y-2">
+      <p className="font-accent text-sm text-muted-foreground">{t('wifi.passphrase.title')}</p>
+      <div className="flex flex-wrap gap-2">
+        <Input
+          type="password"
+          value={value}
+          maxLength={PASSPHRASE_MAX}
+          autoComplete="new-password"
+          spellCheck={false}
+          placeholder={t('wifi.passphrase.new')}
+          aria-label={t('wifi.passphrase.new')}
+          className="max-w-xs"
+          onChange={(event) => setValue(event.target.value)}
+        />
+        <Input
+          type="password"
+          value={repeat}
+          maxLength={PASSPHRASE_MAX}
+          autoComplete="new-password"
+          spellCheck={false}
+          placeholder={t('wifi.passphrase.repeat')}
+          aria-label={t('wifi.passphrase.repeat')}
+          className="max-w-xs"
+          onChange={(event) => setRepeat(event.target.value)}
+        />
+      </div>
+      <p className="text-xs text-muted-foreground">{t('wifi.passphrase.hint', limits)}</p>
+      <Button
+        disabled={!value || problem !== null}
+        loading={save.isPending}
+        confirm={t('wifi.passphrase.confirm')}
+        onClick={() => void submit()}
+      >
+        {t('wifi.passphrase.save')}
+      </Button>
+      {problem && <p className="text-sm text-destructive">{t(`wifi.passphrase.problem.${problem}`, limits)}</p>}
+      {save.isError && <p className="text-sm text-destructive">{save.error.message}</p>}
+      {result && (
+        <p className={result.result === 'pending' ? 'text-sm text-warning' : 'text-sm'}>
+          {t(`wifi.passphrase.result.${result.result}`, { error: result.error })}
+        </p>
+      )}
+    </div>
+  )
+}
 
 /** Who is on the access point now and how often it dropped them; nothing on a box without Wi-Fi. */
 const WifiSection = () => {
@@ -49,6 +120,7 @@ const WifiSection = () => {
           </TableBody>
         </Table>
       )}
+      <PassphraseForm />
     </Section>
   )
 }

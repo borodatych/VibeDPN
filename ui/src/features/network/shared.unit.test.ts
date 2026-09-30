@@ -1,4 +1,4 @@
-import { currentChoice, lanOptions, SIDECAR, type NetworkView } from '@/features/network/shared'
+import { currentChoice, lanOptions, passphraseProblem, SIDECAR, type NetworkView } from '@/features/network/shared'
 import { baseT } from '@/modules/i18n/translator'
 import { describe, expect, test } from 'bun:test'
 
@@ -24,5 +24,20 @@ describe('lanOptions', () => {
   test('shows the saved choice', () => {
     expect(currentChoice(view())).toBe(SIDECAR)
     expect(currentChoice(view({ mode: 'gateway', lan_interface: 'wlan0' }))).toBe('wlan0')
+  })
+})
+
+describe('passphraseProblem', () => {
+  test('takes what hostapd takes, typed twice the same', () => {
+    expect(passphraseProblem('my home wifi 2026!', 'my home wifi 2026!')).toBeNull()
+    expect(passphraseProblem('x'.repeat(63), 'x'.repeat(63))).toBeNull()
+  })
+
+  test('names the first reason it cannot be sent', () => {
+    expect(passphraseProblem('short', 'short')).toBe('length')
+    expect(passphraseProblem('x'.repeat(64), 'x'.repeat(64))).toBe('length')
+    expect(passphraseProblem('пароль-на-русском', 'пароль-на-русском')).toBe('characters')
+    expect(passphraseProblem(' padded passphrase', ' padded passphrase')).toBe('spaces')
+    expect(passphraseProblem('my home wifi 2026!', 'my home wifi 2025!')).toBe('mismatch')
   })
 })
