@@ -11,6 +11,8 @@ import { ThemeSwitcher } from '@/components/ui/theme'
 import { routes } from '@/generated/point0/routes'
 import { NavLink } from '@/lib/navigation'
 import { root } from '@/lib/root'
+import { boxRoleQuery } from '@/features/box/api'
+import { pagesOfRole } from '@/features/box/shared'
 import { getMeQuery } from '@/modules/auth/api'
 import type { Me } from '@/modules/auth/server'
 import type { T } from '@/modules/i18n/base'
@@ -24,18 +26,41 @@ import { type ComponentProps, useState } from 'react'
 
 type NavItem = { label: string; to: string }
 
-// Left of the header — your top-level pages.
-const navLinks = (t: T): NavItem[] => [
-  { label: t('nav.status'), to: routes.home() },
-  { label: t('nav.devices'), to: routes.devices() },
-  { label: t('nav.rules'), to: routes.rules() },
-  { label: t('nav.node'), to: routes.node() },
-  { label: t('nav.network'), to: routes.network() },
-  { label: t('nav.uplinks'), to: routes.uplinks() },
-  { label: t('nav.access'), to: routes.access() },
-  { label: t('nav.notifications'), to: routes.notifications() },
-  { label: t('nav.journal'), to: routes.journal() },
-]
+// Left of the header — the top-level pages of the role of this box.
+const pageLinks = (t: T): Record<PageName, NavItem> => ({
+  home: { label: t('nav.status'), to: routes.home() },
+  devices: { label: t('nav.devices'), to: routes.devices() },
+  rules: { label: t('nav.rules'), to: routes.rules() },
+  node: { label: t('nav.node'), to: routes.node() },
+  network: { label: t('nav.network'), to: routes.network() },
+  uplinks: { label: t('nav.uplinks'), to: routes.uplinks() },
+  peers: { label: t('nav.peers'), to: routes.peers() },
+  access: { label: t('nav.access'), to: routes.access() },
+  notifications: { label: t('nav.notifications'), to: routes.notifications() },
+  journal: { label: t('nav.journal'), to: routes.journal() },
+})
+
+type PageName = ReturnType<typeof pagesOfRole>[number]
+
+const navLinks = (t: T, role: string | null | undefined): NavItem[] => {
+  const links = pageLinks(t)
+  return pagesOfRole(role).map((page) => links[page])
+}
+
+/** The pages of the signed-in box: the role comes from core, and asking it needs a session. */
+const RoleNavItems = (props: Omit<ComponentProps<typeof NavItems>, 'links'>) => {
+  const t = useT()
+  const role = boxRoleQuery.useQuery().data?.role
+  return <NavItems links={navLinks(t, role)} {...props} />
+}
+
+const MainNavItems = ({
+  me,
+  ...props
+}: Omit<ComponentProps<typeof NavItems>, 'links'> & { me: Me | null | undefined }) => {
+  const t = useT()
+  return me ? <RoleNavItems {...props} /> : <NavItems links={navLinks(t, null)} {...props} />
+}
 
 // Right of the header — depends on who's signed in.
 const accountLinks = (me: Me | null | undefined, t: T): NavItem[] =>
@@ -88,7 +113,7 @@ export const generalLayout = root.lets
                 VibeDPN
               </NavLink>
               <nav className="hidden items-center gap-6 xl:flex">
-                <NavItems links={navLinks(t)} />
+                <MainNavItems me={me} />
               </nav>
             </div>
 
@@ -114,11 +139,7 @@ export const generalLayout = root.lets
                     <DrawerClose asChild className="mb-2 self-end">
                       <Button variant="ghost" size="icon-default" aria-label={t('nav.closeMenu')} icon={X} />
                     </DrawerClose>
-                    <NavItems
-                      links={navLinks(t)}
-                      className={mobileLinkClassName}
-                      onNavigate={() => setMenuOpen(false)}
-                    />
+                    <MainNavItems me={me} className={mobileLinkClassName} onNavigate={() => setMenuOpen(false)} />
                     <div className="my-2 h-px bg-border" />
                     <NavItems
                       links={accountLinks(me, t)}

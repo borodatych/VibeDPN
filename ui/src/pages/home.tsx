@@ -24,6 +24,10 @@ import {
 import { eventListQuery } from '@/features/events/api'
 import { DROPS_WINDOW_HOURS, WIFI_DROPS_WARNING, wifiDrops } from '@/features/events/shared'
 import { UpdateCard } from '@/features/update/card'
+import { boxRoleQuery } from '@/features/box/api'
+import { VPS_ROLE } from '@/features/box/shared'
+import { routes } from '@/generated/point0/routes'
+import { NavLink } from '@/lib/navigation'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import type { T } from '@/modules/i18n/base'
@@ -398,32 +402,58 @@ export const homePage = generalLayout.lets
     titleTemplate: null,
   })
   .use(redirectUnauthorizedPlugin)
-  .with(boxStatusQuery)
-  .page(({ data: { status } }) => {
-    const summary = summarizeStatus(status)
-    const t = useT()
-    return (
-      <Sections gap="lg">
-        <Section h1={t('status.title')}>
-          <div className="flex flex-wrap items-center gap-3">
-            <Badge variant={TONE_BADGE[summary.tone]}>
-              {summary.tone === 'ok' ? t('status.tone.ok') : t('status.tone.attention')}
-            </Badge>
-            <p className="font-accent text-lg">{t(summary.headline.key, summary.headline.params)}</p>
-          </div>
-          <WifiDropsNotice />
-        </Section>
-        <RoutingControls status={status} />
-        {status.dpn && <DpnCard dpn={status.dpn} />}
-        {status.dpn_countries.map((dpn) => (
-          <CountryConsumerCard key={dpn.country} dpn={dpn} />
+  .with(boxRoleQuery)
+  // a VPS routes no LAN: core has no status of a router there, and the page says where its things are
+  .page(({ data: { role } }) => (role === VPS_ROLE ? <VpsHome /> : <LanHome />))
+
+const VpsHome = () => {
+  const t = useT()
+  return (
+    <Sections gap="lg">
+      <Section h1={t('status.title')} description={t('status.vps.description')}>
+        <div className="flex flex-wrap gap-4 font-accent text-sm">
+          <NavLink to={routes.peers()} className="underline">
+            {t('nav.peers')}
+          </NavLink>
+          <NavLink to={routes.node()} className="underline">
+            {t('nav.node')}
+          </NavLink>
+        </div>
+      </Section>
+      <UpdateCard />
+    </Sections>
+  )
+}
+
+const LanHome = () => {
+  const status = boxStatusQuery.useQuery().data?.status
+  const t = useT()
+  if (!status) {
+    return null
+  }
+  const summary = summarizeStatus(status)
+  return (
+    <Sections gap="lg">
+      <Section h1={t('status.title')}>
+        <div className="flex flex-wrap items-center gap-3">
+          <Badge variant={TONE_BADGE[summary.tone]}>
+            {summary.tone === 'ok' ? t('status.tone.ok') : t('status.tone.attention')}
+          </Badge>
+          <p className="font-accent text-lg">{t(summary.headline.key, summary.headline.params)}</p>
+        </div>
+        <WifiDropsNotice />
+      </Section>
+      <RoutingControls status={status} />
+      {status.dpn && <DpnCard dpn={status.dpn} />}
+      {status.dpn_countries.map((dpn) => (
+        <CountryConsumerCard key={dpn.country} dpn={dpn} />
+      ))}
+      {status.uplinks
+        .filter((uplink) => uplink.enabled)
+        .map((uplink) => (
+          <UplinkCard key={uplink.name} uplink={uplink} failopen={status.failopen} />
         ))}
-        {status.uplinks
-          .filter((uplink) => uplink.enabled)
-          .map((uplink) => (
-            <UplinkCard key={uplink.name} uplink={uplink} failopen={status.failopen} />
-          ))}
-        <UpdateCard />
-      </Sections>
-    )
-  })
+      <UpdateCard />
+    </Sections>
+  )
+}
