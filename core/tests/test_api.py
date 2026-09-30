@@ -27,7 +27,12 @@ def stats() -> ProviderStats:
 def test_health() -> None:
     response = TestClient(create_app()).get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": __version__}
+    assert response.json() == {"status": "ok", "version": __version__, "role": None}
+
+
+def test_health_names_the_role_the_panel_builds_its_menu_by() -> None:
+    app = create_app(Config.model_validate(vps_config()))
+    assert TestClient(app).get("/health").json()["role"] == "vps"
 
 
 def test_provider_stats_returns_what_the_node_said() -> None:
@@ -150,6 +155,9 @@ def test_peer_lifecycle_over_the_api(tmp_path: Path) -> None:
 
     exported = api.get("/peers/dacha/config")
     assert exported.status_code == 200 and exported.json()["config"] == body.config
+    # the panel shows the file as a QR code for the WireGuard app of a phone: a whole SVG document
+    assert body.qr_svg.startswith("<svg ") and 'xmlns="http://www.w3.org/2000/svg"' in body.qr_svg
+    assert exported.json()["qr_svg"] == body.qr_svg
 
     assert api.delete("/peers/dacha").status_code == 204
     assert api.get("/peers").json() == []

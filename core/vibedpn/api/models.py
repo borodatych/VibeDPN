@@ -49,6 +49,8 @@ class PeerFile(BaseModel):
     name: str
     address: IPv4Address
     config: str
+    # The file as a QR code, for the WireGuard app of a phone; empty from an older core
+    qr_svg: str = ""
 
 
 class DeviceView(BaseModel):

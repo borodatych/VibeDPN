@@ -220,10 +220,14 @@ PEER_ERROR_STATUS: tuple[tuple[type[WgError], int], ...] = (
 
 
 class Health(BaseModel):
-    """Liveness answer used by the container healthcheck."""
+    """Liveness answer used by the container healthcheck
+
+    The panel builds its menu by the role: a VPS has peers and no LAN
+    """
 
     status: Literal["ok"]
     version: str
+    role: str | None = None  # None: core runs without a configuration
 
 
 def _default_stats() -> ProviderStats:
@@ -1429,7 +1433,10 @@ def create_app(
 
     @application.get("/health", response_model=Health)
     def health() -> Health:
-        return Health(status="ok", version=__version__)
+        box = current()
+        return Health(
+            status="ok", version=__version__, role=None if box is None else box.role.value
+        )
 
     @application.get("/provider/stats", response_model=ProviderStats)
     def stats() -> ProviderStats:
@@ -1887,7 +1894,7 @@ def _add_peer_routes(
             text = peer_config(box, secrets, peer.name)
         except WgError as exc:
             raise _http_error(exc) from exc
-        return PeerFile(name=peer.name, address=peer.address, config=text)
+        return PeerFile(name=peer.name, address=peer.address, config=text, qr_svg=_qr_svg(text))
 
     @application.get("/peers/{name}/config", response_model=PeerFile)
     def export_peer(name: str) -> PeerFile:
@@ -1897,7 +1904,7 @@ def _add_peer_routes(
             text = peer_config(box, secrets, name)
         except WgError as exc:
             raise _http_error(exc) from exc
-        return PeerFile(name=peer.name, address=peer.address, config=text)
+        return PeerFile(name=peer.name, address=peer.address, config=text, qr_svg=_qr_svg(text))
 
     @application.delete("/peers/{name}", status_code=204, response_class=Response)
     def delete_peer(name: str) -> Response:
