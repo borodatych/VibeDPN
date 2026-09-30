@@ -1,4 +1,5 @@
-"""vibedpn mode / upstream: through core when it runs (nothing restarts), else the file."""
+"""vibedpn mode / upstream / fallback / failopen: through core when it runs (nothing restarts), else
+the file."""
 
 from pathlib import Path
 
@@ -51,8 +52,9 @@ def test_mode_goes_through_core_and_restarts_nothing(
         mode: RoutingMode | None,
         upstream: Upstream | None,
         fallback: list[str] | None = None,
+        failopen: bool | None = None,
     ) -> RoutingView:
-        assert fallback is None
+        assert fallback is None and failopen is None
         asked.append((port, mode, upstream))
         return RoutingView(mode="off", default_upstream="vps", adguard="applied")
 
@@ -61,8 +63,8 @@ def test_mode_goes_through_core_and_restarts_nothing(
     code, output = invoke(tmp_path, "mode", "off")
     assert code == 0, output
     assert (
-        "routing: mode=off default_upstream=vps fallback=- (applied live, nothing restarted)"
-        in output
+        "routing: mode=off default_upstream=vps failopen=false fallback=-"
+        " (applied live, nothing restarted)" in output
     )
     assert asked == [(4480, RoutingMode.OFF, None)]
     assert recorder.calls == []  # no compose restart
@@ -148,8 +150,13 @@ def test_fallback_goes_through_core_as_a_whole_chain(
     asked: list[list[str] | None] = []
 
     def set_routing(
-        _port: int, _mode: object, _upstream: object, fallback: list[str] | None = None
+        _port: int,
+        _mode: object,
+        _upstream: object,
+        fallback: list[str] | None = None,
+        failopen: bool | None = None,
     ) -> RoutingView:
+        assert failopen is None
         asked.append(fallback)
         return RoutingView(
             mode="full", default_upstream="vps", fallback=fallback or [], adguard="applied"
@@ -196,3 +203,46 @@ def test_fallback_on_a_stopped_box_is_saved_or_refused(
     routing = load_config(tmp_path / "config.yaml").routing
     assert routing is not None and routing.fallback == []
     assert "\n  fallback:" not in (tmp_path / "config.yaml").read_text(encoding="utf-8")
+
+
+def test_failopen_goes_through_core(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    recorder = make_box(tmp_path, monkeypatch, client_config())
+    asked: list[bool | None] = []
+
+    def set_routing(
+        _port: int,
+        _mode: object,
+        _upstream: object,
+        fallback: list[str] | None = None,
+        failopen: bool | None = None,
+    ) -> RoutingView:
+        assert fallback is None
+        asked.append(failopen)
+        return RoutingView(
+            mode="full", default_upstream="vps", failopen=bool(failopen), adguard="applied"
+        )
+
+    monkeypatch.setattr(core_api, "set_routing", set_routing)
+    code, output = invoke(tmp_path, "failopen", "on")
+    assert code == 0 and "failopen=true fallback=- (applied live" in output
+    code, output = invoke(tmp_path, "failopen", "off")
+    assert code == 0 and "failopen=false" in output
+    assert asked == [True, False]
+    assert recorder.calls == []  # no compose restart
+
+
+def test_failopen_on_a_stopped_box_is_saved_and_shown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_box(tmp_path, monkeypatch, client_config())
+    core_down(monkeypatch)
+    code, output = invoke(tmp_path, "failopen")
+    assert code == 0 and "failopen=false" in output
+    code, output = invoke(tmp_path, "failopen", "on")
+    assert code == 0 and "failopen=true" in output and "(saved;" in output
+    routing = load_config(tmp_path / "config.yaml").routing
+    assert routing is not None and routing.failopen
+    code, output = invoke(tmp_path, "failopen", "on")
+    assert code == 0 and "(already set)" in output
+    code, output = invoke(tmp_path, "failopen", "maybe")
+    assert code == 2  # typer refuses a value that is neither on nor off

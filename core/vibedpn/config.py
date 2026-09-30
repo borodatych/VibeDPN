@@ -1282,8 +1282,6 @@ class Config(StrictModel):
             "ui_language": self.ui.language,
             # core writes it into every link it hands out, and keeps the config it started with
             "access_address": self.access.address,
-            # the kill switch: nothing but an edit of the file changes it
-            "failopen": self.routing.failopen if self.routing is not None else None,
             # the uplinks core routes and watches; the CLI turns them on and off in the file
             "uplinks": {
                 **{upstream.value: self.upstreams.is_enabled(upstream) for upstream in Upstream},

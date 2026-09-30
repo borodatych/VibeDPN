@@ -103,10 +103,11 @@ def set_routing(
     mode: RoutingMode | None = None,
     upstream: str | None = None,
     fallback: Sequence[str] | None = None,
+    failopen: bool | None = None,
 ) -> tuple[Config, bool]:
-    """Set ``routing.mode``, ``routing.default_upstream`` and/or ``routing.fallback`` (the whole
-    chain; empty removes the key); returns the validated result and whether the file changed.
-    Nothing is written when the result would not be a valid box."""
+    """Set ``routing.mode``, ``routing.default_upstream``, ``routing.fallback`` (the whole chain;
+    empty removes the key) and/or ``routing.failopen``; returns the validated result and whether
+    the file changed. Nothing is written when the result would not be a valid box."""
 
     def mutate(data: CommentedMap) -> None:
         routing = data.get("routing")
@@ -121,6 +122,8 @@ def set_routing(
             routing["default_upstream"] = upstream
         if fallback is not None:
             _set_fallback(routing, fallback)
+        if failopen is not None:
+            routing["failopen"] = failopen
 
     return _edit(path, mutate)
 

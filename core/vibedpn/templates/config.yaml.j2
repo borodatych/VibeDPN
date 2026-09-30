@@ -70,6 +70,7 @@ network:
 # default_upstream: vps | dpn | tor | wg-<имя> — куда идёт трафик в full; у роли home есть dpn
 #   и собственные выходы по файлу WireGuard из upstreams.wg (имя берётся оттуда).
 # failopen: false — упал аплинк, трафик стоит (kill-switch); true — уходит напрямую, осознанно.
+#   Меняется на лету: панель («Маршрутизация») или vibedpn failopen on|off.
 # fallback: запасные выходы по порядку — трафик замолчавшего выхода идёт через первый живой
 #   из списка (второй VPS как wg-<имя>, tor, xray); failopen решает, только когда молчат все.
 # domains: правила режима smart. Домен покрывает поддомены; via: vps | dpn | tor | direct;

@@ -1324,16 +1324,20 @@ def _add_routing_routes(
         box = current()
         if state is None or box is None or box.routing is None:
             raise HTTPException(status_code=404, detail=NO_LAN)
-        if request.mode is None and request.default_upstream is None and request.fallback is None:
+        if request.model_dump(exclude_none=True) == {}:
             raise HTTPException(
                 status_code=422,
-                detail="nothing to change: give mode, default_upstream or fallback",
+                detail="nothing to change: give mode, default_upstream, fallback or failopen",
             )
         mode = None if request.mode is None else RoutingMode(request.mode)
         try:
             updated = state.edit(
                 lambda path: set_routing(
-                    path, mode=mode, upstream=request.default_upstream, fallback=request.fallback
+                    path,
+                    mode=mode,
+                    upstream=request.default_upstream,
+                    fallback=request.fallback,
+                    failopen=request.failopen,
                 )
             )
         except ConfigEditError as exc:
@@ -1350,6 +1354,7 @@ def _add_routing_routes(
             mode=routing.mode.value,
             default_upstream=routing.default_upstream,
             fallback=routing.fallback,
+            failopen=routing.failopen,
             adguard=adguard,
         )
 
@@ -1500,6 +1505,8 @@ def reconnect_on_reroute(
     (failopen), leaves the connections opened along the old path dead
     A table that loses every gateway without failopen holds them: they wait and go on along the
     same path once it answers, so a return to the path they were opened on closes nothing
+    failopen turned on under a table without exit sends the held queries direct: a move like any
+    other, told by the watchers with no gateway on either side
     """
     # per uplink key: the last path its traffic took, a gateway key or "direct"; its own at start
     last: dict[str, str] = {}

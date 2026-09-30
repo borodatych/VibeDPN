@@ -277,12 +277,14 @@ def set_routing(
     upstream: str | None = None,
     transport: httpx.BaseTransport | None = None,
     fallback: Sequence[str] | None = None,
+    failopen: bool | None = None,
 ) -> RoutingView:
     body = RoutingUpdate.model_validate(
         {
             "mode": None if mode is None else mode.value,
             "default_upstream": upstream,
             "fallback": None if fallback is None else list(fallback),
+            "failopen": failopen,
         }
     ).model_dump(mode="json", exclude_none=True)
     response = _send(port, "PUT", "/routing", body=body, transport=transport)

@@ -138,12 +138,15 @@ class RoutingUpdate(BaseModel):
     default_upstream: str | None = None
     # routing.fallback as a whole, in order; [] empties it
     fallback: list[str] | None = None
+    # routing.failopen: true sends the traffic of an uplink without exit direct, false holds it
+    failopen: bool | None = None
 
 
 class RoutingView(BaseModel):
     mode: str
     default_upstream: str
     fallback: list[str] = []
+    failopen: bool = False
     # applied: AdGuard follows the mode already; pending: it did not answer and catches up at the
     # next start of core; none: this box runs no AdGuard.
     adguard: Literal["applied", "pending", "none"]

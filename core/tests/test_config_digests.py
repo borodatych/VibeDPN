@@ -150,7 +150,7 @@ REACH = {
     "network": CORE,
     "routing.mode": LIVE,
     "routing.default_upstream": LIVE,
-    "routing.failopen": CORE,
+    "routing.failopen": LIVE,
     "routing.fallback": LIVE,
     "routing.domains": LIVE,
     "routing.lists": LIVE,

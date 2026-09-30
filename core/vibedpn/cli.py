@@ -584,7 +584,7 @@ WantedBy=timers.target
 """
 
 
-class TimerSwitch(StrEnum):
+class Switch(StrEnum):
     ON = "on"
     OFF = "off"
 
@@ -645,14 +645,14 @@ def restore(
     typer.echo("restored; check config.yaml, then: vibedpn up")
 
 
-def _switch_update_timer(box_dir: Path, switch: TimerSwitch) -> None:
+def _switch_update_timer(box_dir: Path, switch: Switch) -> None:
     service = SYSTEMD_DIR / f"{UPDATE_UNIT}.service"
     timer = SYSTEMD_DIR / f"{UPDATE_UNIT}.timer"
     systemctl = find_tool("systemctl")
     if systemctl is None:
         raise _fail("systemctl not found: the update timer needs systemd")
     try:
-        if switch is TimerSwitch.ON:
+        if switch is Switch.ON:
             service.write_text(
                 "[Unit]\nDescription=VibeDPN update\nAfter=docker.service network-online.target\n\n"
                 f"[Service]\nType=oneshot\nExecStart={sys.executable} -m vibedpn update"
@@ -687,7 +687,7 @@ class _UpdateFailedError(Exception):
 @app.command()
 def update(
     timer: Annotated[
-        TimerSwitch | None,
+        Switch | None,
         typer.Option(help="Weekly automatic update by a systemd timer: on or off."),
     ] = None,
     requested: Annotated[
@@ -892,12 +892,15 @@ def _switch_routing(
     mode: RoutingMode | None = None,
     upstream: str | None = None,
     fallback: list[str] | None = None,
+    failopen: bool | None = None,
 ) -> None:
     """Change routing through core when it runs: config.yaml, the router and AdGuard follow live
     and nothing restarts. Without core the file is changed and applies at `vibedpn up`."""
     config = _prepare(box_dir, refresh=False)
     try:
-        view = core_api.set_routing(config.api.port, mode, upstream, fallback=fallback)
+        view = core_api.set_routing(
+            config.api.port, mode, upstream, fallback=fallback, failopen=failopen
+        )
     except core_api.CoreUnreachableError:
         pass
     except (core_api.CoreNoAnswerError, core_api.RoutingRequestError) as exc:
@@ -911,12 +914,16 @@ def _switch_routing(
         chain = ",".join(view.fallback) or "-"
         typer.echo(
             f"routing: mode={view.mode} default_upstream={view.default_upstream}"
-            f" fallback={chain} ({note})"
+            f" failopen={str(view.failopen).lower()} fallback={chain} ({note})"
         )
         return
     try:
         saved, changed = set_routing(
-            box_dir / CONFIG_FILE, mode=mode, upstream=upstream, fallback=fallback
+            box_dir / CONFIG_FILE,
+            mode=mode,
+            upstream=upstream,
+            fallback=fallback,
+            failopen=failopen,
         )
     except ConfigEditError as exc:
         raise _fail(str(exc)) from None
@@ -969,6 +976,24 @@ def fallback(
         typer.echo(_routing_line(check_box(box_dir)))
         return
     _switch_routing(box_dir, fallback=[] if clear else uplinks)
+
+
+@app.command()
+def failopen(
+    switch: Annotated[
+        Switch | None,
+        typer.Argument(
+            help="on: the traffic of an uplink without exit goes direct, past the tunnel;"
+            " off: the kill switch holds it."
+        ),
+    ] = None,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Show or set routing.failopen, what a silent uplink with a dry chain does, and apply it."""
+    if switch is None:
+        typer.echo(_routing_line(check_box(box_dir)))
+        return
+    _switch_routing(box_dir, failopen=switch is Switch.ON)
 
 
 def _ensure_apply_units(box_dir: Path) -> None:

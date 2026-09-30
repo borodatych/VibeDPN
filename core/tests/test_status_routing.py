@@ -116,6 +116,7 @@ def test_routing_changes_live_and_reports_adguard(tmp_path: Path) -> None:
         "mode": "off",
         "default_upstream": "vps",
         "fallback": [],
+        "failopen": False,
         "adguard": "applied",
     }
     routing = load_config(path).routing

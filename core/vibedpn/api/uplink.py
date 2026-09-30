@@ -181,6 +181,7 @@ class UplinkWatchers:
 
     def _apply(self, plan: ExitPlan) -> None:
         with self._lock:
+            turned = plan.failopen != self._plan.failopen
             self._plan = plan
             for key in list(self._alive):
                 if plan.uplinks.get(key) != self._uplink_of(key):
@@ -201,7 +202,7 @@ class UplinkWatchers:
                 task = asyncio.ensure_future(supervised(f"uplink {key} watcher", watch))
                 self._tasks[key] = (uplink, task)
         # A new chain or a new set in use moves tables now, not at the next round of a watcher
-        self._resettle = asyncio.ensure_future(asyncio.to_thread(self._settle_all))
+        self._resettle = asyncio.ensure_future(asyncio.to_thread(self._settle_all, turned))
 
     def _uplink_of(self, key: str) -> Uplink | None:
         task = self._tasks.get(key)
@@ -223,19 +224,25 @@ class UplinkWatchers:
             self._alive[key] = alive
             self._route_tables(refresh=key)
 
-    def _settle_all(self) -> None:
+    def _settle_all(self, failopen_turned: bool = False) -> None:
         with self._lock:
             try:
-                self._route_tables(refresh=None)
+                self._route_tables(refresh=None, failopen_turned=failopen_turned)
             except RouterError as exc:
                 _log(f"cannot update the routes of the uplinks: {exc}")
 
-    def _route_tables(self, refresh: str | None) -> None:
+    def _route_tables(self, refresh: str | None, *, failopen_turned: bool = False) -> None:
+        """Route every table in use whose exit moved; ``failopen_turned``: routing.failopen just
+        changed, and a table without exit moved too — its traffic went from held to direct or back,
+        though no gateway did anything."""
         plan = self._plan
         wanted = exit_routes(plan.routed, plan.fallback, self._alive)
         errors: list[str] = []
         for key, through in wanted.items():
-            if key != refresh and key in self._exits and self._exits[key] == through:
+            unchanged = key in self._exits and self._exits[key] == through
+            if unchanged and through is None and failopen_turned:
+                self._moved(key, None, None)
+            if key != refresh and unchanged:
                 continue
             # a table this run has not routed yet counts as on its own gateway
             before = self._exits.get(key, key)
