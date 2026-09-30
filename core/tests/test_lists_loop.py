@@ -165,6 +165,7 @@ def test_lists_are_added_shown_and_removed_through_the_api(tmp_path: Path) -> No
             "via": "dpn",
             "country": "NL",
             "uplink": None,
+            "sticky": False,
             "domains": 42,
             "networks": 0,
             "fetched_at": 1_700_000_000.0,

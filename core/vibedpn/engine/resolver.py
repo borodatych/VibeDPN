@@ -54,18 +54,25 @@ class ResolverError(RuntimeError):
 
 
 def channel_set(channel: DomainChannel) -> str:
-    """The nft set of a channel: smart_direct, smart_vps, smart_dpn_<country|any>, smart_wg_<name>.
+    """The nft set of a channel: smart_direct, smart_vps, smart_dpn_<country|any>, smart_wg_<name>,
+    and with _sticky after the name for a sticky channel.
 
     A name of upstreams.wg may carry '-', which a set name spelled this way does not: it becomes
     '_', and a name never holds '_' itself, so two exits never share a set. Set names this long are
     accepted by the kernels the box runs on (knowledge linux/nftables.md)."""
+    if channel.via is DomainVia.DIRECT:
+        return DIRECT_SET
     if channel.via is DomainVia.DPN:
-        return f"smart_dpn_{(channel.country or 'any').lower()}"
-    if channel.via is DomainVia.WG:
-        return f"smart_wg_{(channel.uplink or '').replace('-', '_')}"
-    return DIRECT_SET if channel.via is DomainVia.DIRECT else f"smart_{channel.via.value}"
+        name = f"smart_dpn_{(channel.country or 'any').lower()}"
+    elif channel.via is DomainVia.WG:
+        name = f"smart_wg_{(channel.uplink or '').replace('-', '_')}"
+    else:
+        name = f"smart_{channel.via.value}"
+    # a sticky channel is a set of its own: its mark leads to a table without the fallback chain
+    return f"{name}{STICKY_SET_SUFFIX}" if channel.sticky else name
 
 
+STICKY_SET_SUFFIX = "_sticky"
 LIST_NETWORK_SET_SUFFIX = "_lnet"
 
 

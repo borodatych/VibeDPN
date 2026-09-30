@@ -209,6 +209,7 @@ class DomainRuleUpdate(BaseModel):
     via: Literal["vps", "dpn", "wg", "tor", "xray", "direct"]
     country: str | None = None
     uplink: str | None = None  # via wg: the name of the exit in upstreams.wg
+    sticky: bool = False  # never through routing.fallback: a silent exit holds its traffic
     learn: bool = True
     also: list[str] = []
 
@@ -218,6 +219,7 @@ class DomainRuleView(BaseModel):
     via: str
     country: str | None
     uplink: str | None
+    sticky: bool = False
     learn: bool
     also: list[str]
 
@@ -229,6 +231,7 @@ class NetworkRuleUpdate(BaseModel):
     via: Literal["vps", "dpn", "wg", "tor", "xray", "direct"]
     country: str | None = None
     uplink: str | None = None
+    sticky: bool = False
 
 
 class NetworkRuleView(BaseModel):
@@ -236,6 +239,7 @@ class NetworkRuleView(BaseModel):
     via: str
     country: str | None
     uplink: str | None
+    sticky: bool = False
 
 
 class DomainListUpdate(BaseModel):
@@ -245,6 +249,7 @@ class DomainListUpdate(BaseModel):
     via: Literal["vps", "dpn", "wg", "tor", "xray", "direct"]
     country: str | None = None
     uplink: str | None = None  # via wg: the name of the exit in upstreams.wg
+    sticky: bool = False
 
 
 class DomainListView(BaseModel):
@@ -252,6 +257,7 @@ class DomainListView(BaseModel):
     via: str
     country: str | None
     uplink: str | None
+    sticky: bool = False
     domains: int  # 0 until core has a first copy
     networks: int  # IPv4 networks of the list, a.b.c.d/nn lines
     fetched_at: float | None  # unix seconds of the copy in use

@@ -373,9 +373,25 @@ WG_SLOTS = [
     )
     for index in range(MAX_WG_UPLINKS)
 ]
+# A sticky channel (decision 33) leaves through the gateway of its uplink with a mark and a table of
+# its own: the fallback chain moves the table of the uplink, never this one
+STICKY_MARK_BIT = 0x100
+STICKY_TABLE_OFFSET = 100
+
+
+def sticky_slot(uplink: Uplink) -> Uplink:
+    """The mark and table of the sticky channels of an uplink: its gateway, and no fallback."""
+    return Uplink(
+        mark=uplink.mark | STICKY_MARK_BIT,
+        table=uplink.table + STICKY_TABLE_OFFSET,
+        gateway=uplink.gateway,
+    )
+
+
+_PLAIN_SLOTS = (*UPLINKS.values(), *COUNTRY_SLOTS, *WG_SLOTS)
 # The uplinks of every kind, by their fixed numbering: what `plan_rules` walks and what the
 # teardown flushes. Anything routable has to be here.
-ALL_SLOTS = (*UPLINKS.values(), *COUNTRY_SLOTS, *WG_SLOTS)
+ALL_SLOTS = (*_PLAIN_SLOTS, *(sticky_slot(uplink) for uplink in _PLAIN_SLOTS))
 
 
 def wg_uplinks(config: Config) -> dict[str, Uplink]:
@@ -475,6 +491,8 @@ class ExitPlan:
     routed: tuple[str, ...]
     fallback: tuple[str, ...] = ()
     failopen: bool = False
+    # uplink key → the slot of its sticky channels: its own gateway or nothing, never a fallback
+    sticky: Mapping[str, Uplink] = field(default_factory=dict)
 
     @classmethod
     def of(cls, uplinks: Mapping[str, Uplink]) -> ExitPlan:
@@ -493,6 +511,7 @@ def exit_plan(config: Config, used: Sequence[str]) -> ExitPlan:
         routed=tuple(used),
         fallback=tuple(fallback),
         failopen=config.routing is not None and config.routing.failopen,
+        sticky=sticky_uplinks(config),
     )
 
 
@@ -587,9 +606,27 @@ def channel_uplink(item: DomainChannel) -> str | None:
 
 
 def _channel_mark(item: DomainChannel, table: dict[str, Uplink]) -> str | None:
-    """The mark of a channel's uplink; ``None`` for direct."""
+    """The mark of a channel's uplink, the sticky one for a sticky channel; ``None`` for direct."""
     key = channel_uplink(item)
-    return None if key is None else hex(table[key].mark)
+    if key is None:
+        return None
+    return hex(sticky_slot(table[key]).mark if item.sticky else table[key].mark)
+
+
+def sticky_uplinks(config: Config) -> dict[str, Uplink]:
+    """Uplink key → the sticky slot its sticky channels leave through, in routing.mode smart:
+    each needs its ip rule and a table that holds its traffic when the uplink is silent."""
+    if config.network is None or config.routing is None:
+        return {}
+    if config.routing.mode is not RoutingMode.SMART:
+        return {}
+    table = uplink_table(config)
+    keys = {
+        key
+        for item in config.routing.channels()
+        if item.sticky and (key := channel_uplink(item)) is not None
+    }
+    return {key: sticky_slot(table[key]) for key in table if key in keys}
 
 
 def smart_marks(config: Config) -> list[UplinkPolicy]:
@@ -656,34 +693,51 @@ def _no_list(_address: IPv4Address) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class Exit:
+    """The uplink a connection leaves through and the mark that takes it there."""
+
+    key: str
+    mark: int
+
+
 def exit_for(
     config: Config,
     rule_set: str | None,
     address: IPv4Address,
     listed: Callable[[IPv4Address], str | None] = _no_list,
-) -> str | None:
-    """The uplink a device at home without a policy of its own leaves through to ``address``, the
-    address of a name under the channel set ``rule_set`` (``None``: under no rule); ``None`` means
-    direct. The order is the one of the chain ``steer``: routing.mode full takes everything; in
-    smart a network rule comes first, a direct one before the others, then a network of a list
-    (``listed``: its channel set), then the rule of the name.
+) -> Exit | None:
+    """The exit a device at home without a policy of its own takes to ``address``, the address of a
+    name under the channel set ``rule_set`` (``None``: under no rule); ``None`` means direct. The
+    order is the one of the chain ``steer``: routing.mode full takes everything; in smart a network
+    rule comes first, a direct one before the others, then a network of a list (``listed``: its
+    channel set), then the rule of the name.
 
     Core's own traffic is never steered, so what core sends on behalf of the owner as a device at
-    home would (the Telegram bot) carries the mark of this uplink itself."""
+    home would (the Telegram bot) carries the mark of this exit itself, the sticky one included."""
+    table = uplink_table(config)
     active = active_uplink(config)
     if active is not None:
-        return active
+        return Exit(active, table[active].mark)
     routing = config.routing
     if config.network is None or routing is None or routing.mode is not RoutingMode.SMART:
         return None
-    keys = {channel_set(item): channel_uplink(item) for item in routing.channels()}
+    channels = {channel_set(item): item for item in routing.channels()}
+
+    def through(name: str | None) -> Exit | None:
+        item = channels.get(name) if name is not None else None
+        key = None if item is None else channel_uplink(item)
+        if item is None or key is None:
+            return None
+        return Exit(key, sticky_slot(table[key]).mark if item.sticky else table[key].mark)
+
     for net in smart_networks(config):
         if any(address in IPv4Network(element) for element in net.elements):
-            return keys[net.name.removesuffix(NETWORK_SET_SUFFIX)]
+            return through(net.name.removesuffix(NETWORK_SET_SUFFIX))
     in_list = listed(address)
-    if in_list is not None and in_list in keys:
-        return keys[in_list]
-    return keys.get(rule_set) if rule_set is not None else None
+    if in_list is not None and in_list in channels:
+        return through(in_list)
+    return through(rule_set)
 
 
 def router_ruleset(config: Config) -> str | None:
@@ -905,19 +959,24 @@ def apply_router(config: Config) -> list[str]:
         return []
     table = uplink_table(config)
     used = used_uplinks(config)
+    sticky = sticky_uplinks(config)
     check_ruleset(ruleset)
     for key in used:
         if config.routing is not None and not config.routing.failopen:
             _ip(["route", "replace", *last_resort_route(table[key])])
         else:
             _ip(["route", "del", *last_resort_route(table[key])], missing_ok=True)
+    for slot in sticky.values():
+        # held whatever failopen says: going direct would change the address just as a fallback does
+        _ip(["route", "replace", *last_resort_route(slot)])
+    wanted = [*(table[key] for key in used), *sticky.values()]
     # Never a moment when a mark has no rule: the new rule, then the new marks, and only then the
     # rules of the old marks go. Deleting first would send still-marked traffic to the main table.
-    delete, add = plan_rules(_ip(["-j", "rule", "show"]), [table[key] for key in used])
+    delete, add = plan_rules(_ip(["-j", "rule", "show"]), wanted)
     add_rules(add)
     apply_ruleset(ruleset)
     delete_rules(delete)
-    in_use = {table[key].table for key in used}
+    in_use = {uplink.table for uplink in wanted}
     for uplink in ALL_SLOTS:
         if uplink.table not in in_use:
             _ip(["route", "flush", "table", str(uplink.table)], missing_ok=True)
@@ -975,7 +1034,8 @@ def read_routing(config: Config) -> RoutingFacts:
         rules = subprocess.run(
             [ip, "-j", "rule", "show"], check=True, capture_output=True, text=True
         )
-        delete, add = plan_rules(rules.stdout, [table[key] for key in uplinks])
+        wanted = [*(table[key] for key in uplinks), *sticky_uplinks(config).values()]
+        delete, add = plan_rules(rules.stdout, wanted)
     except (OSError, subprocess.CalledProcessError, RouterError):
         return RoutingFacts(None, {}, {})
     gateways: dict[str, bool | None] = {}

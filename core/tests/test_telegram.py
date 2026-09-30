@@ -14,7 +14,7 @@ import pytest
 
 from vibedpn.config import Config
 from vibedpn.engine import telegram
-from vibedpn.engine.router import exit_for
+from vibedpn.engine.router import Exit, exit_for
 from vibedpn.engine.telegram import (
     Endpoint,
     Lookup,
@@ -39,6 +39,10 @@ API = endpoint("https://api.telegram.org")
 TELEGRAM_ADDRESS = IPv4Address("149.154.167.220")
 
 
+def exit_key(found: Exit | None) -> str | None:
+    return None if found is None else found.key
+
+
 def smart_box(mode: str = "smart", **routing: object) -> Config:
     raw: dict[str, Any] = home_config()
     raw["upstreams"] = {"dpn": {"enabled": True}, "tor": {"enabled": True}}
@@ -52,20 +56,20 @@ def smart_box(mode: str = "smart", **routing: object) -> Config:
 def test_the_exit_follows_the_mode_like_a_device_at_home() -> None:
     rules = {"domains": [{"domain": "telegram.org", "via": "tor"}]}
     full = smart_box("full", **rules)
-    assert exit_for(full, "smart_tor", TELEGRAM_ADDRESS) == "dpn"  # full takes everything
+    assert exit_key(exit_for(full, "smart_tor", TELEGRAM_ADDRESS)) == "dpn"  # full takes everything
     assert exit_for(smart_box("off", **rules), "smart_tor", TELEGRAM_ADDRESS) is None
     assert exit_for(Config.model_validate(vps_config()), None, TELEGRAM_ADDRESS) is None
 
 
 def test_in_smart_a_network_rule_comes_before_the_rule_of_the_name() -> None:
     by_name = smart_box(domains=[{"domain": "telegram.org", "via": "tor"}])
-    assert exit_for(by_name, "smart_tor", TELEGRAM_ADDRESS) == "tor"
+    assert exit_key(exit_for(by_name, "smart_tor", TELEGRAM_ADDRESS)) == "tor"
     assert exit_for(by_name, None, TELEGRAM_ADDRESS) is None  # no rule: direct
     by_network = smart_box(
         domains=[{"domain": "telegram.org", "via": "tor"}],
         networks=[{"network": "149.154.160.0/20", "via": "dpn", "country": "DE"}],
     )
-    assert exit_for(by_network, "smart_tor", TELEGRAM_ADDRESS) == "dpn-de"
+    assert exit_key(exit_for(by_network, "smart_tor", TELEGRAM_ADDRESS)) == "dpn-de"
     kept_direct = smart_box(
         networks=[
             {"network": "149.154.160.0/20", "via": "tor"},

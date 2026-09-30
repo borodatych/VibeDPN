@@ -413,6 +413,9 @@ class DomainChannel(StrictModel):
     via: DomainVia
     country: str | None = None  # via dpn: the exit country; None: any
     uplink: str | None = None  # via wg: the name of the exit in upstreams.wg
+    # Its traffic never moves to routing.fallback: a silent exit holds it (decision 33)
+    # For accounts tied to a country, where a new exit address mid-session costs more than an outage
+    sticky: bool = False
 
     @field_validator("country", mode="before")
     @classmethod
@@ -438,6 +441,10 @@ class DomainChannel(StrictModel):
             raise ValueError(f"{self.subject()}: via wg names its exit in uplink")
         if self.uplink is not None and self.via is not DomainVia.WG:
             raise ValueError(f"{self.subject()}: an uplink is only named for via wg")
+        if self.sticky and self.via is DomainVia.DIRECT:
+            raise ValueError(
+                f"{self.subject()}: direct has no exit to keep; sticky is for an uplink"
+            )
         return self
 
 

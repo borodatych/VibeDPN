@@ -458,6 +458,8 @@ def set_domain_rule(path: Path, rule: DomainRule) -> tuple[Config, bool]:
             entry["country"] = rule.country
         if rule.uplink is not None:
             entry["uplink"] = rule.uplink
+        if rule.sticky:
+            entry["sticky"] = True
         if not rule.learn:
             entry["learn"] = False
         if rule.also:
@@ -514,6 +516,8 @@ def set_network_rule(path: Path, rule: NetworkRule) -> tuple[Config, bool]:
             entry["country"] = rule.country
         if rule.uplink is not None:
             entry["uplink"] = rule.uplink
+        if rule.sticky:
+            entry["sticky"] = True
         for index, item in enumerate(networks):
             if isinstance(item, dict) and str(item.get("network", "")) == str(rule.network):
                 networks[index] = entry
@@ -565,6 +569,8 @@ def set_domain_list(path: Path, item: DomainList) -> tuple[Config, bool]:
             entry["country"] = item.country
         if item.uplink is not None:
             entry["uplink"] = item.uplink
+        if item.sticky:
+            entry["sticky"] = True
         for index, existing in enumerate(lists):
             if isinstance(existing, dict) and str(existing.get("url", "")) == item.url:
                 lists[index] = entry

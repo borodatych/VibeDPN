@@ -77,6 +77,8 @@ network:
 #   also — CDN, закреплённые за сайтом вручную.
 # lists: готовые списки сайтов по URL — у каждого домена списка канал списка (via, country);
 #   ядро скачивает список, хранит копию и обновляет раз в сутки; правило domains сильнее списка.
+# sticky: true у правила, списка или сети — трафик не уходит на запасной выход (fallback): замолчал его
+#   выход — трафик стоит; для аккаунтов, привязанных к стране (Anthropic, банки, оплата).
 # networks: сети адресов (a.b.c.d/nn) для приложений, которые ходят по адресу, а не по имени —
 #   Telegram; канал тот же (via, country, uplink), сеть direct сильнее сети через выход.
 routing:
@@ -98,6 +100,9 @@ routing:
 {% endif %}
 {% if rule.uplink %}
       uplink: {{ rule.uplink }}
+{% endif %}
+{% if rule.sticky %}
+      sticky: true
 {% endif %}
 {% if not rule.learn %}
       learn: false
@@ -126,6 +131,9 @@ routing:
 {% if item.uplink %}
       uplink: {{ item.uplink }}
 {% endif %}
+{% if item.sticky %}
+      sticky: true
+{% endif %}
 {% endfor %}
 {% else %}
   lists: []
@@ -143,6 +151,9 @@ routing:
 {% endif %}
 {% if item.uplink %}
       uplink: {{ item.uplink }}
+{% endif %}
+{% if item.sticky %}
+      sticky: true
 {% endif %}
 {% endfor %}
 {% else %}

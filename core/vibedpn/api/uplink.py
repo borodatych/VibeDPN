@@ -156,6 +156,8 @@ class UplinkWatchers:
         self._lock = threading.Lock()
         self._alive: dict[str, bool] = {}
         self._exits: dict[str, str | None] = {}
+        # uplink key → whether its sticky table points at its gateway now
+        self._sticky: dict[str, bool] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._resettle: asyncio.Future[None] | None = None
 
@@ -175,6 +177,7 @@ class UplinkWatchers:
             with self._lock:
                 self._alive.clear()
                 self._exits.clear()
+                self._sticky.clear()
 
     def _apply(self, plan: ExitPlan) -> None:
         with self._lock:
@@ -185,6 +188,9 @@ class UplinkWatchers:
             for key in list(self._exits):
                 if key not in plan.routed:
                     self._exits.pop(key)  # the router flushed its table
+            for key in list(self._sticky):
+                if key not in plan.sticky:
+                    self._sticky.pop(key)
         for key in list(self._tasks):
             if plan.uplinks.get(key) != self._tasks[key][0]:
                 self._tasks.pop(key)[1].cancel()
@@ -242,6 +248,19 @@ class UplinkWatchers:
             self._exits[key] = through
             if before != through:
                 self._moved(key, before, through)
+        # A sticky table follows its own gateway only: silent, it holds its traffic
+        for key, slot in plan.sticky.items():
+            if key not in self._alive:
+                continue
+            alive = self._alive[key]
+            if key != refresh and self._sticky.get(key) == alive:
+                continue
+            try:
+                self._route(slot, plan.uplinks[key] if alive else None)
+            except RouterError as exc:
+                errors.append(str(exc))
+                continue
+            self._sticky[key] = alive
         if errors:
             raise RouterError("; ".join(errors))
 

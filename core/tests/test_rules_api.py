@@ -36,6 +36,7 @@ def test_a_rule_is_added_replaced_listed_and_removed(tmp_path: Path) -> None:
         "via": "dpn",
         "country": None,
         "uplink": None,
+        "sticky": False,
         "learn": True,
         "also": ["strm.yandex.net"],
     }

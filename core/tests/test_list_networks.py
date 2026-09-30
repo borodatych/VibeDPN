@@ -12,12 +12,16 @@ from vibedpn.engine.resolver import (
     list_network_sets,
     networks_script,
 )
-from vibedpn.engine.router import exit_for, router_ruleset, smart_list_networks
+from vibedpn.engine.router import Exit, exit_for, router_ruleset, smart_list_networks
 
 from .conftest import home_config
 
 LIST = "https://community.antifilter.download/list/community.lst"
 DIRECT_LIST = "https://lists.example/direct.lst"
+
+
+def exit_key(found: Exit | None) -> str | None:
+    return None if found is None else found.key
 
 
 def smart_box(**routing: object) -> Config:
@@ -87,7 +91,7 @@ def test_the_bot_goes_the_way_a_list_network_sends_a_device() -> None:
     def listed(address: IPv4Address) -> str | None:
         return "smart_tor" if address in IPv4Network("198.18.0.0/24") else None
 
-    assert exit_for(config, None, IPv4Address("198.18.0.50"), listed) == "tor"
+    assert exit_key(exit_for(config, None, IPv4Address("198.18.0.50"), listed)) == "tor"
     # the owner's own network rule is matched before the list, as in the chain steer
     assert exit_for(config, None, IPv4Address("198.18.0.5"), listed) is None
     assert exit_for(config, None, IPv4Address("192.0.2.1"), listed) is None

@@ -941,6 +941,7 @@ def _rule_view(rule: DomainRule) -> DomainRuleView:
         via=rule.via.value,
         country=rule.country,
         uplink=rule.uplink,
+        sticky=rule.sticky,
         learn=rule.learn,
         also=list(rule.also),
     )
@@ -1055,6 +1056,7 @@ def _list_view(item: DomainList, lists: ListsStatus | None) -> DomainListView:
         via=item.via.value,
         country=item.country,
         uplink=item.uplink,
+        sticky=item.sticky,
         domains=0 if state is None else state.domains,
         networks=0 if state is None else state.networks,
         fetched_at=None if state is None else state.fetched_at,
@@ -1090,7 +1092,11 @@ def _add_list_routes(
 
 def _network_rule_view(rule: NetworkRule) -> NetworkRuleView:
     return NetworkRuleView(
-        network=str(rule.network), via=rule.via.value, country=rule.country, uplink=rule.uplink
+        network=str(rule.network),
+        via=rule.via.value,
+        country=rule.country,
+        uplink=rule.uplink,
+        sticky=rule.sticky,
     )
 
 

@@ -2099,6 +2099,21 @@ def rule_forget(
     typer.echo(f"{name}: forgotten, goes direct")
 
 
+# One option for the three kinds of channels: sites, lists and networks
+Sticky = Annotated[
+    bool,
+    typer.Option(
+        "--sticky",
+        help="Never through routing.fallback: a silent exit holds this traffic"
+        " (accounts tied to a country).",
+    ),
+]
+
+
+def _sticky_note(sticky: bool) -> str:
+    return ", sticky" if sticky else ""
+
+
 def render_domain_list(item: DomainListView) -> str:
     """One line of `vibedpn lists show`: the channel, the domains and networks in use, their age."""
     country = f" {item.country or item.uplink}" if item.country or item.uplink else ""
@@ -2109,7 +2124,7 @@ def render_domain_list(item: DomainListView) -> str:
         networks = f", {item.networks} networks" if item.networks else ""
         copy = f"{item.domains} domains{networks}, fetched {fetched}"
     error = f" — {item.error}" if item.error else ""
-    return f"{item.url}  {item.via}{country}  ({copy}){error}"
+    return f"{item.url}  {item.via}{country}{_sticky_note(item.sticky)}  ({copy}){error}"
 
 
 @lists_app.command("show")
@@ -2135,14 +2150,18 @@ def lists_add(
     uplink: Annotated[
         str | None, typer.Option("--uplink", help="The exit of via wg: a name of upstreams.wg.")
     ] = None,
+    sticky: Sticky = False,
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
     """Give every domain and network of a list a channel; the same URL again changes the channel."""
     config = _lan_box(box_dir)
-    update = DomainListUpdate(url=url, via=via.value, country=country, uplink=uplink)
+    update = DomainListUpdate(url=url, via=via.value, country=country, uplink=uplink, sticky=sticky)
     item = _core_call(lambda: core_api.set_domain_list(config.api.port, update))
     country_text = f" {item.country or item.uplink}" if item.country or item.uplink else ""
-    typer.echo(f"{item.url}: via {item.via}{country_text}, core fetches it within a minute")
+    typer.echo(
+        f"{item.url}: via {item.via}{country_text}{_sticky_note(item.sticky)},"
+        " core fetches it within a minute"
+    )
 
 
 @lists_app.command("rm")
@@ -2172,7 +2191,7 @@ def net_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
         typer.echo("no network rules (vibedpn net add <a.b.c.d/nn> vps|dpn|tor|direct)")
     for rule in rules:
         extra = f" {rule.country or rule.uplink}" if rule.country or rule.uplink else ""
-        typer.echo(f"{rule.network}  via {rule.via}{extra}")
+        typer.echo(f"{rule.network}  via {rule.via}{extra}{_sticky_note(rule.sticky)}")
 
 
 @net_app.command("add")
@@ -2185,14 +2204,17 @@ def net_add(
     uplink: Annotated[
         str | None, typer.Option("--uplink", help="The exit of via wg: a name of upstreams.wg.")
     ] = None,
+    sticky: Sticky = False,
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
     """Give a network its channel in routing.mode smart; a rule for the same network is replaced."""
     config = _lan_box(box_dir)
-    update = NetworkRuleUpdate(network=network, via=via.value, country=country, uplink=uplink)
+    update = NetworkRuleUpdate(
+        network=network, via=via.value, country=country, uplink=uplink, sticky=sticky
+    )
     rule = _core_call(lambda: core_api.set_network_rule(config.api.port, update))
     extra = f" {rule.country or rule.uplink}" if rule.country or rule.uplink else ""
-    typer.echo(f"{rule.network}: via {rule.via}{extra}, applied")
+    typer.echo(f"{rule.network}: via {rule.via}{extra}{_sticky_note(rule.sticky)}, applied")
 
 
 @net_app.command("rm")
@@ -2215,7 +2237,7 @@ def rule_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
         typer.echo("no domain rules (vibedpn rule add <domain> vps|dpn|tor|direct)")
     for rule in rules:
         country = f" {rule.country}" if rule.country else ""
-        extras = []
+        extras = ["sticky"] if rule.sticky else []
         if not rule.learn:
             extras.append("learn off")
         if rule.also:
@@ -2240,16 +2262,17 @@ def rule_add(
     also: Annotated[
         list[str] | None, typer.Option("--also", help="A CDN pinned to the site; repeatable.")
     ] = None,
+    sticky: Sticky = False,
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
     """Give a site its channel in routing.mode smart; a rule for the same domain is replaced."""
     config = _lan_box(box_dir)
     update = DomainRuleUpdate(
-        via=via.value, country=country, uplink=uplink, learn=learn, also=also or []
+        via=via.value, country=country, uplink=uplink, sticky=sticky, learn=learn, also=also or []
     )
     rule = _core_call(lambda: core_api.set_rule(config.api.port, domain, update))
     country_text = f" {rule.country or rule.uplink}" if rule.country or rule.uplink else ""
-    typer.echo(f"{rule.domain}: via {rule.via}{country_text}, applied")
+    typer.echo(f"{rule.domain}: via {rule.via}{country_text}{_sticky_note(rule.sticky)}, applied")
 
 
 @rule_app.command("rm")

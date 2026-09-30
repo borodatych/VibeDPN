@@ -121,6 +121,7 @@ def test_the_api_lists_puts_and_deletes_a_network_and_applies_it(tmp_path: Path)
         "via": "tor",
         "country": None,
         "uplink": None,
+        "sticky": False,
     }
     assert applied and applied[-1].routing is not None
     assert [str(rule.network) for rule in applied[-1].routing.networks] == ["149.154.160.0/20"]

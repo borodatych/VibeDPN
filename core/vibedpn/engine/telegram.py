@@ -31,7 +31,7 @@ from pydantic import BaseModel, ValidationError, field_validator
 from vibedpn.atomic import write_private
 from vibedpn.config import Config
 from vibedpn.engine.resolver import Resolver, ResolverError, steerable
-from vibedpn.engine.router import exit_for, uplink_table
+from vibedpn.engine.router import exit_for
 
 SECRETS_FILE = "telegram.json"  # under secrets/: the token and the linked chat
 API_URL = "https://api.telegram.org"
@@ -185,8 +185,10 @@ def route_to(config: Config, where: Endpoint, lookup: Lookup) -> Route:
         address, rule = literal, None
     else:
         address, rule = _resolved(where.host, lookup), lookup.rule(where.host)
-    key = exit_for(config, rule, IPv4Address(address), lookup.listed)
-    return Route(address, key, None if key is None else uplink_table(config)[key].mark)
+    found = exit_for(config, rule, IPv4Address(address), lookup.listed)
+    return Route(
+        address, None if found is None else found.key, None if found is None else found.mark
+    )
 
 
 def _literal(host: str) -> str | None:
