@@ -93,7 +93,7 @@
 
 ## linux
 
-- [uplinkFallback.md](linux/uplinkFallback.md) — цепочка запасных выходов: переключается маршрут таблицы, метка остаётся; снятие маршрута по списку `ip -j route`, а не по имени шлюза; маршруты считает одно место под замком; когда рвать соединения AdGuard; ruamel и позиция нового ключа
+- [uplinkFallback.md](linux/uplinkFallback.md) — цепочка запасных выходов: переключается маршрут таблицы, метка остаётся; выход без подмены — своя метка `|0x100` и таблица `+100` с вечным kill-switch; снятие маршрута по списку `ip -j route`, а не по имени шлюза; маршруты считает одно место под замком; когда рвать соединения AdGuard; ruamel и позиция нового ключа
 - [sockDestroy.md](linux/sockDestroy.md) — закрыть чужое TCP-соединение: netlink `sock_diag`, `SOCK_DESTROY` по id с cookie, нужен `CAP_NET_ADMIN` и `CONFIG_INET_DIAG_DESTROY` (Debian — есть, Raspberry Pi — нет, `default n`); проверено на живом ядре
 - [hostapdControl.md](linux/hostapdControl.md) — управляющий сокет hostapd: `ATTACH`, события `AP-STA-*`, перебор станций, общий каталог сокета двух контейнеров и молчание после перезапуска
 - [systemdPathUnit.md](linux/systemdPathUnit.md) — `.path` по изменению файла: `PathChanged=` на закрытие после записи, чего документация не обещает и как это обойдено
