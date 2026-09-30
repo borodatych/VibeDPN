@@ -7,6 +7,8 @@ export type DomainRule = {
   country: string | null
   /** via wg: the name of the exit in upstreams.wg */
   uplink: string | null
+  /** never through routing.fallback: a silent exit holds this traffic (decision 33) */
+  sticky: boolean
   learn: boolean
   also: string[]
 }
@@ -118,8 +120,19 @@ export const cdnCandidates = (entries: JournalEntry[], rules: DomainRule[]): Cdn
 export const withCdn = (rule: DomainRule, name: string): DomainRule =>
   rule.also.includes(bare(name)) ? rule : { ...rule, also: [...rule.also, bare(name)] }
 
-/** A human label of a channel: `smart_vps` → `VPS`, `smart_dpn_de` → `Mysterium DE`. */
-export const channelLabel = (channel: string, t: T): string => {
+// core/vibedpn/engine/resolver.py STICKY_SET_SUFFIX: the set of a channel that keeps its exit
+const STICKY_SUFFIX = '_sticky'
+
+/**
+ * A human label of a channel: `smart_vps` → `VPS`, `smart_dpn_de` → `Mysterium DE`, `smart_tor_sticky` → `Tor, keeps
+ * its exit`.
+ */
+export const channelLabel = (channel: string, t: T): string =>
+  channel.endsWith(STICKY_SUFFIX)
+    ? t('rules.channel.sticky', { channel: plainChannelLabel(channel.slice(0, -STICKY_SUFFIX.length), t) })
+    : plainChannelLabel(channel, t)
+
+const plainChannelLabel = (channel: string, t: T): string => {
   if (channel === DIRECT_CHANNEL) {
     return t('rules.channel.direct')
   }
@@ -142,7 +155,13 @@ export const channelLabel = (channel: string, t: T): string => {
 }
 
 /** One network rule of `GET /networks` (core/vibedpn/api/models.py: NetworkRuleView). */
-export type NetworkRuleView = { network: string; via: RuleVia; country: string | null; uplink: string | null }
+export type NetworkRuleView = {
+  network: string
+  via: RuleVia
+  country: string | null
+  uplink: string | null
+  sticky: boolean
+}
 
 /**
  * The IPv4 networks Telegram publishes for its apps (https://core.telegram.org/resources/cidr.txt, taken 2026-09-17);
@@ -192,6 +211,7 @@ export type DomainListView = {
   via: RuleVia
   country: string | null
   uplink: string | null
+  sticky: boolean
   /** 0 until core has a first copy */
   domains: number
   /** IPv4 networks of the list, its a.b.c.d/nn lines */

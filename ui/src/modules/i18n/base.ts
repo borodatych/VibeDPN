@@ -212,6 +212,8 @@ const table = {
   'rules.column.channel': 'Channel',
   'rules.column.country': 'Country',
   'rules.column.learn': 'Learn CDNs',
+  'rules.column.sticky': 'Keep exit',
+  'rules.stickyOf': 'Keep the exit of {name}: a silent exit holds its traffic, no fallback',
   'rules.column.pinned': 'Pinned CDNs',
   'rules.anyCountry': 'any',
   'rules.exitCountryOf': 'Exit country of {domain}',
@@ -230,6 +232,7 @@ const table = {
   'rules.channel.dpn': 'Mysterium',
   'rules.channel.dpnCountry': 'Mysterium {country}',
   'rules.channel.wg': 'WireGuard {uplink}',
+  'rules.channel.sticky': '{channel}, keeps its exit',
   'rules.channel.direct': 'direct',
   'rules.channel.ruleDirect': 'direct (rule)',
 

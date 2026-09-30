@@ -86,6 +86,8 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
     const next = { ...rule, ...change }
     await setRule.mutateAsync({
       ...next,
+      // direct has no exit to keep: a rule switched to it drops sticky
+      sticky: next.via !== 'direct' && next.sticky,
       country: next.via === 'dpn' ? next.country : null,
       // a rule switched to wg takes the first exit; the owner picks another in the next cell
       uplink: next.via === 'wg' ? (next.uplink ?? exits.at(0) ?? null) : null,
@@ -142,6 +144,14 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
           onCheckedChange={(learn) => void save({ learn })}
         />
       </TableCell>
+      <TableCell>
+        <XSwitch
+          checked={rule.sticky}
+          disabled={busy || rule.via === 'direct'}
+          aria-label={t('rules.stickyOf', { name: rule.domain })}
+          onCheckedChange={(sticky) => void save({ sticky })}
+        />
+      </TableCell>
       <TableCell className="text-xs">
         {rule.also.map((name) => (
           <button
@@ -187,6 +197,7 @@ const AddRule = () => {
       via,
       country: via === 'dpn' && country.trim().length === 2 ? country.trim() : null,
       uplink: via === 'wg' ? uplink || exits[0] || null : null,
+      sticky: false,
       learn: true,
       also: [],
     })
@@ -235,8 +246,13 @@ const AddRule = () => {
 
 const DomainListRow = ({ item }: { item: DomainListView }) => {
   const remove = domainListRemoveMutation.useMutation()
+  const setList = domainListSetMutation.useMutation()
   const t = useT()
   const language = useLanguage()
+  const keep = async (sticky: boolean) => {
+    await setList.mutateAsync({ url: item.url, via: item.via, country: item.country, uplink: item.uplink, sticky })
+    await domainListsQuery.refetchQuery()
+  }
   const drop = async () => {
     await remove.mutateAsync({ url: item.url })
     await domainListsQuery.refetchQuery()
@@ -245,6 +261,14 @@ const DomainListRow = ({ item }: { item: DomainListView }) => {
     <TableRow>
       <TableCell className="font-mono text-xs break-all">{item.url}</TableCell>
       <TableCell className="text-sm">{channelText(item, t)}</TableCell>
+      <TableCell>
+        <XSwitch
+          checked={item.sticky}
+          disabled={setList.isPending || item.via === 'direct'}
+          aria-label={t('rules.stickyOf', { name: item.url })}
+          onCheckedChange={(sticky) => void keep(sticky)}
+        />
+      </TableCell>
       <TableCell className="text-sm">{listCopyText(item, t)}</TableCell>
       <TableCell className="text-xs whitespace-nowrap">
         {item.fetched_at === null ? t('common.none') : unixDate(item.fetched_at, language)}
@@ -261,6 +285,7 @@ const DomainListRow = ({ item }: { item: DomainListView }) => {
         </Button>
         {item.error && <p className="mt-1 text-xs text-warning">{item.error}</p>}
         {remove.isError && <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>}
+        {setList.isError && <p className="mt-1 text-xs text-destructive">{setList.error.message}</p>}
       </TableCell>
     </TableRow>
   )
@@ -281,6 +306,7 @@ const AddDomainList = () => {
       via,
       country: via === 'dpn' && country.trim().length === 2 ? country.trim() : null,
       uplink: via === 'wg' ? uplink || exits[0] || null : null,
+      sticky: false,
     })
     setUrl('')
     setCountry('')
@@ -340,6 +366,7 @@ const DomainLists = () => {
             <TableRow>
               <TableHead>{t('lists.column.url')}</TableHead>
               <TableHead>{t('lists.column.channel')}</TableHead>
+              <TableHead>{t('rules.column.sticky')}</TableHead>
               <TableHead>{t('lists.column.copy')}</TableHead>
               <TableHead>{t('lists.column.fetched')}</TableHead>
               <TableHead />
@@ -360,7 +387,18 @@ const DomainLists = () => {
 
 const NetworkRow = ({ item }: { item: NetworkRuleView }) => {
   const remove = networkRuleRemoveMutation.useMutation()
+  const setNetwork = networkRuleSetMutation.useMutation()
   const t = useT()
+  const keep = async (sticky: boolean) => {
+    await setNetwork.mutateAsync({
+      network: item.network,
+      via: item.via,
+      country: item.country,
+      uplink: item.uplink,
+      sticky,
+    })
+    await networkRulesQuery.refetchQuery()
+  }
   const drop = async () => {
     await remove.mutateAsync({ network: item.network })
     await networkRulesQuery.refetchQuery()
@@ -369,6 +407,15 @@ const NetworkRow = ({ item }: { item: NetworkRuleView }) => {
     <TableRow>
       <TableCell className="font-mono text-xs">{item.network}</TableCell>
       <TableCell className="text-sm">{channelText(item, t)}</TableCell>
+      <TableCell>
+        <XSwitch
+          checked={item.sticky}
+          disabled={setNetwork.isPending || item.via === 'direct'}
+          aria-label={t('rules.stickyOf', { name: item.network })}
+          onCheckedChange={(sticky) => void keep(sticky)}
+        />
+        {setNetwork.isError && <p className="mt-1 text-xs text-destructive">{setNetwork.error.message}</p>}
+      </TableCell>
       <TableCell>
         <Button
           variant="ghost"
@@ -400,6 +447,7 @@ const AddNetwork = ({ existing }: { existing: string[] }) => {
     via,
     country: via === 'dpn' && country.trim().length === 2 ? country.trim() : null,
     uplink: via === 'wg' ? uplink || exits[0] || null : null,
+    sticky: false,
   })
   const add = async () => {
     await setNetwork.mutateAsync({ network: network.trim(), ...channel() })
@@ -482,6 +530,7 @@ const NetworkRules = () => {
             <TableRow>
               <TableHead>{t('networks.column.network')}</TableHead>
               <TableHead>{t('networks.column.channel')}</TableHead>
+              <TableHead>{t('rules.column.sticky')}</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
@@ -632,6 +681,7 @@ export const rulesPage = generalLayout.lets
                       <TableHead>{t('rules.column.channel')}</TableHead>
                       <TableHead>{t('rules.column.country')}</TableHead>
                       <TableHead>{t('rules.column.learn')}</TableHead>
+                      <TableHead>{t('rules.column.sticky')}</TableHead>
                       <TableHead>{t('rules.column.pinned')}</TableHead>
                       <TableHead />
                     </TableRow>

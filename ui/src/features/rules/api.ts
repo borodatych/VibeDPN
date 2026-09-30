@@ -45,6 +45,7 @@ export const ruleSetMutation = root.lets
       via: z.enum(RULE_VIAS),
       country: z.string().length(2).nullable(),
       uplink: z.string().min(1).nullable(),
+      sticky: z.boolean(),
       learn: z.boolean(),
       also: z.array(z.string().min(1)),
     }),
@@ -139,6 +140,7 @@ export const networkRuleSetMutation = root.lets
       via: z.enum(RULE_VIAS),
       country: z.string().length(2).nullable(),
       uplink: z.string().min(1).nullable(),
+      sticky: z.boolean(),
     }),
   )
   .loader(async ({ input }) => {
@@ -183,6 +185,7 @@ export const domainListSetMutation = root.lets
       via: z.enum(RULE_VIAS),
       country: z.string().length(2).nullable(),
       uplink: z.string().min(1).nullable(),
+      sticky: z.boolean(),
     }),
   )
   .loader(async ({ input }) => {

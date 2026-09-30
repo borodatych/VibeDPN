@@ -19,10 +19,19 @@ const kinopoisk: DomainRule = {
   via: 'direct',
   country: null,
   uplink: null,
+  sticky: false,
   learn: true,
   also: ['kp-cdn.net'],
 }
-const zdf: DomainRule = { domain: 'zdf.de', via: 'dpn', country: 'DE', uplink: null, learn: false, also: [] }
+const zdf: DomainRule = {
+  domain: 'zdf.de',
+  via: 'dpn',
+  country: 'DE',
+  uplink: null,
+  sticky: false,
+  learn: false,
+  also: [],
+}
 const rules = [kinopoisk, zdf]
 
 const entry = (time: number, name: string, channel = 'direct'): JournalEntry => ({
@@ -90,6 +99,7 @@ describe('rules', () => {
       via: 'vps' as const,
       country: null,
       uplink: null,
+      sticky: false,
       domains: 0,
       networks: 0,
       fetched_at: null,
@@ -108,6 +118,8 @@ describe('rules', () => {
     ])
     expect(channelText({ via: 'wg', country: null, uplink: 'proton' }, baseT)).toBe('WireGuard proton')
     expect(channelText({ via: 'dpn', country: 'DE', uplink: null }, baseT)).toBe('Mysterium DE')
+    expect(channelLabel('smart_wg_my_box_sticky', baseT)).toBe('WireGuard my-box, keeps its exit')
+    expect(channelLabel('smart_dpn_de_sticky', baseT)).toBe('Mysterium DE, keeps its exit')
     // core spells '-' as '_' in the set name; the label gives the name back as the owner wrote it
     expect(channelLabel('smart_wg_my_vps', baseT)).toBe('WireGuard my-vps')
   })
