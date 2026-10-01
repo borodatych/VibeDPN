@@ -24,6 +24,7 @@ import {
 import { eventListQuery } from '@/features/events/api'
 import { DROPS_WINDOW_HOURS, WIFI_DROPS_WARNING, wifiDrops } from '@/features/events/shared'
 import { UpdateCard } from '@/features/update/card'
+import { DoctorCard } from '@/features/doctor/card'
 import { boxRoleQuery } from '@/features/box/api'
 import { VPS_ROLE } from '@/features/box/shared'
 import { routes } from '@/generated/point0/routes'
@@ -445,6 +446,7 @@ const VpsHome = () => {
           </NavLink>
         </div>
       </Section>
+      <DoctorCard />
       <UpdateCard />
     </Sections>
   )
@@ -478,6 +480,7 @@ const LanHome = () => {
         .map((uplink) => (
           <UplinkCard key={uplink.name} uplink={uplink} failopen={status.failopen} />
         ))}
+      <DoctorCard />
       <UpdateCard />
     </Sections>
   )

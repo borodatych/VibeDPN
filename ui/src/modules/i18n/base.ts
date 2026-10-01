@@ -118,6 +118,24 @@ const table = {
   'lanAccess.openAction': 'Open to the LAN',
   'lanAccess.confirm': 'Let every LAN device reach the node panel and the core API of the VPS?',
 
+  'doctor.title': 'Check of the box',
+  'doctor.description':
+    'What vibedpn doctor sees: modules, ports, services, the router and the exits. The box checks itself every night.',
+  'doctor.none': 'No check yet.',
+  'doctor.summary.local': 'Checked {time}: {ok} ok, {warn} warnings, {fail} failures.',
+  'doctor.summary.network': 'Checked {time}, with the exit addresses: {ok} ok, {warn} warnings, {fail} failures.',
+  'doctor.pending': 'The box is checking itself.',
+  'doctor.failed': 'The check did not run: {message}',
+  'doctor.verdict.ok': 'ok',
+  'doctor.verdict.warn': 'warning',
+  'doctor.verdict.fail': 'failure',
+  'doctor.showOk': 'Show the checks without remarks ({count})',
+  'doctor.hideOk': 'Hide the checks without remarks',
+  'doctor.run': 'Check',
+  'doctor.runNetwork.action': 'Check with the exit addresses',
+  'doctor.runNetwork.confirm':
+    'The box asks api.ipify.org for its address through every exit: the service sees each of them. Check?',
+
   'backup.title': 'Backup of the box',
   'backup.description':
     'One archive of its settings, secrets and data: everything that makes this box itself. The newest {keep} are kept.',
