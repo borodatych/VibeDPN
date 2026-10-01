@@ -1,5 +1,5 @@
 import { routes } from '@/generated/point0/routes'
-import { signInViaUi } from '@/test/lib/e2e'
+import { signedInPage } from '@/test/lib/e2e'
 import { afterAll, beforeAll, describe, setDefaultTimeout, test } from 'bun:test'
 import { chromium, type Browser, type Page } from 'playwright'
 import { expect } from 'playwright/test'
@@ -16,8 +16,7 @@ const sideScroll = async () => await page.evaluate(() => document.documentElemen
 
 beforeAll(async () => {
   browser = await chromium.launch()
-  page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
-  await signInViaUi(page, { password })
+  page = await signedInPage(browser, { width: 1320, height: 900 }, { password })
 })
 
 afterAll(async () => {

@@ -1,5 +1,5 @@
 import { routes } from '@/generated/point0/routes'
-import type { Page } from 'playwright'
+import type { Browser, BrowserContext, Page } from 'playwright'
 import { expect } from 'playwright/test'
 
 /**
@@ -15,4 +15,31 @@ export const signInViaUi = async (page: Page, { password }: { password: string }
   await form.locator('[name="password"]').fill(password)
   await form.locator('button[type="submit"]').click()
   await expect(page.locator(`a[href="${routes.signOut()}"]`)).toBeVisible()
+}
+
+let session: Promise<Awaited<ReturnType<BrowserContext['storageState']>>> | undefined
+
+/**
+ * A page of the panel already signed in, on its own context of the given size
+ *
+ * The box admin signs in once per run and every test file reuses that session: the panel limits sign-ins
+ * (SIGN_IN_MAX_ATTEMPTS a window), and a sign-in per file runs into the limit as the files add up
+ * The sign-in itself is the subject of the smoke test, which still goes through the form
+ *
+ * @tags test, e2e
+ */
+export const signedInPage = async (
+  browser: Browser,
+  viewport: { width: number; height: number },
+  { password }: { password: string },
+): Promise<Page> => {
+  session ??= (async () => {
+    const context = await browser.newContext()
+    await signInViaUi(await context.newPage(), { password })
+    const state = await context.storageState()
+    await context.close()
+    return state
+  })()
+  const context = await browser.newContext({ viewport, storageState: await session })
+  return await context.newPage()
 }

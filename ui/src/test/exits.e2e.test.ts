@@ -1,5 +1,5 @@
 import { routes } from '@/generated/point0/routes'
-import { signInViaUi } from '@/test/lib/e2e'
+import { signedInPage } from '@/test/lib/e2e'
 import { afterAll, beforeAll, describe, setDefaultTimeout, test } from 'bun:test'
 import { chromium, type Browser, type Page } from 'playwright'
 import { expect } from 'playwright/test'
@@ -16,8 +16,7 @@ const sideScroll = async () => await page.evaluate(() => document.documentElemen
 
 beforeAll(async () => {
   browser = await chromium.launch()
-  page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
-  await signInViaUi(page, { password })
+  page = await signedInPage(browser, { width: 1320, height: 900 }, { password })
 })
 
 afterAll(async () => {
@@ -29,13 +28,13 @@ afterAll(async () => {
 describe('exits, notifications and the channels of the rules', () => {
   test('the exit in the URL is the one open, and a removed one falls back to the first that is on', async () => {
     await page.goto(`${routes.uplinks.abs()}?exit=wg-proton`)
-    await expect(page.locator('[data-exit="wg-proton"]')).toHaveAttribute('aria-current', 'true')
+    await expect(page.locator('[data-item="wg-proton"]')).toHaveAttribute('aria-current', 'true')
     await expect(page.getByRole('heading', { name: 'wg-proton' })).toBeVisible()
-    await page.locator('[data-exit="xray"]').click()
+    await page.locator('[data-item="xray"]').click()
     await page.waitForURL('**/uplinks?exit=xray')
     await expect(page.getByText(/exit\.example\.org:443/)).toBeVisible()
     await page.goto(`${routes.uplinks.abs()}?exit=wg-gone`)
-    await expect(page.locator('[data-exit="tor"]')).toHaveAttribute('aria-current', 'true')
+    await expect(page.locator('[data-item="tor"]')).toHaveAttribute('aria-current', 'true')
     expect(await sideScroll()).toBe(0)
   })
 
@@ -72,9 +71,9 @@ describe('exits, notifications and the channels of the rules', () => {
   test('a phone gets the exit under its own line, and no side scroll on either page', async () => {
     await page.setViewportSize({ width: 375, height: 800 })
     await page.goto(`${routes.uplinks.abs()}?exit=tor`)
-    const line = await page.locator('[data-exit="tor"]').boundingBox()
+    const line = await page.locator('[data-item="tor"]').boundingBox()
     const card = await page.getByRole('heading', { name: /^(Бесплатный выход через Tor|Free exit through Tor)$/ }).boundingBox()
-    const next = await page.locator('[data-exit="xray"]').boundingBox()
+    const next = await page.locator('[data-item="xray"]').boundingBox()
     expect(line!.y < card!.y && card!.y < next!.y).toBe(true)
     expect(await sideScroll()).toBe(0)
     await page.goto(routes.notifications.abs())
