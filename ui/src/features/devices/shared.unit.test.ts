@@ -27,14 +27,15 @@ describe('devices', () => {
   })
 
   test('a policy through a disabled uplink cannot be chosen', () => {
-    const options = policyOptions({ vps: true, dpn: false, tor: false }, baseT)
+    const options = policyOptions({ vps: true, dpn: false, tor: false, xray: false }, baseT)
     expect(options.find((option) => option.value === 'dpn')?.disabled).toBe(true)
     expect(options.find((option) => option.value === 'tor')?.disabled).toBe(true)
+    expect(options.find((option) => option.value === 'xray')?.disabled).toBe(true)
     expect(options.find((option) => option.value === 'vps')?.disabled).toBe(false)
-    expect(options.map((option) => option.value)).toEqual(['mode', 'vps', 'dpn', 'tor', 'bypass', 'block'])
-    expect(policyOptions({ vps: false, dpn: false, tor: true }, baseT).find((o) => o.value === 'tor')?.disabled).toBe(
-      false,
-    )
+    expect(options.map((option) => option.value)).toEqual(['mode', 'vps', 'dpn', 'tor', 'xray', 'bypass', 'block'])
+    const on = policyOptions({ vps: false, dpn: false, tor: true, xray: true }, baseT)
+    expect(on.find((o) => o.value === 'tor')?.disabled).toBe(false)
+    expect(on.find((o) => o.value === 'xray')?.disabled).toBe(false)
   })
 
   test('search looks at name, host name, MAC and address', () => {

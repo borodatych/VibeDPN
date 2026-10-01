@@ -1,4 +1,5 @@
 import {
+  ruleVias,
   cdnCandidates,
   channelLabel,
   channelText,
@@ -140,3 +141,12 @@ describe('rules', () => {
     expect(TELEGRAM_NETWORKS.filter((item) => networkProblem(item) !== null)).toEqual([])
   })
 })
+
+describe('channels of a rule', () => {
+  test('Tor, xray and WireGuard are offered only when the box runs them', () => {
+    expect(ruleVias({ wg: [], tor: false, xray: false })).toEqual(['vps', 'dpn', 'direct'])
+    expect(ruleVias({ wg: ['wg-proton'], tor: true, xray: true })).toEqual(['vps', 'dpn', 'wg', 'tor', 'xray', 'direct'])
+    expect(ruleVias({ wg: [], tor: false, xray: true })).toEqual(['vps', 'dpn', 'xray', 'direct'])
+  })
+})
+

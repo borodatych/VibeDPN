@@ -188,7 +188,7 @@ const RoutingControls = ({ status }: { status: BoxStatus }) => {
   const mutation = routingUpdateMutation.useMutation()
   const t = useT()
   const change = async (input: {
-    mode?: 'off' | 'full'
+    mode?: 'off' | 'full' | 'smart'
     default_upstream?: string
     fallback?: string[]
     failopen?: boolean
@@ -200,11 +200,14 @@ const RoutingControls = ({ status }: { status: BoxStatus }) => {
   return (
     <Card compact h2={t('routing.title')} size="sm" contentClassName="divide-y divide-border *:py-4 *:first:pt-0 *:last:pb-0">
       <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="font-accent text-sm text-muted-foreground">{t('routing.mode')}</span>
+      {/* the label above, not beside: three modes fit one row of the card only without it */}
+      <div className="space-y-2">
+        <span className="block font-accent text-sm text-muted-foreground">{t('routing.mode')}</span>
+        <div className="flex flex-wrap items-center gap-2">
         <Button
           variant={status.mode === 'off' ? 'default' : 'outline-secondary'}
           disabled={status.mode === 'off'}
+          size="sm"
           loading={mutation.isPending}
           onClick={() => void change({ mode: 'off' })}
         >
@@ -213,27 +216,42 @@ const RoutingControls = ({ status }: { status: BoxStatus }) => {
         <Button
           variant={status.mode === 'full' ? 'default' : 'outline-secondary'}
           disabled={status.mode === 'full'}
+          size="sm"
           loading={mutation.isPending}
           confirm={t('routing.confirmFull', { uplink: status.default_upstream })}
           onClick={() => void change({ mode: 'full' })}
         >
           {t('routing.modeFull')}
         </Button>
+        <Button
+          variant={status.mode === 'smart' ? 'default' : 'outline-secondary'}
+          disabled={status.mode === 'smart'}
+          size="sm"
+          loading={mutation.isPending}
+          confirm={t('routing.confirmSmart')}
+          onClick={() => void change({ mode: 'smart' })}
+        >
+          {t('routing.modeSmart')}
+        </Button>
+        </div>
       </div>
       {enabled.length > 1 && (
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="font-accent text-sm text-muted-foreground">{t('routing.uplink')}</span>
+        <div className="space-y-2">
+          <span className="block font-accent text-sm text-muted-foreground">{t('routing.uplink')}</span>
+          <div className="flex flex-wrap items-center gap-2">
           {enabled.map((name) => (
             <Button
               key={name}
               variant={status.default_upstream === name ? 'default' : 'outline-secondary'}
               disabled={status.default_upstream === name}
+              size="sm"
               loading={mutation.isPending}
               onClick={() => void change({ default_upstream: name })}
             >
               {name.toUpperCase()}
             </Button>
           ))}
+          </div>
         </div>
       )}
       </div>
@@ -490,8 +508,9 @@ export const homePage = generalLayout.lets
  * the service of the box on the right; one column on a phone, in the same order
  */
 const StatusGrid = ({ main, side }: { main: React.ReactNode; side: React.ReactNode }) => (
-  <div className="grid items-start gap-6 lg:grid-cols-3">
-    <div className="flex min-w-0 flex-col gap-6 lg:col-span-2">{main}</div>
+  // from xl, not lg: at 1024 px the left column is too narrow for the three modes of routing in one row
+  <div className="grid items-start gap-6 xl:grid-cols-3">
+    <div className="flex min-w-0 flex-col gap-6 xl:col-span-2">{main}</div>
     <div className="flex min-w-0 flex-col gap-6">{side}</div>
   </div>
 )

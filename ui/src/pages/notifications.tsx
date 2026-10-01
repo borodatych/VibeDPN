@@ -1,6 +1,8 @@
 import { useHead } from '@unhead/react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Seams } from '@/components/ui/seams'
 import { Input } from '@/components/ui/input'
 import { Section, Sections } from '@/components/ui/section'
 import { XSelect } from '@/components/ui/select'
@@ -147,8 +149,20 @@ const BotCard = ({ bot }: { bot: TelegramBot }) => {
     await settings.mutateAsync({ ...UNCHANGED, enabled })
     await refresh()
   }
+  const [replacing, setReplacing] = useState(false)
   return (
-    <Section h1={t('notifications.title')} description={t('notifications.description')}>
+    <Card
+      compact
+      h2={t('notifications.botCard.title')}
+      size="sm"
+      action={
+        bot.linked && (
+          <Button variant="outline-secondary" size="sm" loading={test.isPending} onClick={() => void test.mutateAsync({})}>
+            {t('notifications.test')}
+          </Button>
+        )
+      }
+    >
       <div className="space-y-4 text-sm">
         <div className="flex flex-wrap items-center gap-3">
           <Badge variant={bot.enabled ? 'success' : 'secondary'}>
@@ -170,12 +184,18 @@ const BotCard = ({ bot }: { bot: TelegramBot }) => {
         <LinkOffer bot={bot} />
         {bot.token_set && (
           <div className="flex flex-wrap gap-2">
-            <Button variant={bot.linked ? 'ghost' : 'default'} loading={link.isPending} onClick={() => void offer()}>
+            <Button
+              variant={bot.linked ? 'outline-secondary' : 'default'}
+              size="sm"
+              loading={link.isPending}
+              onClick={() => void offer()}
+            >
               {bot.linked ? t('notifications.link.other') : t('notifications.link.new')}
             </Button>
-            {bot.linked && (
-              <Button variant="ghost" loading={test.isPending} onClick={() => void test.mutateAsync({})}>
-                {t('notifications.test')}
+            {/* a token already set is needed again only to change the bot: folded until then */}
+            {!replacing && (
+              <Button variant="outline-secondary" size="sm" onClick={() => setReplacing(true)}>
+                {t('notifications.tokenReplaceAction')}
               </Button>
             )}
           </div>
@@ -186,9 +206,9 @@ const BotCard = ({ bot }: { bot: TelegramBot }) => {
           <p className="text-destructive">{(link.error ?? settings.error)?.message}</p>
         )}
         <Delivery bot={bot} />
-        <TokenForm bot={bot} />
+        {(!bot.token_set || replacing) && <TokenForm bot={bot} />}
       </div>
-    </Section>
+    </Card>
   )
 }
 
@@ -214,8 +234,24 @@ const SettingsCard = ({ bot }: { bot: TelegramBot }) => {
     await refresh()
   }
   return (
-    <Section h2={t('notifications.settings.title')} description={t('notifications.settings.description')}>
+    <Card
+      compact
+      h2={t('notifications.settings.title')}
+      size="sm"
+      action={
+        <Button
+          variant="outline-secondary"
+          size="sm"
+          disabled={!alertAfterValid(seconds) || !timezone.trim()}
+          loading={save.isPending}
+          onClick={() => void submit()}
+        >
+          {t('notifications.save')}
+        </Button>
+      }
+    >
       <div className="space-y-3 text-sm">
+        <p className="text-muted-foreground">{t('notifications.settings.description')}</p>
         <label className="block space-y-1">
           <span className="block">{t('notifications.alertAfter')}</span>
           <Input
@@ -261,18 +297,11 @@ const SettingsCard = ({ bot }: { bot: TelegramBot }) => {
             />
           </div>
         )}
-        <Button
-          disabled={!alertAfterValid(seconds) || !timezone.trim()}
-          loading={save.isPending}
-          onClick={() => void submit()}
-        >
-          {t('notifications.save')}
-        </Button>
         {!alertAfterValid(seconds) && <p className="text-destructive">{t('notifications.alertAfterProblem')}</p>}
         {save.isError && <p className="text-destructive">{save.error.message}</p>}
         {save.isSuccess && <p className="text-muted-foreground">{t('notifications.saved')}</p>}
       </div>
-    </Section>
+    </Card>
   )
 }
 
@@ -291,8 +320,16 @@ export const notificationsPage = generalLayout.lets
             <p className="text-sm text-muted-foreground">{data.reason}</p>
           </Section>
         )}
-        {bot && <BotCard bot={bot} />}
-        {bot && <SettingsCard bot={bot} />}
+        {bot && (
+          <>
+            {/* the name of the page in the menu: «in Telegram» is said by the description, and breaks the title on a phone */}
+            <Section h1={t('nav.notifications')} description={<Seams text={t('notifications.description')} />} descriptionClassName="max-w-none text-xl text-pretty max-md:text-lg max-sm:text-base" />
+            <div className="grid items-start gap-6 lg:grid-cols-2">
+              <BotCard bot={bot} />
+              <SettingsCard bot={bot} />
+            </div>
+          </>
+        )}
       </Sections>
     )
   })

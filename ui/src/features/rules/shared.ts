@@ -13,9 +13,26 @@ export type DomainRule = {
   also: string[]
 }
 
-export type RuleVia = 'vps' | 'dpn' | 'wg' | 'tor' | 'direct'
+export const RULE_VIAS = ['vps', 'dpn', 'wg', 'tor', 'xray', 'direct'] as const
 
-export const RULE_VIAS = ['vps', 'dpn', 'wg', 'tor', 'direct'] as const
+export type RuleVia = (typeof RULE_VIAS)[number]
+
+/** The exits that may be off on a box, and so are offered as a channel only when on */
+export type OptionalExits = { wg: string[]; tor: boolean; xray: boolean }
+
+/**
+ * The channels a site, a list or a network can be sent through: a WireGuard exit only when the box has one, Tor and
+ * xray only when they are on — core refuses a channel through an uplink it does not run
+ *
+ * @tags rules
+ */
+export const ruleVias = (exits: OptionalExits): RuleVia[] =>
+  RULE_VIAS.filter((via) => {
+    if (via === 'wg') {
+      return exits.wg.length > 0
+    }
+    return via === 'tor' || via === 'xray' ? exits[via] : true
+  })
 
 const WG_KEY_PREFIX = 'wg-'
 

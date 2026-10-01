@@ -81,3 +81,39 @@ export const suggestExitName = (fileName: string): string => {
  * @tags uplinks
  */
 export const missingWgParts = (text: string): string[] => WG_FILE_MARKERS.filter((marker) => !text.includes(marker))
+
+/** An entry of the list of exits on «Exits»: the kind of exit, its key (the URL and the service) and whether it is on */
+export type ExitEntry = { key: string; kind: 'tor' | 'xray' | 'wg'; on: boolean }
+
+/** The pseudo-entry of the list that opens the form adding a WireGuard exit */
+export const ADD_EXIT = 'add'
+
+/**
+ * The exits of the list in a fixed order: Tor, the masking exit, then the WireGuard exits of the box
+ *
+ * @tags uplinks
+ */
+export const exitEntries = (
+  tor: { enabled: boolean } | undefined,
+  xray: { enabled: boolean } | undefined,
+  wg: WgExit[],
+): ExitEntry[] => [
+  ...(tor ? [{ key: TOR_KEY, kind: 'tor' as const, on: tor.enabled }] : []),
+  ...(xray ? [{ key: XRAY_KEY, kind: 'xray' as const, on: xray.enabled }] : []),
+  ...wg.map((exit) => ({ key: exitKey(exit.name), kind: 'wg' as const, on: exit.enabled && exit.has_file })),
+]
+
+/**
+ * The entry the page shows: the one in the URL when the box has it, else the first exit that is on, else the first
+ * A WireGuard exit removed while it was open falls back the same way, never to an empty page
+ *
+ * @tags uplinks
+ */
+export const pickExit = (entries: ExitEntry[], wanted: string | undefined): string => {
+  if (wanted !== undefined && (wanted === ADD_EXIT || entries.some((entry) => entry.key === wanted))) {
+    return wanted
+  }
+  const chosen = entries.find((entry) => entry.on) ?? entries.at(0)
+  return chosen ? chosen.key : ADD_EXIT
+}
+

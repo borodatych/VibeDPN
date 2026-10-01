@@ -34,6 +34,8 @@ import {
   type DomainRule,
   type JournalEntry,
   type NetworkRuleView,
+  ruleVias,
+  type OptionalExits,
   type RuleVia,
 } from '@/features/rules/shared'
 import { boxStatusQuery } from '@/features/status/api'
@@ -44,23 +46,17 @@ import { useLanguage, useT } from '@/modules/i18n/use-t'
 import { formatDate } from '@/utils/date'
 import { useState } from 'react'
 
-const viaOptions = (t: T, exits: string[], tor: boolean) => [
-  { value: 'vps', label: t('rules.via.vps') },
-  { value: 'dpn', label: t('rules.via.dpn') },
-  // a WireGuard exit is offered only when the box has one, Tor only when it is on
-  ...(exits.length > 0 ? [{ value: 'wg', label: t('rules.via.wg') }] : []),
-  ...(tor ? [{ value: 'tor', label: t('rules.via.tor') }] : []),
-  { value: 'direct', label: t('rules.via.direct') },
-]
+const viaOptions = (t: T, exits: OptionalExits) =>
+  ruleVias(exits).map((via) => ({ value: via, label: t(`rules.via.${via}`) }))
 
 const exitOptions = (exits: string[]) => exits.map((name) => ({ value: name, label: name }))
 
-/** The named WireGuard exits of the box, for the channel choice of rules and lists. */
-const useWgExits = () => wgExitNames(boxStatusQuery.useQuery().data?.status.uplinks ?? [])
-
-/** Whether uplink tor is on, for the channel choice of rules and lists. */
-const useTorEnabled = () =>
-  (boxStatusQuery.useQuery().data?.status.uplinks ?? []).some((uplink) => uplink.name === 'tor' && uplink.enabled)
+/** The exits of the box that may be off, for the channel choice of rules, lists and networks */
+const useOptionalExits = (): OptionalExits => {
+  const uplinks = boxStatusQuery.useQuery().data?.status.uplinks ?? []
+  const on = (name: string) => uplinks.some((uplink) => uplink.name === name && uplink.enabled)
+  return { wg: wgExitNames(uplinks), tor: on('tor'), xray: on('xray') }
+}
 
 const SHOWN_QUERIES = 100
 
@@ -77,8 +73,8 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
   const removeRule = ruleRemoveMutation.useMutation()
   const [country, setCountry] = useState(rule.country ?? '')
   const t = useT()
-  const exits = useWgExits()
-  const torEnabled = useTorEnabled()
+  const optional = useOptionalExits()
+  const exits = optional.wg
   const busy = setRule.isPending || removeRule.isPending
   const error = setRule.error ?? removeRule.error
 
@@ -104,7 +100,7 @@ const RuleRow = ({ rule }: { rule: DomainRule }) => {
       <TableCell className="font-mono text-sm">{rule.domain}</TableCell>
       <TableCell>
         <XSelect
-          options={viaOptions(t, exits, torEnabled)}
+          options={viaOptions(t, optional)}
           value={rule.via}
           disabled={busy}
           onValueChange={(value) => void save({ via: String(value) as RuleVia })}
@@ -188,8 +184,8 @@ const AddRule = () => {
   const t = useT()
   const [via, setVia] = useState<RuleVia>('vps')
   const [country, setCountry] = useState('')
-  const exits = useWgExits()
-  const torEnabled = useTorEnabled()
+  const optional = useOptionalExits()
+  const exits = optional.wg
   const [uplink, setUplink] = useState('')
   const add = async () => {
     await setRule.mutateAsync({
@@ -215,7 +211,7 @@ const AddRule = () => {
         onChange={(event) => setDomain(event.target.value)}
       />
       <XSelect
-        options={viaOptions(t, exits, torEnabled)}
+        options={viaOptions(t, optional)}
         value={via}
         onValueChange={(value) => setVia(String(value) as RuleVia)}
       />
@@ -297,8 +293,8 @@ const AddDomainList = () => {
   const t = useT()
   const [via, setVia] = useState<RuleVia>('vps')
   const [country, setCountry] = useState('')
-  const exits = useWgExits()
-  const torEnabled = useTorEnabled()
+  const optional = useOptionalExits()
+  const exits = optional.wg
   const [uplink, setUplink] = useState('')
   const add = async () => {
     await setList.mutateAsync({
@@ -322,7 +318,7 @@ const AddDomainList = () => {
         onChange={(event) => setUrl(event.target.value)}
       />
       <XSelect
-        options={viaOptions(t, exits, torEnabled)}
+        options={viaOptions(t, optional)}
         value={via}
         onValueChange={(value) => setVia(String(value) as RuleVia)}
       />
@@ -435,10 +431,10 @@ const NetworkRow = ({ item }: { item: NetworkRuleView }) => {
 const AddNetwork = ({ existing }: { existing: string[] }) => {
   const setNetwork = networkRuleSetMutation.useMutation()
   const t = useT()
-  const exits = useWgExits()
-  const torEnabled = useTorEnabled()
+  const optional = useOptionalExits()
+  const exits = optional.wg
   const [network, setNetworkText] = useState('')
-  const [via, setVia] = useState<RuleVia>(torEnabled ? 'tor' : 'vps')
+  const [via, setVia] = useState<RuleVia>(optional.tor ? 'tor' : 'vps')
   const [country, setCountry] = useState('')
   const [uplink, setUplink] = useState('')
   const [added, setAdded] = useState<number | null>(null)
@@ -474,7 +470,7 @@ const AddNetwork = ({ existing }: { existing: string[] }) => {
           onChange={(event) => setNetworkText(event.target.value)}
         />
         <XSelect
-          options={viaOptions(t, exits, torEnabled)}
+          options={viaOptions(t, optional)}
           value={via}
           onValueChange={(value) => setVia(String(value) as RuleVia)}
         />

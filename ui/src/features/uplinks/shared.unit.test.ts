@@ -1,4 +1,7 @@
 import {
+  ADD_EXIT,
+  exitEntries,
+  pickExit,
   missingWgParts,
   suggestExitName,
   WG_EXIT_NAME,
@@ -39,3 +42,20 @@ describe('xrayLinkProblem', () => {
     expect(xrayLinkProblem('  vless://user@host.example:443  ')).toBeNull()
   })
 })
+
+describe('the exit shown on «Exits»', () => {
+  const entries = exitEntries({ enabled: false }, { enabled: true }, [{ name: 'proton', enabled: true, has_file: true }])
+
+  test('the list goes Tor, the masking exit, then the WireGuard exits', () => {
+    expect(entries.map((entry) => entry.key)).toEqual(['tor', 'xray', 'wg-proton'])
+  })
+
+  test('the one in the URL when the box has it, else the first one on', () => {
+    expect(pickExit(entries, 'wg-proton')).toBe('wg-proton')
+    expect(pickExit(entries, ADD_EXIT)).toBe(ADD_EXIT)
+    expect(pickExit(entries, 'wg-removed')).toBe('xray') // removed while open: not an empty page
+    expect(pickExit(entries, undefined)).toBe('xray')
+    expect(pickExit([], undefined)).toBe(ADD_EXIT)
+  })
+})
+

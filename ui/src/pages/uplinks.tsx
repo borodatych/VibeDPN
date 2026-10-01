@@ -1,9 +1,10 @@
 import { useHead } from '@unhead/react'
+import { useBreakpoint } from '@/components/hooks/use-breakpoint'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Section, Sections } from '@/components/ui/section'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import {
   torExitMutation,
@@ -15,7 +16,11 @@ import {
   wgExitsQuery,
 } from '@/features/uplinks/api'
 import {
+  ADD_EXIT,
+  exitEntries,
   exitKey,
+  pickExit,
+  type ExitEntry,
   MAX_WG_FILE_BYTES,
   missingWgParts,
   PROTON_ACCOUNT_URL,
@@ -35,9 +40,13 @@ import { LogsCard } from '@/features/logs/card'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import { useT } from '@/modules/i18n/use-t'
+import { cn } from '@/utils'
+import { PlusIcon } from 'lucide-react'
 import { useState, type ChangeEvent } from 'react'
+import { z } from 'zod'
 
-const ExitRow = ({ exit }: { exit: WgExit }) => {
+/** The removal of a WireGuard exit and what is known of it: its key and whether its file is on the box */
+const WgDetail = ({ exit }: { exit: WgExit }) => {
   const remove = wgExitRemoveMutation.useMutation()
   const t = useT()
   const drop = async () => {
@@ -45,19 +54,13 @@ const ExitRow = ({ exit }: { exit: WgExit }) => {
     await wgExitsQuery.refetchQuery()
   }
   return (
-    <TableRow>
-      <TableCell>
-        <div>{exit.name}</div>
-        <div className="font-mono text-xs text-muted-foreground">{exitKey(exit.name)}</div>
-      </TableCell>
-      <TableCell>
-        <Badge variant={exit.has_file ? 'success' : 'destructive'}>
-          {exit.has_file ? t('uplinks.file.present') : t('uplinks.file.missing')}
-        </Badge>
-      </TableCell>
-      <TableCell>
+    <Card
+      compact
+      h2={exitKey(exit.name)}
+      size="sm"
+      action={
         <Button
-          variant="ghost"
+          variant="outline-secondary"
           size="sm"
           loading={remove.isPending}
           confirm={t('uplinks.confirmRemove', { name: exit.name })}
@@ -65,13 +68,21 @@ const ExitRow = ({ exit }: { exit: WgExit }) => {
         >
           {t('common.remove')}
         </Button>
-        {remove.isError && <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>}
-      </TableCell>
-    </TableRow>
+      }
+    >
+      <div className="space-y-3 text-sm">
+        <p className="text-muted-foreground">{t('uplinks.description')}</p>
+        <Badge variant={exit.has_file ? 'success' : 'destructive'}>
+          {exit.has_file ? t('uplinks.file.present') : t('uplinks.file.missing')}
+        </Badge>
+        <p className="text-muted-foreground">{t('uplinks.use')}</p>
+        {remove.isError && <p className="text-destructive">{remove.error.message}</p>}
+      </div>
+    </Card>
   )
 }
 
-const TorCard = ({ tor }: { tor: TorExit }) => {
+const TorDetail = ({ tor }: { tor: TorExit }) => {
   const toggle = torExitMutation.useMutation()
   const t = useT()
   const flip = async () => {
@@ -79,23 +90,24 @@ const TorCard = ({ tor }: { tor: TorExit }) => {
     await torExitQuery.refetchQuery()
   }
   return (
-    <Section h2={t('uplinks.tor.title')} description={t('uplinks.tor.description')}>
+    <Card
+      compact
+      h2={t('uplinks.tor.title')}
+      size="sm"
+      action={
+        <Button
+          variant={tor.enabled ? 'outline-secondary' : 'default'}
+          size="sm"
+          loading={toggle.isPending}
+          confirm={tor.enabled ? t('uplinks.tor.confirmOff') : undefined}
+          onClick={() => void flip()}
+        >
+          {tor.enabled ? t('uplinks.tor.disable') : t('uplinks.tor.enable')}
+        </Button>
+      }
+    >
       <div className="space-y-3 text-sm">
-        <div className="flex flex-wrap items-center gap-3">
-          <Badge variant={tor.enabled ? 'success' : 'secondary'}>
-            {tor.enabled ? t('uplinks.tor.on') : t('uplinks.tor.off')}
-          </Badge>
-          <span className="font-mono text-xs text-muted-foreground">{TOR_KEY}</span>
-          <Button
-            variant={tor.enabled ? 'ghost' : 'default'}
-            size="sm"
-            loading={toggle.isPending}
-            confirm={tor.enabled ? t('uplinks.tor.confirmOff') : undefined}
-            onClick={() => void flip()}
-          >
-            {tor.enabled ? t('uplinks.tor.disable') : t('uplinks.tor.enable')}
-          </Button>
-        </div>
+        <p className="text-muted-foreground">{t('uplinks.tor.description')}</p>
         {toggle.isError && <p className="text-destructive">{toggle.error.message}</p>}
         <ApplyLine apply={tor.apply} />
         <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
@@ -108,11 +120,11 @@ const TorCard = ({ tor }: { tor: TorExit }) => {
           {t('uplinks.tor.bridges', { bridges: tor.bridges.join(', ') })}
         </p>
       </div>
-    </Section>
+    </Card>
   )
 }
 
-const XrayCard = ({ xray }: { xray: XrayExit }) => {
+const XrayDetail = ({ xray }: { xray: XrayExit }) => {
   const save = xrayExitMutation.useMutation()
   const [link, setLink] = useState('')
   const t = useT()
@@ -125,26 +137,27 @@ const XrayCard = ({ xray }: { xray: XrayExit }) => {
     }
   }
   return (
-    <Section h2={t('uplinks.xray.title')} description={t('uplinks.xray.description')}>
+    <Card
+      compact
+      h2={t('uplinks.xray.title')}
+      size="sm"
+      action={
+        <Button
+          variant={xray.enabled ? 'outline-secondary' : 'default'}
+          size="sm"
+          disabled={!xray.linked && !xray.enabled}
+          loading={save.isPending}
+          confirm={xray.enabled ? t('uplinks.xray.confirmOff') : undefined}
+          onClick={() => void apply(!xray.enabled, false)}
+        >
+          {xray.enabled ? t('uplinks.xray.disable') : t('uplinks.xray.enable')}
+        </Button>
+      }
+    >
       <div className="space-y-3 text-sm">
-        <div className="flex flex-wrap items-center gap-3">
-          <Badge variant={xray.enabled ? 'success' : 'secondary'}>
-            {xray.enabled ? t('uplinks.xray.on') : t('uplinks.xray.off')}
-          </Badge>
-          <span className="font-mono text-xs text-muted-foreground">{XRAY_KEY}</span>
-          <Button
-            variant={xray.enabled ? 'ghost' : 'default'}
-            size="sm"
-            disabled={!xray.linked && !xray.enabled}
-            loading={save.isPending}
-            confirm={xray.enabled ? t('uplinks.xray.confirmOff') : undefined}
-            onClick={() => void apply(!xray.enabled, false)}
-          >
-            {xray.enabled ? t('uplinks.xray.disable') : t('uplinks.xray.enable')}
-          </Button>
-        </div>
+        <p className="text-muted-foreground">{t('uplinks.xray.description')}</p>
         {xray.linked && !xray.problem && (
-          <p className="text-muted-foreground">
+          <p>
             {t('uplinks.xray.server', { endpoint: xray.endpoint, transport: xray.transport })}
             {xray.remark && ` — ${xray.remark}`}
           </p>
@@ -152,25 +165,28 @@ const XrayCard = ({ xray }: { xray: XrayExit }) => {
         {xray.problem && <p className="text-destructive">{xray.problem}</p>}
         {!xray.linked && <p className="text-muted-foreground">{t('uplinks.xray.noLink')}</p>}
         <label className="block space-y-1">
-          <span>{t('uplinks.xray.link')}</span>
-          <Input
-            value={link}
-            maxLength={MAX_XRAY_LINK_BYTES}
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => setLink(event.target.value)}
-          />
+          <span className="block">{t('uplinks.xray.link')}</span>
+          <div className="flex flex-wrap gap-2">
+            <Input
+              value={link}
+              maxLength={MAX_XRAY_LINK_BYTES}
+              autoComplete="off"
+              spellCheck={false}
+              className="min-w-0 flex-1"
+              onChange={(event) => setLink(event.target.value)}
+            />
+            <Button
+              size="sm"
+              disabled={problem !== null || !link}
+              loading={save.isPending}
+              onClick={() => void apply(xray.enabled, true)}
+            >
+              {t('uplinks.xray.save')}
+            </Button>
+          </div>
           <span className="block text-xs text-muted-foreground">{t('uplinks.xray.linkHint')}</span>
         </label>
-        <Button
-          size="sm"
-          disabled={problem !== null || !link}
-          loading={save.isPending}
-          onClick={() => void apply(xray.enabled, true)}
-        >
-          {t('uplinks.xray.save')}
-        </Button>
-        {problem && <p className="text-sm text-destructive">{t(`uplinks.xray.problem.${problem}`)}</p>}
+        {problem && <p className="text-destructive">{t(`uplinks.xray.problem.${problem}`)}</p>}
         {save.isSuccess && save.variables.link !== null && (
           <p className="text-muted-foreground">{t('uplinks.xray.saved')}</p>
         )}
@@ -183,7 +199,7 @@ const XrayCard = ({ xray }: { xray: XrayExit }) => {
         </ul>
         <p className="text-muted-foreground">{t('uplinks.xray.use')}</p>
       </div>
-    </Section>
+    </Card>
   )
 }
 
@@ -211,7 +227,7 @@ const ProtonGuide = () => {
   )
 }
 
-const AddExit = () => {
+const AddExit = ({ onAdded }: { onAdded: (key: string) => void }) => {
   const add = wgExitAddMutation.useMutation()
   const t = useT()
   const [name, setName] = useState('')
@@ -237,19 +253,20 @@ const AddExit = () => {
     setText('')
     setName('')
     await wgExitsQuery.refetchQuery()
+    onAdded(exitKey(name))
   }
 
   return (
-    <Section h2={t('uplinks.add.title')}>
+    <Card compact h2={t('uplinks.add.title')} size="sm">
       <ProtonGuide />
       <div className="mt-4 space-y-3">
         <label className="block space-y-1 text-sm">
-          <span>{t('uplinks.add.file')}</span>
+          <span className="block">{t('uplinks.add.file')}</span>
           <Input type="file" accept=".conf,text/plain" onChange={(event) => void chooseFile(event)} />
         </label>
         {tooLarge && <p className="text-sm text-destructive">{t('uplinks.add.tooLarge')}</p>}
         <label className="block space-y-1 text-sm">
-          <span>{t('uplinks.add.paste')}</span>
+          <span className="block">{t('uplinks.add.paste')}</span>
           <Textarea
             value={text}
             rows={6}
@@ -262,7 +279,7 @@ const AddExit = () => {
           <p className="text-sm text-warning">{t('uplinks.add.missing', { parts: missing.join(', ') })}</p>
         )}
         <label className="block space-y-1 text-sm">
-          <span>{t('uplinks.add.name')}</span>
+          <span className="block">{t('uplinks.add.name')}</span>
           <Input
             value={name}
             maxLength={24}
@@ -281,54 +298,111 @@ const AddExit = () => {
         </Button>
         {add.isError && <p className="text-sm text-destructive">{add.error.message}</p>}
       </div>
-    </Section>
+    </Card>
+  )
+}
+
+const ExitListItem = ({
+  entry,
+  current,
+  onPick,
+}: {
+  entry: ExitEntry
+  current: boolean
+  onPick: (key: string) => void
+}) => {
+  const t = useT()
+  const title = entry.kind === 'wg' ? entry.key : t(`uplinks.${entry.kind}.title`)
+  return (
+    <button
+      type="button"
+      data-exit={entry.key}
+      aria-current={current || undefined}
+      className={cn(
+        'flex w-full items-center justify-between gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-muted',
+        current && 'border-primary bg-muted',
+      )}
+      onClick={() => onPick(entry.key)}
+    >
+      <span className="min-w-0 font-accent text-sm font-semibold">{title}</span>
+      <Badge variant={entry.on ? 'success' : 'secondary'}>{entry.on ? t('uplinks.list.on') : t('uplinks.list.off')}</Badge>
+    </button>
+  )
+}
+
+/** The chosen exit: its card, and the log of its service */
+const ExitDetail = ({
+  picked,
+  tor,
+  xray,
+  wg,
+  onAdded,
+}: {
+  picked: string
+  tor: TorExit | undefined
+  xray: XrayExit | undefined
+  wg: WgExit[]
+  onAdded: (key: string) => void
+}) => {
+  const exit = wg.find((item) => exitKey(item.name) === picked)
+  return (
+    <div className="flex min-w-0 flex-col gap-6">
+      {picked === ADD_EXIT && <AddExit onAdded={onAdded} />}
+      {picked === TOR_KEY && tor && <TorDetail tor={tor} />}
+      {picked === XRAY_KEY && xray && <XrayDetail xray={xray} />}
+      {exit && <WgDetail exit={exit} />}
+      {picked !== ADD_EXIT && <LogsCard scope="uplinks" service={picked} />}
+    </div>
   )
 }
 
 export const uplinksPage = generalLayout.lets
   .page('/uplinks')
   .use(redirectUnauthorizedPlugin)
-  .page(() => {
+  .search(z.object({ exit: z.string().optional() }))
+  .page(({ search, setSearch }) => {
     const t = useT()
     useHead({ title: t('nav.uplinks') })
     const data = wgExitsQuery.useQuery().data
     const exits = data?.exits
-    const tor = torExitQuery.useQuery().data?.tor
-    const xray = xrayExitQuery.useQuery().data?.xray
+    const tor = torExitQuery.useQuery().data?.tor ?? undefined
+    const xray = xrayExitQuery.useQuery().data?.xray ?? undefined
+    const phone = useBreakpoint('max-lg')
+    const wg = exits?.uplinks ?? []
+    const entries = exitEntries(tor, xray, wg)
+    const picked = pickExit(entries, search.exit)
+    const pick = (key: string) => setSearch({ exit: key })
+    const detail = <ExitDetail picked={picked} tor={tor} xray={xray} wg={wg} onAdded={pick} />
 
     return (
       <Sections gap="lg">
-        {tor && <TorCard tor={tor} />}
-        {xray && <XrayCard xray={xray} />}
-        <Section h1={t('uplinks.title')} description={t('uplinks.description')}>
-          {data && !exits && <p className="text-sm text-muted-foreground">{data.reason}</p>}
-          {exits && (
-            <div className="space-y-3">
-              <ApplyLine apply={exits.apply} />
-              {exits.uplinks.length === 0 ? (
-                <p className="text-sm text-muted-foreground">{t('uplinks.empty')}</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('uplinks.column.name')}</TableHead>
-                      <TableHead>{t('uplinks.column.file')}</TableHead>
-                      <TableHead />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {exits.uplinks.map((exit) => (
-                      <ExitRow key={exit.name} exit={exit} />
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-              <p className="text-sm text-muted-foreground">{t('uplinks.use')}</p>
-            </div>
-          )}
-        </Section>
-        {exits && <AddExit />}
-        <LogsCard scope="uplinks" />
+        <Section h1={t('uplinks.page.title')} description={t('uplinks.page.description')} descriptionClassName="max-w-none text-xl text-pretty max-md:text-lg max-sm:text-base" />
+        {data && !exits && <p className="text-sm text-muted-foreground">{data.reason}</p>}
+        {exits && <ApplyLine apply={exits.apply} />}
+        <div className="grid items-start gap-6 lg:grid-cols-3">
+          {/* on a phone the chosen exit opens under its own line, not in a second column */}
+          <nav aria-label={t('uplinks.page.title')} className="flex min-w-0 flex-col gap-2">
+            {entries.map((entry) => (
+              <div key={entry.key} className="flex flex-col gap-4">
+                <ExitListItem entry={entry} current={entry.key === picked} onPick={pick} />
+                {phone && entry.key === picked && detail}
+              </div>
+            ))}
+            {exits && (
+              <div className="flex flex-col gap-4">
+                <Button
+                  variant={picked === ADD_EXIT ? 'default' : 'outline-secondary'}
+                  icon={PlusIcon}
+                  onClick={() => pick(ADD_EXIT)}
+                >
+                  {t('uplinks.list.add')}
+                </Button>
+                {phone && picked === ADD_EXIT && detail}
+              </div>
+            )}
+          </nav>
+          {!phone && <div className="min-w-0 lg:col-span-2">{detail}</div>}
+        </div>
       </Sections>
     )
   })

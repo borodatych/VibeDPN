@@ -15,12 +15,14 @@ import { useState } from 'react'
  *
  * @tags logs
  */
-export const LogsCard = ({ scope }: { scope: LogsScope }) => {
+export const LogsCard = ({ scope, service: only }: { scope: LogsScope; service?: string }) => {
   const t = useT()
   const language = useLanguage()
   const view = logsQuery.useQuery().data?.logs ?? null
   const ask = logsMutation.useMutation()
-  const services = offeredServices(view?.services ?? [], scope)
+  // one service of the page's subject (the exit chosen on «Exits»), when the box runs it
+  const offered = offeredServices(view?.services ?? [], scope)
+  const services = only === undefined ? offered : offered.filter((name) => name === only)
   const [chosen, setChosen] = useState<string | null>(null)
   const [tail, setTail] = useState<number>(DEFAULT_TAIL)
   if (services.length === 0) {
