@@ -439,6 +439,44 @@ def set_panel_password(box_dir: Path, config: Config, password: str) -> list[Pat
     return written
 
 
+def panel_password_matches(secrets_dir: Path, password: str) -> bool:
+    """Whether ``password`` is the one of the ``admin`` line of secrets/htpasswd, as the panel
+    checks it at sign-in"""
+    path = secrets_dir / HTPASSWD_FILE
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise BootstrapError(f"cannot read {path}: {exc.strerror}") from exc
+    for line in text.splitlines():
+        user, separator, hashed = line.partition(":")
+        if separator and user == UI_USER:
+            try:
+                return bcrypt.checkpw(password.encode("utf-8"), hashed.strip().encode("ascii"))
+            except ValueError:  # longer than bcrypt takes, or not a bcrypt hash at all
+                return False
+    return False
+
+
+def change_panel_password(
+    secrets_dir: Path, staged_dir: Path, config: Config, password: str
+) -> bool:
+    """The panel password from core: the ``admin`` line of secrets/htpasswd at once and, on a box
+    with the provider node, its NodeUI hash left in ``staged_dir`` for the host, which moves it to
+    the node (``adopt_node_password``) — core neither reaches the data of the node nor restarts
+    it. Both are hashed before either file is touched; whether a NodeUI hash waits for the host."""
+    line = htpasswd_line(UI_USER, password)
+    node_pass = bcrypt_hash(password) + "\n" if config.provider.enabled else None
+    try:
+        # In place, not renamed over: the panel mounts this one file, and a file renamed over a
+        # single-file mount never reaches the container (knowledge docker/bindMountRename.md)
+        write_file(secrets_dir / HTPASSWD_FILE, line, SECRET_FILE_MODE)
+        if node_pass is not None:
+            write_file(staged_dir / NODEUI_PASS_FILE, node_pass, SECRET_FILE_MODE)
+    except OSError as exc:
+        raise BootstrapError(f"cannot write {exc.filename}: {exc.strerror}") from exc
+    return node_pass is not None
+
+
 def read_peer_config(path: Path) -> str:
     """The WireGuard peer file as text, or a ``BootstrapError`` saying what is wrong with it."""
     try:

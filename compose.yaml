@@ -16,6 +16,8 @@ services:
       # The config.yaml sections this service's start-time files come from
       # (Config.config_digests): a change recreates it at `vibedpn up`, and nothing else.
       VIBEDPN_CONFIG_DIGEST: ${VIBEDPN_DIGEST_CORE:-}
+      # The panel password: core writes its hash into AdGuardHome.yaml at start (compose.file_digests).
+      VIBEDPN_PANEL_DIGEST: ${VIBEDPN_DIGEST_PANEL:-}
     build:
       context: ./core
     network_mode: host
@@ -191,6 +193,9 @@ services:
       - "hermes3.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
       - "polygon1.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
       - "ethereum1.mysterium.network:${VIBEDPN_MYST_RELAY:-10.77.0.30}"
+    environment:
+      # The NodeUI hash, read at start (compose.file_digests): a new panel password recreates it.
+      VIBEDPN_CONFIG_DIGEST: ${VIBEDPN_DIGEST_NODEUI:-}
     ports:
       - 127.0.0.1:4449:4449  # NodeUI; keep equal to NODEUI_PORT in core/vibedpn/engine/myst.py
       - 127.0.0.1:4050:4050  # TequilAPI; keep equal to TEQUILAPI_PORT there
@@ -526,6 +531,9 @@ services:
       # The config.yaml sections this service's start-time files come from
       # (Config.config_digests): a change recreates it at `vibedpn up`, and nothing else.
       VIBEDPN_CONFIG_DIGEST: ${VIBEDPN_DIGEST_ADGUARD:-}
+      # The panel password, the one of AdGuard's web interface too: read from its file at start, after
+      # core rendered it there (compose.file_digests).
+      VIBEDPN_PANEL_DIGEST: ${VIBEDPN_DIGEST_PANEL:-}
     profiles:
       - dns
     restart: unless-stopped

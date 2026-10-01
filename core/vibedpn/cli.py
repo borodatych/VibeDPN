@@ -66,6 +66,7 @@ from vibedpn.compose import (
     DEFAULT_LOG_TAIL,
     IMAGE_LISTING,
     ComposeError,
+    adopt_node_password,
     capture,
     check_box,
     check_secrets,
@@ -465,6 +466,8 @@ def _prepare(box_dir: Path, *, refresh: bool) -> Config:
             refresh_wg_uplinks(box_dir, config)
             refresh_tor_bridges(box_dir, config)
             refresh_xray_config(box_dir, config)
+            if adopt_node_password(box_dir, box_dir / BOX_DATA_DIR) is not None:
+                typer.echo("NodeUI takes the new panel password: the node is recreated")
             # last: .env carries the fingerprints of the files rendered above
             refresh_env(box_dir, config)
     except ComposeError as exc:
@@ -1331,18 +1334,20 @@ def wifi_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
 
 @app.command("password")
 def password(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
-    """Set the panel password (VibeDPN UI and the node's NodeUI): asked twice without echo."""
+    """Set the panel password (VibeDPN UI, AdGuard and the node's NodeUI), asked twice without echo
+
+    No current password: this is the way back for an owner who forgot it, and it takes root
+    """
     config = _prepare(box_dir, refresh=False)
     try:
         set_panel_password(box_dir, config, _ask_password())
     except BootstrapError as exc:
         raise _fail(str(exc)) from None
-    # the panel checks secrets/htpasswd on every sign-in; the node reads its hash only at start
-    if config.provider.enabled:
-        _compose(box_dir, "up", "-d", "--force-recreate", "myst-provider")
-        typer.echo("panel password changed: VibeDPN UI at once, NodeUI after the node restarted")
-    else:
-        typer.echo("panel password changed: the next sign-in uses it")
+    # The panel checks secrets/htpasswd on every sign-in; AdGuard and the node read their hash at
+    # start, and the new .env fingerprints of those files recreate exactly them
+    _prepare(box_dir, refresh=True)
+    _compose(box_dir, "up", "-d")
+    typer.echo("panel password changed: VibeDPN UI at once, AdGuard and NodeUI as they restarted")
 
 
 WIFI_PASSPHRASE_RESULT = {

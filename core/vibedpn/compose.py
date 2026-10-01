@@ -18,7 +18,11 @@ from pydantic import ValidationError
 
 from vibedpn.bootstrap import (
     CONFIG_FILE,
+    DATA_DIR,
     ENV_FILE,
+    HTPASSWD_FILE,
+    MYST_PROVIDER_DATA,
+    NODEUI_PASS_FILE,
     PUBLIC_FILE_MODE,
     SECRET_FILE_MODE,
     SECRETS_DIR,
@@ -57,6 +61,10 @@ XRAY_CONFIG_FILE = "config.json"
 # docker/bindMountRename.md).
 DIGEST_XRAY = "VIBEDPN_DIGEST_XRAY"
 DIGEST_WG_CLIENT = "VIBEDPN_DIGEST_WG_CLIENT"
+# the node reads its NodeUI hash only at start: a new one recreates it
+DIGEST_NODEUI = "VIBEDPN_DIGEST_NODEUI"
+# AdGuard's password is the panel's: core renders the hash at its start, AdGuard reads it at its own
+DIGEST_PANEL = "VIBEDPN_DIGEST_PANEL"
 # not VIBEDPN_DIGEST_WG_<NAME>: an exit named `server` would take the fingerprint of wg-server
 WG_UPLINK_DIGEST_PREFIX = "VIBEDPN_DIGEST_WG_UPLINK_"
 DEFAULT_LOG_TAIL = 100
@@ -171,6 +179,10 @@ def file_digests(box_dir: Path, config: Config) -> dict[str, str | None]:
     for name, uplink in sorted(config.upstreams.wg.items()):
         if uplink.enabled:
             files[wg_uplink_digest(name)] = box_dir / SECRETS_DIR / wg_uplink_file(name)
+    if config.network is not None and config.dns.enabled:
+        files[DIGEST_PANEL] = box_dir / SECRETS_DIR / HTPASSWD_FILE
+    if config.provider.enabled:
+        files[DIGEST_NODEUI] = box_dir / DATA_DIR / MYST_PROVIDER_DATA / NODEUI_PASS_FILE
     return {variable: file_digest(path) for variable, path in files.items()}
 
 
@@ -310,6 +322,27 @@ def refresh_tor_bridges(box_dir: Path, config: Config) -> Path:
     try:
         directory.mkdir(parents=True, exist_ok=True)
         write_file(path, render_tor_bridges(config), PUBLIC_FILE_MODE)
+    except OSError as exc:
+        raise ComposeError(f"cannot write {path}: {exc.strerror}; run with sudo?") from exc
+    return path
+
+
+def adopt_node_password(box_dir: Path, staged_dir: Path) -> Path | None:
+    """The NodeUI hash core left for the host when the panel password changed (``staged_dir`` is
+    data/core): moved to the node, whose fingerprint in .env then recreates it; ``None`` when none
+    waits. Written in place and only then removed, so a failure leaves the hash for the next try."""
+    staged = staged_dir / NODEUI_PASS_FILE
+    try:
+        text = staged.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ComposeError(f"cannot read {staged}: {exc.strerror}; run with sudo?") from exc
+    path = box_dir / DATA_DIR / MYST_PROVIDER_DATA / NODEUI_PASS_FILE
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_file(path, text, SECRET_FILE_MODE)
+        staged.unlink()
     except OSError as exc:
         raise ComposeError(f"cannot write {path}: {exc.strerror}; run with sudo?") from exc
     return path

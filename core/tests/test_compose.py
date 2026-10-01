@@ -10,6 +10,8 @@ import pytest
 from vibedpn import compose
 from vibedpn.bootstrap import Answers, HostFacts, build_config, read_env, render_config
 from vibedpn.compose import (
+    DIGEST_NODEUI,
+    DIGEST_PANEL,
     DIGEST_WG_CLIENT,
     DIGEST_XRAY,
     ComposeError,
@@ -267,8 +269,15 @@ def test_the_files_are_those_of_the_gateways_this_box_runs(tmp_path: Path) -> No
     peer = tmp_path / "secrets" / "wg-work.conf"
     peer.write_text("[Interface]\n", encoding="utf-8")
     digests = file_digests(tmp_path, Config.model_validate(raw))
-    assert digests == {DIGEST_XRAY: "", wg_uplink_digest("work"): file_digest(peer)}
-    assert set(file_digests(tmp_path, Config.model_validate(client_config()))) == {DIGEST_WG_CLIENT}
+    # AdGuard reads the panel password and the node its NodeUI hash, both at start
+    assert digests == {
+        DIGEST_XRAY: "",
+        wg_uplink_digest("work"): file_digest(peer),
+        DIGEST_PANEL: "",
+        DIGEST_NODEUI: "",
+    }
+    client = file_digests(tmp_path, Config.model_validate(client_config()))
+    assert set(client) == {DIGEST_WG_CLIENT, DIGEST_PANEL}
 
 
 def test_an_exit_named_like_a_service_keeps_a_fingerprint_of_its_own() -> None:

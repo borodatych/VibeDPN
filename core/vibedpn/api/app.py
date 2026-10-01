@@ -51,6 +51,8 @@ from vibedpn.api.models import (
     NetworkRuleView,
     NetworkUpdate,
     NetworkView,
+    PanelPasswordUpdate,
+    PanelPasswordView,
     PeerCreate,
     PeerFile,
     PeerTraffic,
@@ -87,8 +89,11 @@ from vibedpn.bootstrap import (
     SECRET_DIR_MODE,
     XRAY_LINK_FILE,
     BootstrapError,
+    change_panel_password,
+    check_password,
     check_peer_text,
     network_for,
+    panel_password_matches,
     wg_uplink_file,
 )
 from vibedpn.config import (
@@ -480,6 +485,45 @@ def _ask_host(data: Path, reason: str) -> None:
         raise HTTPException(
             status_code=503, detail=f"saved, but the host was not asked to apply it: {exc}"
         ) from exc
+
+
+WRONG_PASSWORD = "the current password is wrong"
+PANEL_PASSWORD_APPLY = "panel password: AdGuard and NodeUI take it when recreated"
+
+
+def _add_panel_routes(
+    application: FastAPI,
+    current: Callable[[], Config | None],
+    secrets_dir: Path | None,
+    data_dir: Path | None,
+) -> None:
+    """``/panel/password``: the owner changes the panel password from the panel itself"""
+    lock = threading.Lock()
+
+    @application.put("/panel/password", response_model=PanelPasswordView)
+    def put_panel_password(request: PanelPasswordUpdate) -> PanelPasswordView:
+        box = current()
+        if box is None or secrets_dir is None or data_dir is None:
+            raise HTTPException(status_code=404, detail="this core keeps no panel password")
+        try:
+            check_password(request.new)
+        except BootstrapError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        with lock:
+            try:
+                if not panel_password_matches(secrets_dir, request.current):
+                    raise HTTPException(status_code=403, detail=WRONG_PASSWORD)
+                staged = change_panel_password(secrets_dir, data_dir, box, request.new)
+            except BootstrapError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+        later: list[Literal["adguard", "nodeui"]] = []
+        if box.network is not None and box.dns.enabled:
+            later.append("adguard")
+        if staged:
+            later.append("nodeui")
+        if later:
+            _ask_host(data_dir, PANEL_PASSWORD_APPLY)
+        return PanelPasswordView(later=later)
 
 
 def _add_tor_uplink_routes(
@@ -1521,6 +1565,7 @@ def create_app(
         ),
     )
 
+    _add_panel_routes(application, current, secrets_dir, data_dir)
     _add_wifi_routes(
         application,
         current,

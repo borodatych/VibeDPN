@@ -330,6 +330,17 @@ class WifiPassphraseView(BaseModel):
     error: str = ""
 
 
+class PanelPasswordUpdate(BaseModel):
+    current: str  # asked again even with a session: a stolen session must not lock the owner out
+    new: str
+
+
+class PanelPasswordView(BaseModel):
+    # The panel takes the new password at once; these take it once the host recreated them, which
+    # core asked it to do: AdGuard's web interface and the NodeUI of the provider node
+    later: list[Literal["adguard", "nodeui"]]
+
+
 class WgUplinkCreate(BaseModel):
     """``POST /uplinks/wg``: a name and the text of a provider's WireGuard file."""
 

@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from vibedpn import cli
 from vibedpn.api import client as core_api
 from vibedpn.api.models import WifiPassphraseView
+from vibedpn.compose import file_digest
 from vibedpn.config import load_config
 from vibedpn.detect import Interface
 from vibedpn.engine.hostapd import HostapdError, check_passphrase
@@ -559,9 +560,11 @@ def test_password_replaces_the_panel_and_node_hashes_and_restarts_the_node(
         b"new-panel-pass", node.read_text(encoding="utf-8").strip().encode("ascii")
     )
     assert htpasswd.stat().st_mode & 0o777 == 0o600 and node.stat().st_mode & 0o777 == 0o600
-    assert [argv[-4:] for argv in recorder.calls] == [
-        ["up", "-d", "--force-recreate", "myst-provider"]
-    ]
+    # .env carries the new fingerprints, and `up` recreates what reads the hash at start
+    env = (box_dir / ".env").read_text(encoding="utf-8")
+    assert f"VIBEDPN_DIGEST_PANEL={file_digest(htpasswd)}" in env
+    assert f"VIBEDPN_DIGEST_NODEUI={file_digest(node)}" in env
+    assert [argv[-2:] for argv in recorder.calls] == [["up", "-d"]]
 
 
 def test_password_asks_again_until_it_fits_the_policy(
