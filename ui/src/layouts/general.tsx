@@ -7,6 +7,7 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from '@/components/ui/drawer'
+import { PaletteSwitcher } from '@/components/ui/palette'
 import { ThemeSwitcher } from '@/components/ui/theme'
 import { routes } from '@/generated/point0/routes'
 import { NavLink } from '@/lib/navigation'
@@ -129,11 +130,13 @@ export const generalLayout = root.lets
               </nav>
               <LanguageSwitcher />
               <ThemeSwitcher compact />
+              <PaletteSwitcher />
             </div>
 
             <div className="flex items-center gap-1 xl:hidden">
               <LanguageSwitcher />
               <ThemeSwitcher compact />
+              <PaletteSwitcher />
               <Drawer open={menuOpen} onOpenChange={setMenuOpen} direction="right">
                 <DrawerTrigger asChild>
                   <Button variant="ghost" size="icon-default" aria-label={t('nav.openMenu')} icon={Menu} />

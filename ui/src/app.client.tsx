@@ -6,6 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 // import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { NProgress } from '@/components/other/nprogress'
 import { SearchParamsToast, Toaster } from '@/components/ui/sonner'
+import { PaletteProvider } from '@/components/ui/palette'
 import { ThemeProvider } from '@/components/ui/theme'
 import { ErrorPageComponent } from '@/components/other/error'
 import { queryClient } from '@/lib/query-client'
@@ -37,6 +38,7 @@ export default function App() {
             <link rel="manifest" href="/site.webmanifest" />
           </Head>
           <ThemeProvider />
+          <PaletteProvider />
           <Router>
             <NProgress />
             <Toaster />

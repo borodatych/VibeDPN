@@ -3,6 +3,7 @@
 @import 'shadcn/tailwind.css';
 @import 'nprogress/nprogress.css';
 @import './utils.css';
+@import './palettes.css';
 @import './sonner.css';
 @import './nprogress.css';
 @plugin "@tailwindcss/typography";
