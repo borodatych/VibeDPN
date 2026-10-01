@@ -20,8 +20,9 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  void page.close()
-  void browser.close()
+  // awaited: a browser still closing when the file ends is killed by bun test, and the next file's pages hang
+  await page.close()
+  await browser.close()
 })
 
 // The core of these tests is core/tests/panel_core.py: Tor in use, the masking exit and wg-proton on, DPN idle
@@ -89,10 +90,11 @@ describe('exits, notifications and the channels of the rules', () => {
   test('a phone gets the exit under its own line, and no side scroll on either page', async () => {
     await page.setViewportSize({ width: 375, height: 800 })
     await page.goto(`${routes.uplinks.abs()}?exit=tor`)
+    const heading = page.getByRole('heading', { name: /^(Бесплатный выход через Tor|Free exit through Tor)$/ })
+    // the card lays out once the exits load: measured before that, it has no box yet
+    await expect(heading).toBeVisible()
     const line = await page.locator('[data-item="tor"]').boundingBox()
-    const card = await page
-      .getByRole('heading', { name: /^(Бесплатный выход через Tor|Free exit through Tor)$/ })
-      .boundingBox()
+    const card = await heading.boundingBox()
     const next = await page.locator('[data-item="xray"]').boundingBox()
     expect(line!.y < card!.y && card!.y < next!.y).toBe(true)
     expect(await sideScroll()).toBe(0)

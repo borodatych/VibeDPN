@@ -20,8 +20,9 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  void page.close()
-  void browser.close()
+  // awaited: a browser still closing when the file ends is killed by bun test, and the next file's pages hang
+  await page.close()
+  await browser.close()
 })
 
 describe('status page and header', () => {

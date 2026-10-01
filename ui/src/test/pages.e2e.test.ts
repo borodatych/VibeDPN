@@ -20,8 +20,9 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  void page.close()
-  void browser.close()
+  // awaited: a browser still closing when the file ends is killed by bun test, and the next file's pages hang
+  await page.close()
+  await browser.close()
 })
 
 // The core of these tests is core/tests/panel_core.py: a Wi-Fi box with devices, a journal, the access server on,
