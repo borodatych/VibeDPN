@@ -64,7 +64,12 @@ const MainNavItems = ({
 
 // Right of the header — depends on who's signed in.
 const accountLinks = (me: Me | null | undefined, t: T): NavItem[] =>
-  !me ? [{ label: t('nav.signIn'), to: routes.signIn() }] : [{ label: t('nav.signOut'), to: routes.signOut() }]
+  !me
+    ? [{ label: t('nav.signIn'), to: routes.signIn() }]
+    : [
+        { label: t('nav.password'), to: routes.password() },
+        { label: t('nav.signOut'), to: routes.signOut() },
+      ]
 
 const navLinkClassName = ({ exact }: { exact: boolean }) =>
   cn(
