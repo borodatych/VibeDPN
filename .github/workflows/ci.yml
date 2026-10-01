@@ -122,6 +122,61 @@ jobs:
       - run: bun run check
       - run: bun run test:unit && bun run test:dom
 
+  ui-e2e:
+    name: ui · e2e against the built panel and a fake core
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: vibedpn
+          POSTGRES_PASSWORD: vibedpn
+          POSTGRES_DB: vibedpn
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U vibedpn" --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: ui
+    # The panel reads these from the environment as it would from .env (env.example lists them)
+    env:
+      SERVER_PORT: "3000"
+      CLIENT_PORT: "8000"
+      SERVER_URL: http://localhost:3000
+      CLIENT_URL: http://localhost:8000
+      DATABASE_URL: postgresql://vibedpn:vibedpn@localhost:5432/vibedpn?schema=public
+      HTPASSWD_FILE: ${{ github.workspace }}/ui/htpasswd.e2e
+      CORE_API_PORT: "4490"
+      UI_LISTEN_HOST: 127.0.0.1
+      UI_HOST_NAME: localhost
+      UI_LANGUAGE: ru
+      LOCALES_DIR: ${{ github.workspace }}/ui/locales
+      # A throwaway panel of a throwaway database: the password and the secret exist only in this job
+      E2E_BOX_PASSWORD: e2e-box-password
+      BETTER_AUTH_SECRET: e2e-only-secret-of-at-least-32-characters
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      # the fake core the tests start (core/tests/panel_core.py) runs under uv
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: core/uv.lock
+      - run: uv sync --locked
+        working-directory: core
+      - run: bun install --frozen-lockfile
+      - run: bunx prisma generate && bun run generate
+      - run: bunx playwright install --with-deps chromium
+      - run: bunx prisma migrate deploy
+      - name: htpasswd of the box admin
+        run: >-
+          printf 'admin:%s\n' "$(bun -e 'console.log(await Bun.password.hash(process.env.E2E_BOX_PASSWORD, {algorithm: "bcrypt"}))')"
+          > "$HTPASSWD_FILE"
+      - run: bun run test:e2e:build
+
   shell:
     name: shell · shellcheck
     runs-on: ubuntu-24.04
