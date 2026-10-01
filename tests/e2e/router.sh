@@ -1380,4 +1380,32 @@ fi
 await_exit "$VPS_IP" "the device lost the VPS after the named exit was removed"
 echo "named exit removed: file, container and uplink are gone"
 
+log "panel password from the panel: core wants the current one, AdGuard takes the new one after the host applies"
+NEW_PASSWORD=e2e-pass-456
+panel_password() {
+  curl -s --max-time 15 -X PUT -H 'Content-Type: application/json' \
+    -d "{\"current\":\"$1\",\"new\":\"$NEW_PASSWORD\"}" -w ' %{http_code}' http://127.0.0.1:4480/panel/password
+}
+adguard_login() {
+  curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
+    -d "{\"name\":\"admin\",\"password\":\"$1\"}" "http://$BOX_LAN_IP:3000/control/login"
+}
+answer="$(panel_password wrong-pass-1)"
+[ "${answer##* }" = 403 ] || fail "core changed the panel password without the current one: $answer"
+answer="$(panel_password "$PASSWORD")"
+[ "$answer" = '{"later":["adguard"]} 200' ] || fail "core did not change the panel password: $answer"
+sudo test -s "$BOX/data/core/apply-request" || fail "core did not ask the host to recreate AdGuard"
+# what the host's path unit runs on that request: up, which recreates core and AdGuard by the new
+# fingerprint of htpasswd; core renders the new hash before AdGuard starts
+sudo "$CLI" apply --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn apply after the new panel password failed"
+wait_healthy vibedpn-core-1
+i=0
+until [ "$(adguard_login "$NEW_PASSWORD")" = 200 ]; do
+  i=$((i + 2))
+  [ "$i" -lt 60 ] || fail "AdGuard does not take the new panel password after vibedpn apply"
+  sleep 2
+done
+[ "$(adguard_login "$PASSWORD")" != 200 ] || fail "AdGuard still takes the old panel password"
+echo "panel password: refused without the current one, AdGuard takes the new one and not the old"
+
 log "E2E-ROUTER-OK"

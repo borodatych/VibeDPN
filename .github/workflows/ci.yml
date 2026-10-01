@@ -484,6 +484,21 @@ jobs:
           done
           test "$limited" = yes
           docker rm -f ui >/dev/null
+          # A new panel password reaches the running panel: core rewrites htpasswd in place, and the
+          # container sees it through its single-file mount (a file renamed over it never would).
+          # A fresh container: the sign-ins above used up its attempts.
+          docker run -d --name ui --network host -e UI_LISTEN_HOST=127.0.0.1 -e PORT=8088 \
+            -e SERVER_URL=$base -e CLIENT_URL=$base -e UI_HOST_NAME=vibedpn.lan -e CORE_API_PORT=4480 -e UI_DB_PORT=5480 \
+            "${secrets[@]}" vibedpn-ui:ci >/dev/null
+          for _ in $(seq 60); do curl -fsS -o /dev/null $base/api/health 2>/dev/null && break; sleep 1; done
+          new_password=ci-secret-456
+          new_hash="$(docker run --rm --entrypoint bun vibedpn-ui:ci -e 'console.log(await Bun.password.hash(process.argv[1], {algorithm: "bcrypt"}))' "$new_password")"
+          inode="$(sudo stat -c %i "$work/secrets/htpasswd")"
+          printf 'admin:%s\n' "$new_hash" | sudo tee "$work/secrets/htpasswd" >/dev/null
+          test "$(sudo stat -c %i "$work/secrets/htpasswd")" = "$inode"
+          test "$(sign_in "$password")" = 401
+          test "$(sign_in "$new_password")" = 200
+          docker rm -f ui >/dev/null
           # A missing or empty secret: the container refuses to start.
           : > "$work/empty"
           if docker run --rm --network host -e UI_DB_PORT=5480 -v "$work/empty:/run/secrets/htpasswd:ro" \
