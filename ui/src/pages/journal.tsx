@@ -1,6 +1,7 @@
 import { useHead } from '@unhead/react'
 import { Badge } from '@/components/ui/badge'
-import { Section } from '@/components/ui/section'
+import { PageTitle } from '@/components/blocks/page-title'
+import { Sections } from '@/components/ui/section'
 import { XSelect } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { eventListQuery } from '@/features/events/api'
@@ -37,7 +38,7 @@ const EventRow = ({ event }: { event: BoxEvent }) => {
   const subject = eventSubject(event, t)
   return (
     <TableRow>
-      <TableCell className="text-sm whitespace-nowrap">
+      <TableCell data-label={t('journal.column.time')} className="text-sm whitespace-nowrap">
         {formatDate(new Date(event.time * 1000), 'date-time', language)}
       </TableCell>
       <TableCell>
@@ -64,7 +65,9 @@ export const journalPage = generalLayout.lets
     const events = journal?.events ?? []
 
     return (
-      <Section h1={t('journal.title')} description={t('journal.description')}>
+      <Sections gap="lg">
+        <PageTitle title={t('journal.title')} description={t('journal.description')} />
+        <div>
         <div className="flex flex-wrap gap-3">
           <XSelect
             options={kindOptions(t)}
@@ -80,7 +83,7 @@ export const journalPage = generalLayout.lets
         {events.length === 0 ? (
           <p className="mt-4 text-sm text-muted-foreground">{journal?.reason ?? t('journal.empty')}</p>
         ) : (
-          <Table className="mt-4">
+          <Table className="mt-4 table-stack">
             <TableHeader>
               <TableRow>
                 <TableHead>{t('journal.column.time')}</TableHead>
@@ -96,6 +99,7 @@ export const journalPage = generalLayout.lets
             </TableBody>
           </Table>
         )}
-      </Section>
+        </div>
+      </Sections>
     )
   })

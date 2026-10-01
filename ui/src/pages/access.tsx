@@ -2,6 +2,8 @@ import { useHead } from '@unhead/react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PageTitle } from '@/components/blocks/page-title'
+import { Card } from '@/components/ui/card'
 import { Section, Sections } from '@/components/ui/section'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
@@ -85,7 +87,33 @@ const ServerCard = ({ server }: { server: AccessServer }) => {
   }
   const endpoint = `${server.address}:${server.port}`
   return (
-    <Section h1={t('access.title')} description={t('access.description')}>
+    <Card
+      compact
+      h2={t('access.server.title')}
+      size="sm"
+      action={
+        server.enabled ? (
+          <Button
+            variant="outline-secondary"
+            size="sm"
+            loading={save.isPending}
+            confirm={t('access.confirmOff')}
+            onClick={() => void apply(false)}
+          >
+            {t('access.disable')}
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            disabled={!addressLooksValid(address)}
+            loading={save.isPending}
+            onClick={() => void apply(true)}
+          >
+            {t('access.enable')}
+          </Button>
+        )
+      }
+    >
       <div className="space-y-3 text-sm">
         <div className="flex flex-wrap items-center gap-3">
           <Badge variant={server.enabled ? 'success' : 'secondary'}>
@@ -94,7 +122,7 @@ const ServerCard = ({ server }: { server: AccessServer }) => {
           {server.enabled && <span className="font-mono text-xs text-muted-foreground">{endpoint}</span>}
         </div>
         <label className="block space-y-1">
-          <span>{t('access.address')}</span>
+          <span className="block">{t('access.address')}</span>
           <Input
             value={address}
             maxLength={253}
@@ -105,7 +133,7 @@ const ServerCard = ({ server }: { server: AccessServer }) => {
           <span className="block text-xs text-muted-foreground">{t('access.addressHint')}</span>
         </label>
         <label className="block space-y-1">
-          <span>{t('access.target')}</span>
+          <span className="block">{t('access.target')}</span>
           <Input
             value={target}
             maxLength={253}
@@ -115,21 +143,17 @@ const ServerCard = ({ server }: { server: AccessServer }) => {
           />
           <span className="block text-xs text-muted-foreground">{t('access.targetHint')}</span>
         </label>
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={!addressLooksValid(address)} loading={save.isPending} onClick={() => void apply(true)}>
-            {server.enabled ? t('access.save') : t('access.enable')}
+        {server.enabled && (
+          <Button
+            variant="outline-secondary"
+            size="sm"
+            disabled={!addressLooksValid(address)}
+            loading={save.isPending}
+            onClick={() => void apply(true)}
+          >
+            {t('access.save')}
           </Button>
-          {server.enabled && (
-            <Button
-              variant="ghost"
-              loading={save.isPending}
-              confirm={t('access.confirmOff')}
-              onClick={() => void apply(false)}
-            >
-              {t('access.disable')}
-            </Button>
-          )}
-        </div>
+        )}
         {save.isError && <p className="text-destructive">{save.error.message}</p>}
         <ApplyLine apply={server.apply} />
         {server.enabled && <p className="text-muted-foreground">{t('access.forward', { port: server.port })}</p>}
@@ -139,7 +163,7 @@ const ServerCard = ({ server }: { server: AccessServer }) => {
           <li>{t('access.limits.strangers')}</li>
         </ul>
       </div>
-    </Section>
+    </Card>
   )
 }
 
@@ -198,8 +222,37 @@ const PeopleCard = ({ server }: { server: AccessServer }) => {
     await accessQuery.refetchQuery()
   }
   return (
-    <Section h2={t('access.people.title')} description={t('access.people.description')}>
+    <Card
+      compact
+      h2={t('access.people.title')}
+      size="sm"
+      action={
+        <Button
+          size="sm"
+          disabled={!server.enabled || !name || problem !== null}
+          loading={add.isPending}
+          onClick={() => void submit()}
+        >
+          {t('access.people.add')}
+        </Button>
+      }
+    >
       <div className="space-y-3 text-sm">
+        <p className="text-muted-foreground">{t('access.people.description')}</p>
+        <label className="block space-y-1">
+          <span className="block">{t('access.people.name')}</span>
+          <Input
+            value={name}
+            maxLength={PERSON_NAME_MAX}
+            className="max-w-xs"
+            onChange={(event) => setName(event.target.value.trim().toLowerCase())}
+          />
+          <span className="block text-xs text-muted-foreground">{t('access.people.nameHint')}</span>
+        </label>
+        {!server.enabled && <p className="text-muted-foreground">{t('access.people.offFirst')}</p>}
+        {problem && <p className="text-destructive">{t(`access.people.problem.${problem}`)}</p>}
+        {add.isError && <p className="text-destructive">{add.error.message}</p>}
+        {shown && <LinkCard link={shown} onClose={() => setShown(null)} />}
         {server.people.length === 0 ? (
           <p className="text-muted-foreground">{t('access.people.empty')}</p>
         ) : (
@@ -219,29 +272,8 @@ const PeopleCard = ({ server }: { server: AccessServer }) => {
             </TableBody>
           </Table>
         )}
-        {shown && <LinkCard link={shown} onClose={() => setShown(null)} />}
-        <label className="block space-y-1">
-          <span>{t('access.people.name')}</span>
-          <Input
-            value={name}
-            maxLength={PERSON_NAME_MAX}
-            className="max-w-xs"
-            onChange={(event) => setName(event.target.value.trim().toLowerCase())}
-          />
-          <span className="block text-xs text-muted-foreground">{t('access.people.nameHint')}</span>
-        </label>
-        <Button
-          disabled={!server.enabled || !name || problem !== null}
-          loading={add.isPending}
-          onClick={() => void submit()}
-        >
-          {t('access.people.add')}
-        </Button>
-        {!server.enabled && <p className="text-muted-foreground">{t('access.people.offFirst')}</p>}
-        {problem && <p className="text-destructive">{t(`access.people.problem.${problem}`)}</p>}
-        {add.isError && <p className="text-destructive">{add.error.message}</p>}
       </div>
-    </Section>
+    </Card>
   )
 }
 
@@ -260,8 +292,13 @@ const DdnsCard = ({ ddns }: { ddns: Ddns }) => {
   }
   const lastTime = ddns.last_at === null ? null : formatDate(new Date(ddns.last_at * 1000), 'date-time-nice', language)
   return (
-    <Section h2={t('access.ddns.title')} description={t('access.ddns.description')}>
+    <Card
+      compact
+      h2={t('access.ddns.title')}
+      size="sm"
+    >
       <div className="space-y-3 text-sm">
+        <p className="text-muted-foreground">{t('access.ddns.description')}</p>
         <div className="flex flex-wrap items-center gap-3">
           <Badge variant={ddns.enabled ? 'success' : 'secondary'}>
             {ddns.enabled ? t('access.ddns.on') : t('access.ddns.off')}
@@ -284,7 +321,7 @@ const DdnsCard = ({ ddns }: { ddns: Ddns }) => {
           <p className="text-warning">{t('access.ddns.addressFailed', { message: ddns.address_error })}</p>
         )}
         <label className="block space-y-1">
-          <span>{t('access.ddns.url')}</span>
+          <span className="block">{t('access.ddns.url')}</span>
           <Input
             type="password"
             value={url}
@@ -295,8 +332,14 @@ const DdnsCard = ({ ddns }: { ddns: Ddns }) => {
           />
           <span className="block text-xs text-muted-foreground">{t('access.ddns.urlHint')}</span>
         </label>
+        {/* under the field it saves, not in the header: the label is long, and the title of the card would break */}
         <div className="flex flex-wrap gap-2">
-          <Button disabled={!url || problem !== null} loading={save.isPending} onClick={() => void apply(true, true)}>
+          <Button
+            size="sm"
+            disabled={!url || problem !== null}
+            loading={save.isPending}
+            onClick={() => void apply(true, true)}
+          >
             {t('access.ddns.save')}
           </Button>
           {ddns.enabled && (
@@ -315,7 +358,7 @@ const DdnsCard = ({ ddns }: { ddns: Ddns }) => {
         <ApplyLine apply={ddns.apply} />
         <p className="text-muted-foreground">{t('access.ddns.services')}</p>
       </div>
-    </Section>
+    </Card>
   )
 }
 
@@ -336,10 +379,21 @@ export const accessPage = generalLayout.lets
             <p className="text-sm text-muted-foreground">{data.reason}</p>
           </Section>
         )}
-        {server && <ServerCard server={server} />}
-        {server && <PeopleCard server={server} />}
-        {ddns && <DdnsCard ddns={ddns} />}
-        <LogsCard scope="access" />
+        {server && (
+          <>
+            <PageTitle title={t('access.title')} description={t('access.description')} />
+            <div className="grid items-start gap-6 lg:grid-cols-2">
+              <div className="flex min-w-0 flex-col gap-6">
+                <ServerCard server={server} />
+                {ddns && <DdnsCard ddns={ddns} />}
+              </div>
+              <div className="flex min-w-0 flex-col gap-6">
+                <PeopleCard server={server} />
+                <LogsCard scope="access" />
+              </div>
+            </div>
+          </>
+        )}
       </Sections>
     )
   })

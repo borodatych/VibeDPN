@@ -1,8 +1,11 @@
 import { useHead } from '@unhead/react'
+import { ListDetail } from '@/components/blocks/list-detail'
+import { PageTitle } from '@/components/blocks/page-title'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Section, Sections } from '@/components/ui/section'
+import { Sections } from '@/components/ui/section'
 import { XSelect } from '@/components/ui/select'
 import { XSwitch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -34,7 +37,10 @@ import {
   type DomainRule,
   type JournalEntry,
   type NetworkRuleView,
+  pickSection,
+  RULE_SECTIONS,
   ruleVias,
+  type RuleSection,
   type OptionalExits,
   type RuleVia,
 } from '@/features/rules/shared'
@@ -44,7 +50,8 @@ import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import type { T } from '@/modules/i18n/base'
 import { useLanguage, useT } from '@/modules/i18n/use-t'
 import { formatDate } from '@/utils/date'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import { z } from 'zod'
 
 const viaOptions = (t: T, exits: OptionalExits) =>
   ruleVias(exits).map((via) => ({ value: via, label: t(`rules.via.${via}`) }))
@@ -648,100 +655,172 @@ const LearnedRow = ({
   )
 }
 
-export const rulesPage = generalLayout.lets
-  .page('/rules')
-  .use(redirectUnauthorizedPlugin)
-  .with(ruleListQuery)
-  .page(({ data: { rules, reason } }) => {
-    const devices = journalDevicesQuery.useQuery().data
-    const learned = learnedListQuery.useQuery().data
-    const [client, setClient] = useState<string | null>(null)
-    const t = useT()
-    useHead({ title: t('nav.rules') })
-    const deviceOptions = (devices?.devices ?? []).map((device) => ({
-      value: device.client,
-      label: t('sniffer.deviceOption', { client: device.client, queries: device.queries }),
-    }))
-    return (
-      <Sections gap="lg">
-        <Section h1={t('rules.title')} description={t('rules.description')}>
-          {reason ? (
-            <p className="text-muted-foreground">{reason}</p>
-          ) : (
-            <>
-              {rules.length > 0 && (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('rules.column.site')}</TableHead>
-                      <TableHead>{t('rules.column.channel')}</TableHead>
-                      <TableHead>{t('rules.column.country')}</TableHead>
-                      <TableHead>{t('rules.column.learn')}</TableHead>
-                      <TableHead>{t('rules.column.sticky')}</TableHead>
-                      <TableHead>{t('rules.column.pinned')}</TableHead>
-                      <TableHead />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rules.map((rule) => (
-                      <RuleRow key={rule.domain} rule={rule} />
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-              <AddRule />
-              <p className="mt-2 text-xs text-muted-foreground">{t('rules.countryRestart')}</p>
-            </>
-          )}
-        </Section>
-        <Section h2={t('lists.title')} size="lg" description={t('lists.description')}>
-          <DomainLists />
-        </Section>
-        <Section h2={t('networks.title')} size="lg" description={t('networks.description')}>
-          <NetworkRules />
-        </Section>
-        <Section h2={t('sniffer.title')} size="lg" description={t('sniffer.description')}>
-          {devices?.reason ? (
-            <p className="text-muted-foreground">{devices.reason}</p>
-          ) : deviceOptions.length === 0 ? (
-            <p className="text-muted-foreground">{t('sniffer.empty')}</p>
-          ) : (
-            <>
-              <XSelect
-                options={deviceOptions}
-                value={client ?? ''}
-                placeholder={t('sniffer.chooseDevice')}
-                onValueChange={(value) => setClient(String(value))}
-              />
-              <div className="mt-4">{client && <Sniffer client={client} rules={rules} />}</div>
-            </>
-          )}
-        </Section>
-        <Section h2={t('learned.title')} size="lg" description={t('learned.description')}>
-          {learned?.reason ? (
-            <p className="text-muted-foreground">{learned.reason}</p>
-          ) : (learned?.learned.length ?? 0) === 0 ? (
-            <p className="text-muted-foreground">{t('learned.empty')}</p>
-          ) : (
+/** A section of «Rules» as a card: its description under the title, its content below */
+const SectionCard = ({ title, description, children }: { title: string; description: string; children: ReactNode }) => (
+  <Card compact h2={title} size="sm">
+    <div className="space-y-4 text-sm">
+      <p className="text-muted-foreground">{description}</p>
+      {children}
+    </div>
+  </Card>
+)
+
+const SitesSection = ({ rules, reason }: { rules: DomainRule[]; reason: string | null }) => {
+  const t = useT()
+  return (
+    <SectionCard title={t('rules.sites.title')} description={t('rules.description')}>
+      {reason ? (
+        <p className="text-muted-foreground">{reason}</p>
+      ) : (
+        <>
+          <AddRule />
+          <p className="text-xs text-muted-foreground">{t('rules.countryRestart')}</p>
+          {rules.length > 0 && (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>{t('learned.column.name')}</TableHead>
-                  <TableHead>{t('learned.column.site')}</TableHead>
-                  <TableHead>{t('learned.column.how')}</TableHead>
-                  <TableHead>{t('learned.column.hits')}</TableHead>
-                  <TableHead>{t('learned.column.lastSeen')}</TableHead>
+                  <TableHead>{t('rules.column.site')}</TableHead>
+                  <TableHead>{t('rules.column.channel')}</TableHead>
+                  <TableHead>{t('rules.column.country')}</TableHead>
+                  <TableHead>{t('rules.column.learn')}</TableHead>
+                  <TableHead>{t('rules.column.sticky')}</TableHead>
+                  <TableHead>{t('rules.column.pinned')}</TableHead>
                   <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {learned?.learned.map((item) => (
-                  <LearnedRow key={item.name} {...item} />
+                {rules.map((rule) => (
+                  <RuleRow key={rule.domain} rule={rule} />
                 ))}
               </TableBody>
             </Table>
           )}
-        </Section>
+        </>
+      )}
+    </SectionCard>
+  )
+}
+
+const SnifferSection = ({ rules }: { rules: DomainRule[] }) => {
+  const devices = journalDevicesQuery.useQuery().data
+  const [client, setClient] = useState<string | null>(null)
+  const t = useT()
+  const deviceOptions = (devices?.devices ?? []).map((device) => ({
+    value: device.client,
+    label: t('sniffer.deviceOption', { client: device.client, queries: device.queries }),
+  }))
+  return (
+    <SectionCard title={t('sniffer.title')} description={t('sniffer.description')}>
+      {devices?.reason ? (
+        <p className="text-muted-foreground">{devices.reason}</p>
+      ) : deviceOptions.length === 0 ? (
+        <p className="text-muted-foreground">{t('sniffer.empty')}</p>
+      ) : (
+        <>
+          <XSelect
+            options={deviceOptions}
+            value={client ?? ''}
+            placeholder={t('sniffer.chooseDevice')}
+            onValueChange={(value) => setClient(String(value))}
+          />
+          {client && <Sniffer client={client} rules={rules} />}
+        </>
+      )}
+    </SectionCard>
+  )
+}
+
+const LearnedSection = () => {
+  const learned = learnedListQuery.useQuery().data
+  const t = useT()
+  return (
+    <SectionCard title={t('learned.title')} description={t('learned.description')}>
+      {learned?.reason ? (
+        <p className="text-muted-foreground">{learned.reason}</p>
+      ) : (learned?.learned.length ?? 0) === 0 ? (
+        <p className="text-muted-foreground">{t('learned.empty')}</p>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('learned.column.name')}</TableHead>
+              <TableHead>{t('learned.column.site')}</TableHead>
+              <TableHead>{t('learned.column.how')}</TableHead>
+              <TableHead>{t('learned.column.hits')}</TableHead>
+              <TableHead>{t('learned.column.lastSeen')}</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {learned?.learned.map((item) => (
+              <LearnedRow key={item.name} {...item} />
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </SectionCard>
+  )
+}
+
+const Count = ({ value }: { value: number | undefined }) =>
+  value === undefined ? null : <Badge variant="secondary">{value}</Badge>
+
+export const rulesPage = generalLayout.lets
+  .page('/rules')
+  .search(z.object({ section: z.string().optional() }))
+  .use(redirectUnauthorizedPlugin)
+  .with(ruleListQuery)
+  .page(({ data: { rules, reason }, search, setSearch }) => {
+    const lists = domainListsQuery.useQuery().data?.lists
+    const networks = networkRulesQuery.useQuery().data?.networks
+    const learned = learnedListQuery.useQuery().data?.learned
+    const t = useT()
+    useHead({ title: t('nav.rules') })
+    const picked = pickSection(search.section)
+    const titles: Record<RuleSection, string> = {
+      sites: t('rules.sites.title'),
+      lists: t('lists.title'),
+      networks: t('networks.title'),
+      sniffer: t('sniffer.title'),
+      learned: t('learned.title'),
+    }
+    const counts: Partial<Record<RuleSection, number>> = {
+      sites: reason ? undefined : rules.length,
+      lists: lists?.length,
+      networks: networks?.length,
+      learned: learned?.length,
+    }
+    const detail = (
+      <>
+        {picked === 'sites' && <SitesSection rules={rules} reason={reason} />}
+        {picked === 'lists' && (
+          <SectionCard title={titles.lists} description={t('lists.description')}>
+            <DomainLists />
+          </SectionCard>
+        )}
+        {picked === 'networks' && (
+          <SectionCard title={titles.networks} description={t('networks.description')}>
+            <NetworkRules />
+          </SectionCard>
+        )}
+        {picked === 'sniffer' && <SnifferSection rules={rules} />}
+        {picked === 'learned' && <LearnedSection />}
+      </>
+    )
+    return (
+      <Sections gap="lg">
+        <PageTitle title={t('rules.title')} description={t('rules.page.description')} />
+        <ListDetail
+          label={t('rules.title')}
+          items={RULE_SECTIONS.map((section) => ({
+            key: section,
+            title: titles[section],
+            aside: <Count value={counts[section]} />,
+          }))}
+          picked={picked}
+          onPick={(section) => setSearch({ section })}
+          detail={detail}
+        />
       </Sections>
     )
   })

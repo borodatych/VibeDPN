@@ -1,4 +1,5 @@
 import {
+  pickSection,
   ruleVias,
   cdnCandidates,
   channelLabel,
@@ -147,6 +148,15 @@ describe('channels of a rule', () => {
     expect(ruleVias({ wg: [], tor: false, xray: false })).toEqual(['vps', 'dpn', 'direct'])
     expect(ruleVias({ wg: ['wg-proton'], tor: true, xray: true })).toEqual(['vps', 'dpn', 'wg', 'tor', 'xray', 'direct'])
     expect(ruleVias({ wg: [], tor: false, xray: true })).toEqual(['vps', 'dpn', 'xray', 'direct'])
+  })
+})
+
+describe('the section shown on «Rules»', () => {
+  test('the one in the URL, and the sites for anything else', () => {
+    expect(pickSection('networks')).toBe('networks')
+    expect(pickSection('learned')).toBe('learned')
+    expect(pickSection(undefined)).toBe('sites')
+    expect(pickSection('gone')).toBe('sites')
   })
 })
 

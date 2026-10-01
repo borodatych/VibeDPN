@@ -1,7 +1,9 @@
 import { useHead } from '@unhead/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Section, Sections } from '@/components/ui/section'
+import { PageTitle } from '@/components/blocks/page-title'
+import { Card } from '@/components/ui/card'
+import { Sections } from '@/components/ui/section'
 import { XSelect } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { eventListQuery, wifiClientsQuery } from '@/features/events/api'
@@ -36,8 +38,24 @@ const PassphraseForm = () => {
   }
   const result = save.data?.wifi
   return (
-    <div className="mt-6 space-y-2">
-      <p className="font-accent text-sm text-muted-foreground">{t('wifi.passphrase.title')}</p>
+    <Card
+      compact
+      h2={t('wifi.passphrase.title')}
+      size="sm"
+      action={
+        <Button
+          size="sm"
+          variant="outline-secondary"
+          disabled={!value || problem !== null}
+          loading={save.isPending}
+          confirm={t('wifi.passphrase.confirm')}
+          onClick={() => void submit()}
+        >
+          {t('wifi.passphrase.save')}
+        </Button>
+      }
+    >
+      <div className="space-y-2 text-sm">
       <div className="flex flex-wrap gap-2">
         <Input
           type="password"
@@ -47,7 +65,7 @@ const PassphraseForm = () => {
           spellCheck={false}
           placeholder={t('wifi.passphrase.new')}
           aria-label={t('wifi.passphrase.new')}
-          className="max-w-xs"
+          className="min-w-0 flex-1 basis-40"
           onChange={(event) => setValue(event.target.value)}
         />
         <Input
@@ -58,19 +76,11 @@ const PassphraseForm = () => {
           spellCheck={false}
           placeholder={t('wifi.passphrase.repeat')}
           aria-label={t('wifi.passphrase.repeat')}
-          className="max-w-xs"
+          className="min-w-0 flex-1 basis-40"
           onChange={(event) => setRepeat(event.target.value)}
         />
       </div>
       <p className="text-xs text-muted-foreground">{t('wifi.passphrase.hint', limits)}</p>
-      <Button
-        disabled={!value || problem !== null}
-        loading={save.isPending}
-        confirm={t('wifi.passphrase.confirm')}
-        onClick={() => void submit()}
-      >
-        {t('wifi.passphrase.save')}
-      </Button>
       {problem && <p className="text-sm text-destructive">{t(`wifi.passphrase.problem.${problem}`, limits)}</p>}
       {save.isError && <p className="text-sm text-destructive">{save.error.message}</p>}
       {result && (
@@ -78,7 +88,8 @@ const PassphraseForm = () => {
           {t(`wifi.passphrase.result.${result.result}`, { error: result.error })}
         </p>
       )}
-    </div>
+      </div>
+    </Card>
   )
 }
 
@@ -91,8 +102,9 @@ const WifiSection = () => {
     return null
   }
   return (
-    <Section h2={t('wifi.title')} description={t('wifi.description')}>
-      <p className="text-sm">{t('wifi.drops', { count: wifiDrops(events) })}</p>
+    <Card compact h2={t('wifi.title')} size="sm">
+      <p className="text-sm text-muted-foreground">{t('wifi.description')}</p>
+      <p className="mt-2 text-sm">{t('wifi.drops', { count: wifiDrops(events) })}</p>
       {wifi.reason && <p className="mt-2 text-sm text-warning">{wifi.reason}</p>}
       {wifi.clients.length === 0 ? (
         <p className="mt-2 text-sm text-muted-foreground">{t('wifi.empty')}</p>
@@ -121,8 +133,7 @@ const WifiSection = () => {
           </TableBody>
         </Table>
       )}
-      <PassphraseForm />
-    </Section>
+    </Card>
   )
 }
 
@@ -132,6 +143,7 @@ export const networkPage = generalLayout.lets
   .with(networkQuery)
   .page(({ data: { network } }) => {
     const mutation = networkUpdateMutation.useMutation()
+    const wifiOn = wifiClientsQuery.useQuery().data?.available ?? false
     const t = useT()
     useHead({ title: t('nav.network') })
 
@@ -142,11 +154,16 @@ export const networkPage = generalLayout.lets
 
     return (
       <Sections gap="lg">
-        <Section h1={t('network.title')} description={t('network.description')}>
+        <PageTitle title={t('network.title')} description={t('network.description')} />
+        <div className="grid items-start gap-6 lg:grid-cols-2">
+          <div className="flex min-w-0 flex-col gap-6">
+        <Card compact h2={t('network.connection.title')} size="sm">
           <XSelect
             options={lanOptions(network, t)}
             value={currentChoice(network)}
             disabled={mutation.isPending}
+            // the label names the interfaces and the address: as wide as its text, it runs past a phone
+            triggerProps={{ className: 'w-full max-w-full [&_[data-slot=select-value]]:truncate' }}
             onValueChange={(value) => void choose(String(value))}
           />
           <p className="mt-2 text-sm text-muted-foreground">
@@ -161,9 +178,14 @@ export const networkPage = generalLayout.lets
               {t('network.saved', { command: 'sudo vibedpn up', address: network.lan_address })}
             </p>
           )}
-        </Section>
+        </Card>
+        {wifiOn && <PassphraseForm />}
+          </div>
+          <div className="flex min-w-0 flex-col gap-6">
         <WifiSection />
         <LogsCard scope="network" />
+          </div>
+        </div>
       </Sections>
     )
   })

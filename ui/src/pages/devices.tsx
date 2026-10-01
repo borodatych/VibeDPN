@@ -1,7 +1,8 @@
 import { useHead } from '@unhead/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Section } from '@/components/ui/section'
+import { PageTitle } from '@/components/blocks/page-title'
+import { Sections } from '@/components/ui/section'
 import { XSelect } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { devicePolicySetMutation, devicePolicyUnsetMutation, deviceListQuery } from '@/features/devices/api'
@@ -62,9 +63,13 @@ const DeviceRow = ({ device, enabled }: { device: Device; enabled: PolicyUplinks
           aria-label={t('devices.nameOf', { device: deviceLabel(device, t) })}
         />
       </TableCell>
-      <TableCell className="font-mono text-xs">{device.mac ?? t('common.none')}</TableCell>
-      <TableCell className="font-mono text-xs">{device.ip ?? t('common.none')}</TableCell>
-      <TableCell className="text-sm">
+      <TableCell data-label={t('devices.column.mac')} className="font-mono text-xs">
+        {device.mac ?? t('common.none')}
+      </TableCell>
+      <TableCell data-label={t('devices.column.address')} className="font-mono text-xs">
+        {device.ip ?? t('common.none')}
+      </TableCell>
+      <TableCell data-label={t('devices.column.lastSeen')} className="text-sm">
         {device.last_seen ? formatDate(new Date(device.last_seen), 'date-time-nice', language) : t('devices.neverSeen')}
       </TableCell>
       <TableCell>
@@ -124,7 +129,9 @@ export const devicesPage = generalLayout.lets
     }
     const shown = devices.filter((device) => matchesSearch(device, search))
     return (
-      <Section h1={t('devices.title')} description={t('devices.description')}>
+      <Sections gap="lg">
+        <PageTitle title={t('devices.title')} description={t('devices.description')} />
+        <div>
         <Input
           value={search}
           placeholder={t('devices.search')}
@@ -134,7 +141,7 @@ export const devicesPage = generalLayout.lets
         {devices.length === 0 ? (
           <p className="text-muted-foreground">{t('devices.empty')}</p>
         ) : (
-          <Table>
+          <Table className="table-stack">
             <TableHeader>
               <TableRow>
                 <TableHead>{t('devices.column.name')}</TableHead>
@@ -151,6 +158,7 @@ export const devicesPage = generalLayout.lets
             </TableBody>
           </Table>
         )}
-      </Section>
+        </div>
+      </Sections>
     )
   })

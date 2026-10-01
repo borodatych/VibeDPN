@@ -1,10 +1,12 @@
 import { useHead } from '@unhead/react'
-import { useBreakpoint } from '@/components/hooks/use-breakpoint'
+import { ListDetail } from '@/components/blocks/list-detail'
+import { PageTitle } from '@/components/blocks/page-title'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { FilePicker } from '@/components/ui/file-picker'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Section, Sections } from '@/components/ui/section'
+import { Sections } from '@/components/ui/section'
 import { Textarea } from '@/components/ui/textarea'
 import {
   torExitMutation,
@@ -20,7 +22,6 @@ import {
   exitEntries,
   exitKey,
   pickExit,
-  type ExitEntry,
   MAX_WG_FILE_BYTES,
   missingWgParts,
   PROTON_ACCOUNT_URL,
@@ -40,9 +41,7 @@ import { LogsCard } from '@/features/logs/card'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import { useT } from '@/modules/i18n/use-t'
-import { cn } from '@/utils'
-import { PlusIcon } from 'lucide-react'
-import { useState, type ChangeEvent } from 'react'
+import { useState } from 'react'
 import { z } from 'zod'
 
 /** The removal of a WireGuard exit and what is known of it: its key and whether its file is on the box */
@@ -235,8 +234,7 @@ const AddExit = ({ onAdded }: { onAdded: (key: string) => void }) => {
   const [tooLarge, setTooLarge] = useState(false)
   const missing = text ? missingWgParts(text) : []
 
-  const chooseFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
+  const chooseFile = async (file: File | null) => {
     if (!file) {
       return
     }
@@ -260,10 +258,10 @@ const AddExit = ({ onAdded }: { onAdded: (key: string) => void }) => {
     <Card compact h2={t('uplinks.add.title')} size="sm">
       <ProtonGuide />
       <div className="mt-4 space-y-3">
-        <label className="block space-y-1 text-sm">
+        <div className="space-y-1 text-sm">
           <span className="block">{t('uplinks.add.file')}</span>
-          <Input type="file" accept=".conf,text/plain" onChange={(event) => void chooseFile(event)} />
-        </label>
+          <FilePicker accept=".conf,text/plain" label={t('uplinks.add.file')} onPick={(file) => void chooseFile(file)} />
+        </div>
         {tooLarge && <p className="text-sm text-destructive">{t('uplinks.add.tooLarge')}</p>}
         <label className="block space-y-1 text-sm">
           <span className="block">{t('uplinks.add.paste')}</span>
@@ -299,34 +297,6 @@ const AddExit = ({ onAdded }: { onAdded: (key: string) => void }) => {
         {add.isError && <p className="text-sm text-destructive">{add.error.message}</p>}
       </div>
     </Card>
-  )
-}
-
-const ExitListItem = ({
-  entry,
-  current,
-  onPick,
-}: {
-  entry: ExitEntry
-  current: boolean
-  onPick: (key: string) => void
-}) => {
-  const t = useT()
-  const title = entry.kind === 'wg' ? entry.key : t(`uplinks.${entry.kind}.title`)
-  return (
-    <button
-      type="button"
-      data-exit={entry.key}
-      aria-current={current || undefined}
-      className={cn(
-        'flex w-full items-center justify-between gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-muted',
-        current && 'border-primary bg-muted',
-      )}
-      onClick={() => onPick(entry.key)}
-    >
-      <span className="min-w-0 font-accent text-sm font-semibold">{title}</span>
-      <Badge variant={entry.on ? 'success' : 'secondary'}>{entry.on ? t('uplinks.list.on') : t('uplinks.list.off')}</Badge>
-    </button>
   )
 }
 
@@ -367,7 +337,6 @@ export const uplinksPage = generalLayout.lets
     const exits = data?.exits
     const tor = torExitQuery.useQuery().data?.tor ?? undefined
     const xray = xrayExitQuery.useQuery().data?.xray ?? undefined
-    const phone = useBreakpoint('max-lg')
     const wg = exits?.uplinks ?? []
     const entries = exitEntries(tor, xray, wg)
     const picked = pickExit(entries, search.exit)
@@ -376,33 +345,25 @@ export const uplinksPage = generalLayout.lets
 
     return (
       <Sections gap="lg">
-        <Section h1={t('uplinks.page.title')} description={t('uplinks.page.description')} descriptionClassName="max-w-none text-xl text-pretty max-md:text-lg max-sm:text-base" />
+        <PageTitle title={t('uplinks.page.title')} description={t('uplinks.page.description')} />
         {data && !exits && <p className="text-sm text-muted-foreground">{data.reason}</p>}
         {exits && <ApplyLine apply={exits.apply} />}
-        <div className="grid items-start gap-6 lg:grid-cols-3">
-          {/* on a phone the chosen exit opens under its own line, not in a second column */}
-          <nav aria-label={t('uplinks.page.title')} className="flex min-w-0 flex-col gap-2">
-            {entries.map((entry) => (
-              <div key={entry.key} className="flex flex-col gap-4">
-                <ExitListItem entry={entry} current={entry.key === picked} onPick={pick} />
-                {phone && entry.key === picked && detail}
-              </div>
-            ))}
-            {exits && (
-              <div className="flex flex-col gap-4">
-                <Button
-                  variant={picked === ADD_EXIT ? 'default' : 'outline-secondary'}
-                  icon={PlusIcon}
-                  onClick={() => pick(ADD_EXIT)}
-                >
-                  {t('uplinks.list.add')}
-                </Button>
-                {phone && picked === ADD_EXIT && detail}
-              </div>
-            )}
-          </nav>
-          {!phone && <div className="min-w-0 lg:col-span-2">{detail}</div>}
-        </div>
+        <ListDetail
+          label={t('uplinks.page.title')}
+          items={entries.map((entry) => ({
+            key: entry.key,
+            title: entry.kind === 'wg' ? entry.key : t(`uplinks.${entry.kind}.title`),
+            aside: (
+              <Badge variant={entry.on ? 'success' : 'secondary'}>
+                {entry.on ? t('uplinks.list.on') : t('uplinks.list.off')}
+              </Badge>
+            ),
+          }))}
+          picked={picked}
+          onPick={pick}
+          add={exits ? { key: ADD_EXIT, label: t('uplinks.list.add') } : undefined}
+          detail={detail}
+        />
       </Sections>
     )
   })

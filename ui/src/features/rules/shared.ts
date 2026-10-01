@@ -253,3 +253,17 @@ export const listCopyText = (item: DomainListView, t: T): string => {
   }
   return t('lists.copy.domains', { count: item.domains })
 }
+
+/** The sections of «Rules», in the order of the list on the left; the key is the one in the URL */
+export const RULE_SECTIONS = ['sites', 'lists', 'networks', 'sniffer', 'learned'] as const
+
+export type RuleSection = (typeof RULE_SECTIONS)[number]
+
+/**
+ * The section the page shows: the one in the URL when it is one of them, else the rules of the sites
+ *
+ * @tags rules
+ */
+export const pickSection = (wanted: string | undefined): RuleSection =>
+  RULE_SECTIONS.find((section) => section === wanted) ?? 'sites'
+

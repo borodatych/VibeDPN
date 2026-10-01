@@ -1,7 +1,9 @@
 import { useHead } from '@unhead/react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Section, Sections } from '@/components/ui/section'
+import { FilePicker } from '@/components/ui/file-picker'
+import { PageTitle } from '@/components/blocks/page-title'
+import { Card } from '@/components/ui/card'
+import { Sections } from '@/components/ui/section'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { backupMutation, backupsQuery, deleteArchiveMutation, restoreArchiveMutation } from '@/features/backup/api'
 import {
@@ -52,11 +54,14 @@ const ArchiveRow = ({ archive, busy }: { archive: Archive; busy: boolean }) => {
   }
   return (
     <TableRow>
-      {/* the actions under the name, not in a column of their own: three buttons do not fit a phone beside it */}
+      {/* the actions beside the name on a wide screen, under it on a phone: three buttons do not fit there beside it */}
       <TableCell className="whitespace-normal">
-        <div>{formatDate(new Date(archive.created_at * 1000), 'date-time-nice', language)}</div>
-        <div className="font-mono text-xs break-all text-muted-foreground">{archive.name}</div>
-        <div className="mt-2 flex flex-wrap gap-2">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div className="min-w-0">
+          <div>{formatDate(new Date(archive.created_at * 1000), 'date-time-nice', language)}</div>
+          <div className="font-mono text-xs break-all text-muted-foreground">{archive.name}</div>
+        </div>
+        <div className="flex flex-wrap gap-2">
           <Button asChild variant="outline-secondary" size="sm">
             <a href={archiveUrl(archive.name)} download={archive.name}>
               {t('backup.download')}
@@ -82,6 +87,7 @@ const ArchiveRow = ({ archive, busy }: { archive: Archive; busy: boolean }) => {
           >
             {t('backup.delete.action')}
           </Button>
+        </div>
         </div>
         {restore.isError && <p className="mt-1 text-xs text-destructive">{restore.error.message}</p>}
         {remove.isError && <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>}
@@ -124,12 +130,11 @@ const UploadForm = ({ busy }: { busy: boolean }) => {
   return (
     <div className="space-y-2">
       <p className="font-accent text-sm text-muted-foreground">{t('backup.upload.title')}</p>
-      <Input
-        type="file"
+      <FilePicker
         accept=".tar.gz,.gz,application/gzip"
-        className="max-w-sm"
         disabled={busy}
-        onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+        label={t('backup.upload.title')}
+        onPick={setFile}
       />
       <p className="text-xs text-muted-foreground">{t('backup.upload.hint', { max: humanBytes(MAX_RESTORE_BYTES) })}</p>
       <Button
@@ -169,13 +174,16 @@ export const backupPage = generalLayout.lets
     }
     return (
       <Sections gap="lg">
-        <Section h1={t('backup.title')} description={t('backup.description', { keep: view?.keep ?? '' })}>
-          <div className="space-y-3">
-            {away && <p className="text-sm text-warning">{t('backup.away')}</p>}
-            {view && <TaskLine task={view.backup} kind="backup" />}
-            {view && <TaskLine task={view.restore} kind="restore" />}
-            <div>
+        <PageTitle title={t('backup.title')} description={t('backup.description', { keep: view?.keep ?? '' })} />
+        <div className="grid items-start gap-6 lg:grid-cols-3">
+          <Card
+            compact
+            h2={t('backup.list.title')}
+            size="sm"
+            className="min-w-0 lg:col-span-2"
+            action={
               <Button
+                size="sm"
                 disabled={busy}
                 loading={make.isPending}
                 confirm={t('backup.make.confirm')}
@@ -183,32 +191,39 @@ export const backupPage = generalLayout.lets
               >
                 {t('backup.make.action')}
               </Button>
+            }
+          >
+            <div className="space-y-3">
+              {away && <p className="text-sm text-warning">{t('backup.away')}</p>}
+              {view && <TaskLine task={view.backup} kind="backup" />}
+              {view && <TaskLine task={view.restore} kind="restore" />}
+              {make.isError && <p className="text-sm text-destructive">{make.error.message}</p>}
+              {view === null || view.archives.length === 0 ? (
+                <p className="text-sm text-muted-foreground">{away ? t('backup.away') : t('backup.list.empty')}</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('backup.list.made')}</TableHead>
+                      <TableHead>{t('backup.list.size')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {view.archives.map((archive) => (
+                      <ArchiveRow key={archive.name} archive={archive} busy={busy} />
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </div>
-            {make.isError && <p className="text-sm text-destructive">{make.error.message}</p>}
-          </div>
-        </Section>
-        <Section h2={t('backup.list.title')}>
-          {view === null || view.archives.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{away ? t('backup.away') : t('backup.list.empty')}</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('backup.list.made')}</TableHead>
-                  <TableHead>{t('backup.list.size')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {view.archives.map((archive) => (
-                  <ArchiveRow key={archive.name} archive={archive} busy={busy} />
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </Section>
-        <Section h2={t('backup.restore.title')} description={t('backup.restore.description')}>
-          <UploadForm busy={busy} />
-        </Section>
+          </Card>
+          <Card compact h2={t('backup.restore.title')} size="sm" className="min-w-0">
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">{t('backup.restore.description')}</p>
+              <UploadForm busy={busy} />
+            </div>
+          </Card>
+        </div>
       </Sections>
     )
   })

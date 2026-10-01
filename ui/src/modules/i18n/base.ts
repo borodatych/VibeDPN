@@ -59,6 +59,9 @@ const table = {
   'nav.closeMenu': 'Close menu',
   'nav.menu': 'Menu',
   'nav.more': 'More',
+
+  'file.choose': 'Choose a file',
+  'file.none': 'No file chosen',
   'nav.primary': 'Primary navigation',
 
   'palette.menu': 'Palette of the panel',
@@ -273,6 +276,7 @@ const table = {
   'devices.policy.block': 'No internet (block)',
 
   'network.title': 'Network',
+  'network.connection.title': 'Connection of the box',
   'network.description': 'Where the box stands: in the home LAN on one port, or between the ISP and the LAN',
   'network.gatewayHint': 'The box hands out addresses on {interface}; its devices use {address} as gateway and DNS.',
   'network.sidecarHint': 'The box sits in the home LAN at {address}; devices use it as their gateway.',
@@ -308,6 +312,8 @@ const table = {
 
   'rules.title': 'Rules',
   'rules.description': "Each site's channel in smart mode; subdomains and the CDNs it calls follow it",
+  'rules.sites.title': 'Sites',
+  'rules.page.description': 'Where each site, list and network goes in smart mode, and what the devices ask.',
   'rules.column.site': 'Site',
   'rules.column.channel': 'Channel',
   'rules.column.country': 'Country',
@@ -516,6 +522,7 @@ const table = {
   'uplinks.xray.limits.down': "While the server is unreachable the traffic is dropped, never let out past the tunnel.",
   'uplinks.xray.use': "Send sites through it on the Rules page (channel xray), or choose xray as the uplink on the status screen.",
   'access.title': "Access by a link",
+  'access.server.title': 'Server',
   'peers.title': 'Peers of the tunnel',
   'peers.description': 'Home boxes and devices that reach this VPS through its WireGuard tunnel. Each has a file of its own.',
   'peers.empty': 'No peers yet: add the first one below.',
@@ -569,7 +576,7 @@ const table = {
   'access.link.apps': "Any app with VLESS and REALITY imports it: v2rayNG or Hiddify on Android, Streisand or Hiddify on iPhone.",
   'access.people.title': "People",
   'access.people.description': "Everyone with a link of their own. Adding or removing a person drops nobody else's connection.",
-  'access.people.empty': "Nobody yet: add the first person below.",
+  'access.people.empty': "Nobody yet: type the name of the first person above.",
   'access.people.column.name': "Name",
   'access.people.column.since': "Since",
   'access.people.column.traffic': "Traffic",
@@ -582,7 +589,7 @@ const table = {
   'access.people.offFirst': "Turn the server on first.",
   'access.people.problem.empty': "Write a name first.",
   'access.people.problem.format': "Up to 32 lowercase Latin letters, digits and hyphens, starting with a letter or digit.",
-  'access.ddns.title': "Name that follows the box",
+  'access.ddns.title': "Name of the box (DDNS)",
   'access.ddns.description': "A home address changes from time to time. A DDNS service keeps a name pointing at it: the box calls the service's update address whenever its own address moves.",
   'access.ddns.on': "on",
   'access.ddns.off': "off",
