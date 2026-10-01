@@ -1426,6 +1426,19 @@ curl -s --max-time 15 http://127.0.0.1:4480/doctor | grep -q '"network":false' |
   fail "the daily check kept no report"
 echo "check of the box: asked in the panel and daily, the report shows the router ok"
 
+log "logs from the panel: the services up named, the host reads one and hides secrets"
+curl -s --max-time 15 http://127.0.0.1:4480/logs | grep -q '"services":\[[^]]*"core"' ||
+  fail "core offers no logs of core after up"
+answer="$(backups -X POST -H 'Content-Type: application/json' -d '{"service":"no-such","tail":5}' http://127.0.0.1:4480/logs)"
+[ "${answer##* }" = 422 ] || fail "core asked the host for a service the box does not run: $answer"
+answer="$(backups -X POST -H 'Content-Type: application/json' -d '{"service":"core","tail":20}' http://127.0.0.1:4480/logs)"
+[ "${answer##* }" = 200 ] || fail "core did not ask the host for a log: $answer"
+out="$(sudo "$CLI" logs --requested --dir "$BOX" 2>&1)" || fail "vibedpn logs --requested failed: $out"
+shown="$(curl -s --max-time 15 http://127.0.0.1:4480/logs)"
+printf '%s' "$shown" | grep -q '"report":{"service":"core","tail":20' || fail "the log of core was not kept: $shown"
+printf '%s' "$shown" | grep -q '"state":{"pending":false,"ok":true' || fail "the read has no good result: $shown"
+echo "logs: core read from the panel through the host"
+
 log "panel password from the panel: core wants the current one, AdGuard takes the new one after the host applies"
 NEW_PASSWORD=e2e-pass-456
 panel_password() {
