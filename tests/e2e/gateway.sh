@@ -217,7 +217,7 @@ printf 'admin:changed-after-backup\n' | sudo tee "$BOX/secrets/htpasswd" >/dev/n
 restore_out="$(sudo "$CLI" restore "$WORK/box-backup.tar.gz" --dir "$BOX" 2>&1)" || fail "vibedpn restore failed: $restore_out"
 [ "$(sudo sha256sum "$BOX/secrets/htpasswd" | awk '{ print $1 }')" = "$before" ] || fail "restore did not bring the secret back"
 sudo sh -c "grep -q changed-after-backup '$BOX'/restore-backup-*/secrets/htpasswd" || fail "restore did not keep the replaced files aside"
-sudo "$CLI" up --dir "$BOX" >/dev/null 2>&1 || fail "vibedpn up after restore failed"
+# no `up` here: restore starts the box from the archive itself
 i=0
 until settled && "$CLI" device list --dir "$BOX" 2>/dev/null | grep -q "$DEVICE_MAC"; do
   i=$((i + 5))

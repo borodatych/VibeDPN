@@ -1380,6 +1380,38 @@ fi
 await_exit "$VPS_IP" "the device lost the VPS after the named exit was removed"
 echo "named exit removed: file, container and uplink are gone"
 
+log "backup and restore from the panel: the host makes the copy, a restore brings the box back as it was"
+backups() {
+  curl -s --max-time 15 "$@" -w ' %{http_code}'
+}
+answer="$(backups -X POST http://127.0.0.1:4480/backups)"
+[ "${answer##* }" = 200 ] || fail "core did not ask the host for a backup: $answer"
+# what the host's path units run on those requests
+out="$(sudo "$CLI" backup --requested --dir "$BOX" 2>&1)" || fail "vibedpn backup --requested failed: $out"
+wait_healthy vibedpn-core-1
+listing="$(curl -s --max-time 15 http://127.0.0.1:4480/backups)"
+printf '%s' "$listing" | grep -q '"backup":{"pending":false,"ok":true' || fail "the backup has no good result: $listing"
+archive="$(printf '%s' "$listing" | grep -o 'vibedpn-[0-9]\{8\}-[0-9]\{6\}\.tar\.gz' | head -1)"
+[ -n "$archive" ] || fail "the backup made no archive: $listing"
+sudo "$CLI" mode off --dir "$BOX" >/dev/null || fail "vibedpn mode off after the backup failed"
+answer="$(backups -X POST "http://127.0.0.1:4480/backups/$archive/restore")"
+[ "${answer##* }" = 200 ] || fail "core did not ask the host for a restore: $answer"
+out="$(sudo "$CLI" restore --requested --dir "$BOX" 2>&1)" || fail "vibedpn restore --requested failed: $out"
+wait_healthy vibedpn-core-1
+grep -q "^  mode: full$" "$BOX/config.yaml" || fail "the restore did not bring routing.mode full back"
+curl -s --max-time 15 http://127.0.0.1:4480/backups | grep -q '"restore":{"pending":false,"ok":true' ||
+  fail "the restore has no good result"
+await_exit "$VPS_IP" "the restored box does not lead the device through the VPS"
+# an archive this box cannot start is refused before the host is asked
+mkdir -p "$WORK/broken"
+printf 'version: 1\nrole: nobody\n' >"$WORK/broken/config.yaml"
+tar -czf "$WORK/broken.tar.gz" -C "$WORK/broken" config.yaml
+answer="$(backups -X PUT --data-binary "@$WORK/broken.tar.gz" http://127.0.0.1:4480/restore)"
+[ "${answer##* }" = 422 ] || fail "core took an archive of no valid box: $answer"
+curl -s --max-time 15 http://127.0.0.1:4480/backups | grep -q '"restore":{"pending":false' ||
+  fail "a refused archive left a restore waiting"
+echo "backup $archive, restored over mode off, the box leads through the VPS again; a broken archive refused"
+
 log "panel password from the panel: core wants the current one, AdGuard takes the new one after the host applies"
 NEW_PASSWORD=e2e-pass-456
 panel_password() {
