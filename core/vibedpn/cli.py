@@ -856,7 +856,8 @@ def update(
     ] = False,
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
-    """Update the checkout and the CLI (install.sh), pull the images, restart the box."""
+    """Update the checkout and the CLI (install.sh), pull the images, restart the box when the code
+    moved; on the same commit nothing is restarted but what the pull changed."""
     if timer is not None:
         _switch_update_timer(box_dir, timer)
         return
@@ -943,14 +944,21 @@ def _update_box(box_dir: Path) -> _UpdateOutcome:
     ):
         raise _UpdateFailedError("install.sh failed; the box keeps running the previous version")
     _pull(box_dir)
-    # the restart runs the freshly installed CLI, not this process with the old code loaded
-    if run([sys.executable, "-m", "vibedpn", "restart", "--dir", str(box_dir)]) != 0:
-        raise _UpdateFailedError("restart after the update failed; see `vibedpn doctor`")
+    installed = _revision(box_dir)
+    same_code = before is not None and installed is not None and before.commit == installed.commit
+    # New code may render the start-time files of the services differently with the same
+    # config.yaml, and their fingerprints follow config.yaml alone (decision 25): only a full
+    # restart applies it. The same commit has the same code and the same images, so `up`
+    # recreates just what the pull really changed, and a box already up to date keeps its network.
+    # Either step runs the freshly installed CLI, not this process with the old code loaded.
+    step = "up" if same_code else "restart"
+    if run([sys.executable, "-m", "vibedpn", step, "--dir", str(box_dir)]) != 0:
+        raise _UpdateFailedError(f"{step} after the update failed; see `vibedpn doctor`")
     after = _record_revision(box_dir)
-    if before is not None and after is not None and before.commit == after.commit:
+    if same_code and after is not None:
         return _UpdateOutcome(
-            f"already the latest {branch} ({after.commit}) with its images, images pulled"
-            f" and the box restarted{note}",
+            f"already the latest {branch} ({after.commit}) with its images;"
+            f" only what the pull changed was recreated{note}",
             building,
         )
     moved = f" from {before.commit} to {after.commit}" if before and after else ""

@@ -224,9 +224,11 @@ def test_update_needs_a_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert result.exit_code == 1 and "not a checkout" in result.output
 
 
-def test_update_runs_install_sh_pull_and_the_new_cli_restart(
+def test_update_on_the_same_commit_runs_install_sh_pull_and_up_not_a_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Found on the box: an update with nothing new stopped all nine containers. The same commit
+    has the same code and images, so the new CLI's `up` recreates only what the pull changed."""
     recorder = make_box(tmp_path, monkeypatch)
     (tmp_path / ".git").mkdir()
     (tmp_path / "install.sh").write_text("#!/bin/sh\n", encoding="utf-8")
@@ -239,7 +241,33 @@ def test_update_runs_install_sh_pull_and_the_new_cli_restart(
     assert not any(
         "--ignore-pull-failures" in call for call in flat
     )  # a failed pull is not forgiven
+    assert any(" -m vibedpn up --dir " in call for call in flat)
+    assert not any(" -m vibedpn restart " in call for call in flat)
+    assert "only what the pull changed was recreated" in result.output
+
+
+def test_update_to_a_new_commit_restarts_the_box_with_the_new_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """New code may render the files of the services differently from the same config.yaml"""
+    recorder = make_box(tmp_path, monkeypatch)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "install.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    recorder.ps_output = "next\n"
+    record = recorder.run
+
+    def install_moves_the_checkout(argv: list[str]) -> int:
+        if argv[-1].endswith("install.sh"):
+            recorder.ps_output = "abc1234 2026-10-01T20:00:00+00:00\n"
+        return record(argv)
+
+    monkeypatch.setattr(cli, "run", install_moves_the_checkout)
+    result = runner.invoke(cli.app, ["update", "--dir", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    flat = [" ".join(call) for call in recorder.calls]
     assert any(" -m vibedpn restart --dir " in call for call in flat)
+    assert not any(" -m vibedpn up " in call for call in flat)
+    assert "updated to the latest" in result.output
 
 
 def test_update_refreshes_the_images_of_disabled_services_the_host_keeps(
@@ -273,8 +301,8 @@ def test_update_refreshes_the_images_of_disabled_services_the_host_keeps(
     assert "--profile" in pulls[1]  # disabled services are named only under every profile
     flat = [" ".join(call) for call in recorder.calls]
     pulled = flat.index(" ".join(pulls[1]))
-    restarted = next(i for i, call in enumerate(flat) if " -m vibedpn restart " in call)
-    assert pulled < restarted
+    started = next(i for i, call in enumerate(flat) if " -m vibedpn up " in call)
+    assert pulled < started
 
 
 class FlakyPulls:
@@ -321,7 +349,7 @@ def test_a_pull_that_timed_out_is_tried_again_and_the_update_goes_on(
     assert "pulling the images failed (attempt 1 of 3); trying again" in output
     flat = [" ".join(call) for call in recorder.calls]
     assert sum(call.endswith(" pull") for call in flat) == 2
-    assert any(" -m vibedpn restart " in call for call in flat)
+    assert any(" -m vibedpn up " in call for call in flat)
 
 
 def test_images_that_never_download_stop_the_update_before_the_restart(
@@ -336,7 +364,8 @@ def test_images_that_never_download_stop_the_update_before_the_restart(
     assert "keeps running the previous version" in output
     flat = [" ".join(call) for call in recorder.calls]
     assert sum(call.endswith(" pull") for call in flat) == 3
-    assert not any(" -m vibedpn restart " in call for call in flat)
+    # the containers are left as they are: neither restarted nor brought up on images not there
+    assert not any(" -m vibedpn restart " in call or " -m vibedpn up " in call for call in flat)
 
 
 def test_a_task_the_unit_and_the_owner_both_run_is_done_once(
