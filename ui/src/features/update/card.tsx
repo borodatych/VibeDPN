@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button'
-import { Section } from '@/components/ui/section'
+import { Card } from '@/components/ui/card'
 import { updateMutation, updateQuery } from '@/features/update/api'
 import { updatedSince, type UpdateResult } from '@/features/update/shared'
 import type { T } from '@/modules/i18n/base'
@@ -50,8 +50,26 @@ export const UpdateCard = () => {
   }
   const busy = restarting || (view?.pending ?? false)
   return (
-    <Section h2={t('update.title')} description={t('update.description')}>
+    <Card
+      compact
+      h2={t('update.title')}
+      size="sm"
+      action={
+        <Button
+          variant="outline-secondary"
+          size="sm"
+          loading={mutation.isPending}
+          disabled={busy}
+          confirm={t('update.confirm')}
+          onClick={() => void ask()}
+        >
+          {t('update.action')}
+        </Button>
+      }
+    >
       <div className="flex flex-col gap-3">
+        {/* under the header, not beside it: the action of the header would squeeze it into a narrow column */}
+        <p className="text-sm text-muted-foreground">{t('update.description')}</p>
         <p className="text-sm">
           {view?.commit && view.branch
             ? t('update.version', {
@@ -66,20 +84,8 @@ export const UpdateCard = () => {
         {!busy &&
           view?.last &&
           resultLine(view.last, t, formatDate(new Date(view.last.finished_at * 1000), 'date-time-nice', language))}
-        <div>
-          <Button
-            variant="outline-secondary"
-            size="sm"
-            loading={mutation.isPending}
-            disabled={busy}
-            confirm={t('update.confirm')}
-            onClick={() => void ask()}
-          >
-            {t('update.action')}
-          </Button>
-        </div>
         {mutation.isError && <p className="text-xs text-destructive">{mutation.error.message}</p>}
       </div>
-    </Section>
+    </Card>
   )
 }

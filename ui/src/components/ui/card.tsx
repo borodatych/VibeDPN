@@ -7,8 +7,9 @@ import { cn } from '@/utils'
 const cardVariants = cva('border shadow-xs', {
   variants: {
     border: {
-      muted: 'border-foreground/20',
-      bright: 'border-foreground/30',
+      // one border token for the whole panel: a shade of its own per component drifts apart from the rest
+      muted: 'border-border',
+      bright: 'border-border',
       none: 'border-0',
     },
     background: {

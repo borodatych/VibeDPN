@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button'
-import { Section } from '@/components/ui/section'
+import { Card } from '@/components/ui/card'
 import { XSelect } from '@/components/ui/select'
 import { logsMutation, logsQuery } from '@/features/logs/api'
 import { DEFAULT_TAIL, offeredServices, TAIL_CHOICES, type LogsScope } from '@/features/logs/shared'
@@ -35,8 +35,26 @@ export const LogsCard = ({ scope }: { scope: LogsScope }) => {
     await logsQuery.refetchQuery()
   }
   return (
-    <Section h2={t('logs.title')} description={t('logs.description')}>
+    <Card
+      compact
+      h2={t('logs.title')}
+      size="sm"
+      action={
+        <Button
+          variant="outline-secondary"
+          size="sm"
+          disabled={pending}
+          loading={ask.isPending}
+          aria-label={t('logs.readOne', { service })}
+          onClick={() => void read()}
+        >
+          {t('logs.read')}
+        </Button>
+      }
+    >
       <div className="space-y-3">
+        {/* under the header, not beside it: the action of the header would squeeze it into a narrow column */}
+        <p className="text-sm text-muted-foreground">{t('logs.description')}</p>
         <div className="flex flex-wrap items-center gap-2">
           {services.length > 1 && (
             <XSelect
@@ -53,15 +71,6 @@ export const LogsCard = ({ scope }: { scope: LogsScope }) => {
             disabled={pending}
             onValueChange={(value) => setTail(Number(value))}
           />
-          <Button
-            variant="outline-secondary"
-            size="sm"
-            disabled={pending}
-            loading={ask.isPending}
-            onClick={() => void read()}
-          >
-            {services.length > 1 ? t('logs.read') : t('logs.readOne', { service })}
-          </Button>
         </div>
         {pending && <p className="text-sm text-warning">{t('logs.pending')}</p>}
         {!pending && view?.state.ok === false && (
@@ -87,6 +96,6 @@ export const LogsCard = ({ scope }: { scope: LogsScope }) => {
           </div>
         )}
       </div>
-    </Section>
+    </Card>
   )
 }

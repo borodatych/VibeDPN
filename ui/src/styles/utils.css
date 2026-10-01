@@ -3,7 +3,7 @@
 }
 
 @utility link-holder {
-  @apply [&_a]:text-link [&_a:hover]:text-link-hover [&_a:hover]:underline [&_a]:cursor-pointer;
+  @apply [&_a:not([data-slot=button])]:text-link [&_a:not([data-slot=button]):hover]:text-link-hover [&_a:not([data-slot=button]):hover]:underline [&_a]:cursor-pointer;
 }
 
 @utility form-sm {

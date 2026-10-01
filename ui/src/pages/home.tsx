@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Section, Sections } from '@/components/ui/section'
 import { XSelect } from '@/components/ui/select'
 import {
@@ -100,41 +101,86 @@ const VpsLanAccess = ({ allowed }: { allowed: boolean }) => {
   )
 }
 
-const UplinkCard = ({ uplink, failopen }: { uplink: UplinkStatus; failopen: boolean }) => {
+type UplinkRow = 'gateway' | 'exit' | 'killSwitch' | 'lanAccess' | 'checked' | 'error'
+
+/**
+ * The rows every exit card draws, so the cards of a row share the lines of the grid (subgrid)
+ * A row one card lacks is still drawn there, with a dash: otherwise the neighbours slide
+ */
+const uplinkRows = (uplinks: UplinkStatus[]): UplinkRow[] => [
+  'gateway',
+  'exit',
+  'killSwitch',
+  ...(uplinks.some((uplink) => uplink.lan_access !== null) ? (['lanAccess'] as const) : []),
+  'checked',
+  ...(uplinks.some((uplink) => uplink.error) ? (['error'] as const) : []),
+]
+
+const UplinkValue = ({ uplink, row, failopen }: { uplink: UplinkStatus; row: UplinkRow; failopen: boolean }) => {
   const t = useT()
   const language = useLanguage()
   const watched = uplink.in_use || uplink.fallback
+  switch (row) {
+    case 'gateway':
+      return <>{watched ? gatewayText(uplink.gateway_alive, t) : t('common.none')}</>
+    case 'exit':
+      return <>{uplink.in_use ? exitText(uplink, t) : t('common.none')}</>
+    case 'killSwitch':
+      return <>{uplink.in_use ? killSwitchText(uplink, failopen, t) : t('common.none')}</>
+    case 'lanAccess':
+      return uplink.lan_access === null ? <>{t('common.none')}</> : <VpsLanAccess allowed={uplink.lan_access} />
+    case 'checked':
+      return <>{uplink.checked_at ? formatDate(new Date(uplink.checked_at), 'date-time', language) : t('common.none')}</>
+    case 'error':
+      return uplink.error ? <span className="text-destructive">{uplink.error}</span> : <>{t('common.none')}</>
+  }
+}
+
+const UPLINK_ROW_LABEL: Record<UplinkRow, Parameters<T>[0]> = {
+  gateway: 'uplink.gateway',
+  exit: 'uplink.exit',
+  killSwitch: 'uplink.killSwitch',
+  lanAccess: 'uplink.lanAccess',
+  checked: 'uplink.checked',
+  error: 'uplink.error',
+}
+
+const UplinkCard = ({ uplink, rows, failopen }: { uplink: UplinkStatus; rows: UplinkRow[]; failopen: boolean }) => {
+  const t = useT()
   return (
-    <Section h2={uplink.name.toUpperCase()} size="lg" description={uplinkRole(uplink, t)}>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 font-accent text-sm">
-        <dt className="text-muted-foreground">{t('uplink.gateway')}</dt>
-        <dd>{watched ? gatewayText(uplink.gateway_alive, t) : t('common.none')}</dd>
-        {uplink.in_use && (
-          <>
-            <dt className="text-muted-foreground">{t('uplink.exit')}</dt>
-            <dd>{exitText(uplink, t)}</dd>
-          </>
-        )}
-        <dt className="text-muted-foreground">{t('uplink.killSwitch')}</dt>
-        <dd>{uplink.in_use ? killSwitchText(uplink, failopen, t) : t('common.none')}</dd>
-        {uplink.lan_access !== null && (
-          <>
-            <dt className="text-muted-foreground">{t('uplink.lanAccess')}</dt>
-            <dd>
-              <VpsLanAccess allowed={uplink.lan_access} />
-            </dd>
-          </>
-        )}
-        <dt className="text-muted-foreground">{t('uplink.checked')}</dt>
-        <dd>{uplink.checked_at ? formatDate(new Date(uplink.checked_at), 'date-time', language) : t('common.none')}</dd>
-        {uplink.error && (
-          <>
-            <dt className="text-muted-foreground">{t('uplink.error')}</dt>
-            <dd className="text-destructive">{uplink.error}</dd>
-          </>
-        )}
-      </dl>
-    </Section>
+    <section
+      data-uplink={uplink.name}
+      className="grid grid-rows-subgrid gap-y-1 rounded-xl border border-border bg-card px-5 py-4 font-accent text-sm text-card-foreground"
+      style={{ gridRow: `span ${rows.length + 1}` }}
+    >
+      <header className="mb-2">
+        <h2 className="font-title text-xl font-semibold tracking-tight text-accent-foreground">{uplink.name.toUpperCase()}</h2>
+        <p className="text-muted-foreground">{uplinkRole(uplink, t)}</p>
+      </header>
+      {rows.map((row) => (
+        <div key={row} data-row={row} className="grid grid-cols-[9.5rem_minmax(0,1fr)] gap-x-3">
+          <span className="text-muted-foreground">{t(UPLINK_ROW_LABEL[row])}</span>
+          <span className="min-w-0 break-words">
+            <UplinkValue uplink={uplink} row={row} failopen={failopen} />
+          </span>
+        </div>
+      ))}
+    </section>
+  )
+}
+
+/** The exits side by side: a card per exit, each on the same lines of the grid */
+const UplinkCards = ({ uplinks, failopen }: { uplinks: UplinkStatus[]; failopen: boolean }) => {
+  const rows = uplinkRows(uplinks)
+  if (uplinks.length === 0) {
+    return null
+  }
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      {uplinks.map((uplink) => (
+        <UplinkCard key={uplink.name} uplink={uplink} rows={rows} failopen={failopen} />
+      ))}
+    </div>
   )
 }
 
@@ -152,7 +198,8 @@ const RoutingControls = ({ status }: { status: BoxStatus }) => {
   }
   const enabled = routableUplinks(status)
   return (
-    <Section h2={t('routing.title')} size="lg">
+    <Card compact h2={t('routing.title')} size="sm" contentClassName="divide-y divide-border *:py-4 *:first:pt-0 *:last:pb-0">
+      <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <span className="font-accent text-sm text-muted-foreground">{t('routing.mode')}</span>
         <Button
@@ -174,7 +221,7 @@ const RoutingControls = ({ status }: { status: BoxStatus }) => {
         </Button>
       </div>
       {enabled.length > 1 && (
-        <div className="mt-4 flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <span className="font-accent text-sm text-muted-foreground">{t('routing.uplink')}</span>
           {enabled.map((name) => (
             <Button
@@ -189,6 +236,7 @@ const RoutingControls = ({ status }: { status: BoxStatus }) => {
           ))}
         </div>
       )}
+      </div>
       {enabled.length > 1 && (
         <FallbackChain
           chain={status.fallback}
@@ -197,7 +245,8 @@ const RoutingControls = ({ status }: { status: BoxStatus }) => {
           onChange={(fallback) => void change({ fallback })}
         />
       )}
-      <div className="mt-4 flex flex-wrap items-center gap-3">
+      <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
         <span className="font-accent text-sm text-muted-foreground">{t('routing.failopen.title')}</span>
         <span>{status.failopen ? t('routing.failopen.on') : t('routing.failopen.off')}</span>
         {status.failopen ? (
@@ -221,11 +270,12 @@ const RoutingControls = ({ status }: { status: BoxStatus }) => {
           </Button>
         )}
       </div>
-      {mutation.isError && <p className="mt-3 text-sm text-destructive">{mutation.error.message}</p>}
+      {mutation.isError && <p className="text-sm text-destructive">{mutation.error.message}</p>}
       {mutation.data?.routing.adguard === 'pending' && (
-        <p className="mt-3 text-sm text-warning">{t('routing.adguardPending')}</p>
+        <p className="text-sm text-warning">{t('routing.adguardPending')}</p>
       )}
-    </Section>
+      </div>
+    </Card>
   )
 }
 
@@ -242,7 +292,7 @@ const FallbackChain = ({
 }) => {
   const t = useT()
   return (
-    <div className="mt-4 space-y-2">
+    <div className="space-y-2">
       <p className="font-accent text-sm text-muted-foreground">{t('routing.fallback.title')}</p>
       <p className="text-sm text-muted-foreground">{t('routing.fallback.hint')}</p>
       {chain.length === 0 ? (
@@ -317,16 +367,17 @@ const ConsumerFacts = ({ dpn }: { dpn: DpnStatus }) => {
 const CountryConsumerCard = ({ dpn }: { dpn: DpnStatus }) => {
   const t = useT()
   return (
-    <Section
+    <Card
+      compact
       h2={t('dpn.countryTitle', { country: dpn.country ?? '' })}
-      size="lg"
+      size="sm"
       description={dpn.identity ? t('dpn.identity', { identity: dpn.identity }) : t('dpn.noIdentity')}
     >
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 font-accent text-sm">
         <ConsumerFacts dpn={dpn} />
       </dl>
       {dpn.error && <p className="mt-3 text-sm text-warning">{dpn.error}</p>}
-    </Section>
+    </Card>
   )
 }
 
@@ -382,9 +433,10 @@ const DpnCard = ({ dpn }: { dpn: DpnStatus }) => {
     await boxStatusQuery.refetchQuery()
   }
   return (
-    <Section
+    <Card
+      compact
       h2={t('dpn.title')}
-      size="lg"
+      size="sm"
       description={dpn.identity ? t('dpn.identity', { identity: dpn.identity }) : t('dpn.noIdentity')}
     >
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 font-accent text-sm">
@@ -407,7 +459,7 @@ const DpnCard = ({ dpn }: { dpn: DpnStatus }) => {
       <RegisterIdentity dpn={dpn} />
       {dpn.error && <p className="mt-3 text-sm text-warning">{dpn.error}</p>}
       {mutation.isError && <p className="mt-3 text-sm text-destructive">{mutation.error.message}</p>}
-    </Section>
+    </Card>
   )
 }
 
@@ -433,6 +485,17 @@ export const homePage = generalLayout.lets
   // a VPS routes no LAN: core has no status of a router there, and the page says where its things are
   .page(({ data: { role } }) => (role === VPS_ROLE ? <VpsHome /> : <LanHome />))
 
+/**
+ * The status page, variant A of the design pass: what the owner steers on the left, two thirds of the width,
+ * the service of the box on the right; one column on a phone, in the same order
+ */
+const StatusGrid = ({ main, side }: { main: React.ReactNode; side: React.ReactNode }) => (
+  <div className="grid items-start gap-6 lg:grid-cols-3">
+    <div className="flex min-w-0 flex-col gap-6 lg:col-span-2">{main}</div>
+    <div className="flex min-w-0 flex-col gap-6">{side}</div>
+  </div>
+)
+
 const VpsHome = () => {
   const t = useT()
   return (
@@ -447,9 +510,15 @@ const VpsHome = () => {
           </NavLink>
         </div>
       </Section>
-      <DoctorCard />
-      <LogsCard scope="all" />
-      <UpdateCard />
+      <StatusGrid
+        main={<LogsCard scope="all" />}
+        side={
+          <>
+            <DoctorCard />
+            <UpdateCard />
+          </>
+        }
+      />
     </Sections>
   )
 }
@@ -472,19 +541,25 @@ const LanHome = () => {
         </div>
         <WifiDropsNotice />
       </Section>
-      <RoutingControls status={status} />
-      {status.dpn && <DpnCard dpn={status.dpn} />}
-      {status.dpn_countries.map((dpn) => (
-        <CountryConsumerCard key={dpn.country} dpn={dpn} />
-      ))}
-      {status.uplinks
-        .filter((uplink) => uplink.enabled)
-        .map((uplink) => (
-          <UplinkCard key={uplink.name} uplink={uplink} failopen={status.failopen} />
-        ))}
-      <DoctorCard />
-      <LogsCard scope="all" />
-      <UpdateCard />
+      <StatusGrid
+        main={
+          <>
+            <RoutingControls status={status} />
+            {status.dpn && <DpnCard dpn={status.dpn} />}
+            {status.dpn_countries.map((dpn) => (
+              <CountryConsumerCard key={dpn.country} dpn={dpn} />
+            ))}
+            <UplinkCards uplinks={status.uplinks.filter((uplink) => uplink.enabled)} failopen={status.failopen} />
+            <LogsCard scope="all" />
+          </>
+        }
+        side={
+          <>
+            <DoctorCard />
+            <UpdateCard />
+          </>
+        }
+      />
     </Sections>
   )
 }

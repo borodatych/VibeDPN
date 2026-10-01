@@ -1,6 +1,6 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Section } from '@/components/ui/section'
+import { Card } from '@/components/ui/card'
 import { doctorMutation, doctorQuery } from '@/features/doctor/api'
 import { countVerdicts, problemsFirst, type Check, type Verdict } from '@/features/doctor/shared'
 import { useLanguage, useT } from '@/modules/i18n/use-t'
@@ -52,8 +52,25 @@ export const DoctorCard = () => {
   const problems = checks.filter((check) => check.verdict !== 'ok')
   const fine = checks.filter((check) => check.verdict === 'ok')
   return (
-    <Section h2={t('doctor.title')} description={t('doctor.description')}>
+    <Card
+      compact
+      h2={t('doctor.title')}
+      size="sm"
+      action={
+        <Button
+          variant="outline-secondary"
+          size="sm"
+          disabled={pending}
+          loading={ask.isPending}
+          onClick={() => void run(false)}
+        >
+          {t('doctor.run')}
+        </Button>
+      }
+    >
       <div className="space-y-3">
+        {/* under the header, not beside it: the action of the header would squeeze it into a narrow column */}
+        <p className="text-sm text-muted-foreground">{t('doctor.description')}</p>
         {report ? (
           <p className="text-sm">
             {t(report.network ? 'doctor.summary.network' : 'doctor.summary.local', {
@@ -97,15 +114,6 @@ export const DoctorCard = () => {
             size="sm"
             disabled={pending}
             loading={ask.isPending}
-            onClick={() => void run(false)}
-          >
-            {t('doctor.run')}
-          </Button>
-          <Button
-            variant="outline-secondary"
-            size="sm"
-            disabled={pending}
-            loading={ask.isPending}
             confirm={t('doctor.runNetwork.confirm')}
             onClick={() => void run(true)}
           >
@@ -114,6 +122,6 @@ export const DoctorCard = () => {
         </div>
         {ask.isError && <p className="text-xs text-destructive">{ask.error.message}</p>}
       </div>
-    </Section>
+    </Card>
   )
 }
