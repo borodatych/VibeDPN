@@ -39,7 +39,7 @@ describe('status page and header', () => {
     await page.goto(routes.home.abs())
     // the last row: above it the kill switch of the exit in use runs to more lines than the idle one's dash
     const checked = page.locator('[data-uplink] [data-row="checked"]')
-    await expect(checked).toHaveCount(2)
+    await expect(checked).toHaveCount(4)
     const [first, second] = await checked.evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().top))
     expect(first).toBe(second)
     await page.getByRole('button', { name: /^(Проверить|Check)$/ }).click()
