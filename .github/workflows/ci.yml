@@ -140,6 +140,7 @@ jobs:
         working-directory: ui
     # The panel reads these from the environment as it would from .env (env.example lists them)
     env:
+      HOST_ENV: local
       SERVER_PORT: "3000"
       CLIENT_PORT: "8000"
       SERVER_URL: http://localhost:3000
