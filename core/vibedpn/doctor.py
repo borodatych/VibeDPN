@@ -1552,15 +1552,39 @@ def render(results: list[CheckResult]) -> str:
         if item.hint:
             line += f" — {item.hint}"
         lines.append(line)
-    counts = {verdict: sum(1 for item in results if item.verdict is verdict) for verdict in Verdict}
-    lines.append(
-        f"{counts[Verdict.OK]} ok, {counts[Verdict.WARN]} warn, {counts[Verdict.FAIL]} fail"
-    )
+    lines.append(count_line(results))
     return "\n".join(lines)
+
+
+def count_line(results: list[CheckResult]) -> str:
+    """``26 ok, 1 warn, 0 fail``"""
+    counts = {verdict: sum(1 for item in results if item.verdict is verdict) for verdict in Verdict}
+    return f"{counts[Verdict.OK]} ok, {counts[Verdict.WARN]} warn, {counts[Verdict.FAIL]} fail"
 
 
 def to_json(results: list[CheckResult]) -> str:
     return json.dumps([asdict(item) for item in results], ensure_ascii=False, indent=1)
+
+
+# The report the panel shows, in core's data directory: the daily check and the one asked there
+REPORT_FILE = "doctor-report.json"
+# The word of a check asked in the panel: only `network` lets it ask for the exit addresses
+MODE_LOCAL = "local"
+MODE_NETWORK = "network"
+
+
+def report_text(results: list[CheckResult], *, network: bool, finished_at: float) -> str:
+    return (
+        json.dumps(
+            {
+                "finished_at": finished_at,
+                "network": network,
+                "checks": [asdict(item) for item in results],
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
 
 
 def has_failures(results: list[CheckResult]) -> bool:

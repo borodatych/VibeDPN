@@ -77,8 +77,37 @@ RESTORE = HostTask(
     timeout=15 * 60.0,
     no_answer="the host did not restore the backup: journalctl -u vibedpn-restore-request",
 )
+# The check of the box asked in the panel; the word of the request says whether it may leave the box
+# (`vibedpn doctor --network`), and the report goes next to the result (doctor.REPORT_FILE)
+DOCTOR = HostTask(
+    request="doctor-request",
+    result="doctor-result.json",
+    unit="vibedpn-doctor-request",
+    path_description="VibeDPN: a check of the box asked in the panel",
+    service_description="VibeDPN: vibedpn doctor asked in the panel",
+    command="doctor --requested",
+    # the exit address of every uplink with --network: a few timeouts at most
+    timeout=5 * 60.0,
+    no_answer="the host did not check the box: journalctl -u vibedpn-doctor-request,"
+    " or sudo vibedpn doctor",
+)
 # The tasks whose result is an ApplyResult; the update has its own (engine/update.py)
-TASKS = (APPLY, BACKUP, RESTORE)
+TASKS = (APPLY, BACKUP, RESTORE, DOCTOR)
+# The check the box makes of itself every day, without leaving it, so the panel shows a fresh report
+DOCTOR_TIMER_UNIT = "vibedpn-doctor"
+# A night hour off the weekly update (Sunday 04:00 and up to an hour), and a missed run is caught
+# up after a power-off (systemd.timer(5), knowledge linux/boxBackup.md)
+DOCTOR_TIMER = """[Unit]
+Description=VibeDPN: the daily check of the box (vibedpn doctor --report)
+
+[Timer]
+OnCalendar=*-*-* 05:30:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
 
 
 class ApplyError(RuntimeError):
@@ -129,6 +158,15 @@ def request_time(path: Path) -> float | None:
         return float(path.read_text(encoding="utf-8").splitlines()[0])
     except (OSError, IndexError, ValueError):
         return None
+
+
+def read_task_reason(data_dir: Path, task: HostTask) -> str:
+    """The second line of the request: why it was asked, or the word a task reads (``DOCTOR``)"""
+    try:
+        lines = (data_dir / task.request).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    return lines[1].strip() if len(lines) > 1 else ""
 
 
 def request_task(data_dir: Path, task: HostTask, now: float, reason: str) -> None:
@@ -194,5 +232,20 @@ def render_task_units(box_dir: Path, python: str, task: HostTask) -> dict[str, s
             "[Service]\n"
             "Type=oneshot\n"
             f"ExecStart={python} -m vibedpn {task.command} --dir {box_dir}\n"
+        ),
+    }
+
+
+def render_doctor_timer(box_dir: Path, python: str) -> dict[str, str]:
+    """The daily check: a timer and the service writing the report the panel shows"""
+    return {
+        f"{DOCTOR_TIMER_UNIT}.timer": DOCTOR_TIMER,
+        f"{DOCTOR_TIMER_UNIT}.service": (
+            "[Unit]\n"
+            "Description=VibeDPN: the daily check of the box\n"
+            "After=docker.service network-online.target\n\n"
+            "[Service]\n"
+            "Type=oneshot\n"
+            f"ExecStart={python} -m vibedpn doctor --report --dir {box_dir}\n"
         ),
     }

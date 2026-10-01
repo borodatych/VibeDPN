@@ -365,6 +365,32 @@ class ApplyView(BaseModel):
     finished_at: float | None
 
 
+class CheckView(BaseModel):
+    """One check of ``vibedpn doctor`` (doctor.CheckResult)"""
+
+    name: str
+    verdict: Literal["ok", "warn", "fail"]
+    detail: str
+    hint: str = ""
+
+
+class DoctorReportView(BaseModel):
+    finished_at: float
+    network: bool  # whether it asked for the exit addresses, leaving the box
+    checks: list[CheckView]
+
+
+class DoctorRequest(BaseModel):
+    network: bool = False
+
+
+class DoctorView(BaseModel):
+    """The last report of the box and the check asked in the panel"""
+
+    report: DoctorReportView | None  # None: no check kept a report yet
+    state: ApplyView
+
+
 class ArchiveView(BaseModel):
     name: str  # vibedpn-<time>.tar.gz in backups/ of the box
     size: int  # bytes

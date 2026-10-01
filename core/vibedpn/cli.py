@@ -109,19 +109,33 @@ from vibedpn.config_edit import (
 )
 from vibedpn.detect import DetectError, HostProbe, find_tool
 from vibedpn.device_view import render_devices
-from vibedpn.doctor import evaluate, gather, has_failures, render, to_json
+from vibedpn.doctor import (
+    MODE_NETWORK,
+    REPORT_FILE,
+    count_line,
+    evaluate,
+    gather,
+    has_failures,
+    render,
+    report_text,
+    to_json,
+)
 from vibedpn.engine.apply import (
     APPLY,
     BACKUP,
     BOX_DATA_DIR,
+    DOCTOR,
+    DOCTOR_TIMER_UNIT,
     RESTORE,
     TASKS,
     ApplyError,
     ApplyResult,
     HostTask,
     host_lock,
+    read_task_reason,
     read_task_request,
     read_task_result,
+    render_doctor_timer,
     render_task_units,
     write_task_result,
 )
@@ -1120,6 +1134,7 @@ def _ensure_apply_units(box_dir: Path) -> None:
     units: dict[str, str] = {}
     for task in tasks:
         units |= render_task_units(box_dir.resolve(), sys.executable, task)
+    units |= render_doctor_timer(box_dir.resolve(), sys.executable)
     try:
         for name, text in units.items():
             unit = SYSTEMD_DIR / name
@@ -1135,9 +1150,9 @@ def _ensure_apply_units(box_dir: Path) -> None:
         return
     if changed:
         run([systemctl, "daemon-reload"])
-    for path_unit in (f"{task.unit}.path" for task in tasks):
-        if changed or run([systemctl, "is-enabled", "--quiet", path_unit]) != 0:
-            run([systemctl, "enable", "--now", path_unit])
+    for watcher in (*(f"{task.unit}.path" for task in tasks), f"{DOCTOR_TIMER_UNIT}.timer"):
+        if changed or run([systemctl, "is-enabled", "--quiet", watcher]) != 0:
+            run([systemctl, "enable", "--now", watcher])
 
 
 @app.command()
@@ -1685,16 +1700,58 @@ def doctor(
             help="Also ask api.ipify.org for the exit address of the host and of every uplink.",
         ),
     ] = False,
+    requested: Annotated[
+        bool,
+        typer.Option(
+            "--requested",
+            help="Only when the panel asked for it (the systemd unit vibedpn-doctor-request).",
+        ),
+    ] = False,
+    report: Annotated[
+        bool,
+        typer.Option(
+            "--report", help="Keep the report the panel shows (the daily timer vibedpn-doctor)."
+        ),
+    ] = False,
 ) -> None:
     """Check the host and the box: kernel modules, forwarding, ports, Docker, services.
 
     Reports and hints only; nothing is changed. Exit code 1 when any check fails. Without
     --network nothing leaves the box.
     """
+    if requested and report:
+        raise _fail("--requested or --report, one of them")
+    if requested:
+        # the word the panel asked with; anything but `network` keeps the check on the box
+        data_dir = box_dir / BOX_DATA_DIR
+        _run_requested(
+            box_dir,
+            DOCTOR,
+            lambda: _keep_report(box_dir, read_task_reason(data_dir, DOCTOR) == MODE_NETWORK),
+        )
+        return
+    if report:
+        with host_lock(box_dir):
+            typer.echo(_keep_report(box_dir, network))
+        return
     results = evaluate(gather(box_dir, network=network))
     typer.echo(to_json(results) if as_json else render(results))
     if has_failures(results):
         raise typer.Exit(EXIT_USER_ERROR)
+
+
+def _keep_report(box_dir: Path, network: bool) -> str:
+    """Check the box and keep the report the panel shows; the line that counts the verdicts
+
+    A check that found failures is a check done: its result is the report, not an error
+    """
+    results = evaluate(gather(box_dir, network=network))
+    path = box_dir / BOX_DATA_DIR / REPORT_FILE
+    try:
+        write_private(path, report_text(results, network=network, finished_at=time.time()))
+    except OSError as exc:
+        raise _fail(f"cannot write {path}: {exc.strerror or exc}; run with sudo?") from None
+    return count_line(results)
 
 
 peer_app = typer.Typer(
