@@ -1,5 +1,5 @@
 import { routes } from '@/generated/point0/routes'
-import { signedInPage } from '@/test/lib/e2e'
+import { panelContext, signedInPage } from '@/test/lib/e2e'
 import { afterAll, beforeAll, describe, setDefaultTimeout, test } from 'bun:test'
 import { chromium, type Browser, type Page } from 'playwright'
 import { expect } from 'playwright/test'
@@ -57,6 +57,23 @@ describe('rules, access, network, backup, devices and journal', () => {
     await page.getByRole('button', { name: /^(Сделать копию|Make a backup)$/ }).click()
     await page.getByRole('button', { name: /^(Да|Yes)$/ }).click()
     await expect(page.getByText(/^(Коробка делает копию\.|The box is making a backup\.)$/)).toBeVisible()
+  })
+
+  test('the node opens on its numbers: balance, earnings, sessions, traffic', async () => {
+    await page.goto(routes.node.abs())
+    const tiles = page.locator('[data-tile]')
+    await expect(tiles).toHaveCount(4)
+    await expect(tiles.first()).toContainText('0.12 MYST')
+    await expect(tiles.nth(2)).toContainText('14')
+  })
+
+  test('signed out, the header shows no pages: the form is all there is to do', async () => {
+    const stranger = await (await panelContext(browser, { viewport: { width: 1320, height: 900 } })).newPage()
+    await stranger.goto(routes.signIn.abs())
+    await expect(stranger.locator('#sign-in-form')).toBeVisible()
+    await expect(stranger.locator('header nav')).toHaveCount(0)
+    await expect(stranger.getByRole('button', { name: /^(Ещё|More)$/ })).toHaveCount(0)
+    await stranger.close()
   })
 
   test('on a phone the devices and the journal are cards, and no page scrolls sideways', async () => {

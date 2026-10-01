@@ -3,7 +3,7 @@
 The real API of a home box with four exits, on a data directory of its own:
 The pages have something to show
 
-Run as ``python -m tests.panel_core <port> <box dir>`` from core/
+Run as ``python -m tests.panel_core <port> <box dir> [vps]`` from core/: a home box, or a VPS
 Nothing here touches the host: the router, the firewall and the tunnel are left alone
 """
 
@@ -27,9 +27,11 @@ from vibedpn.engine.events import DB_FILE as EVENTS_FILE
 from vibedpn.engine.events import Event, EventAction, EventKind, EventStore
 from vibedpn.engine.hostapd import PASSPHRASE_FILE as WIFI_PASSPHRASE_FILE
 from vibedpn.engine.logs import SERVICES_FILE
+from vibedpn.engine.myst import Identity, ProviderStats, Service, SessionTotals, Tokens
+from vibedpn.engine.wg import PeerLink, add_peer, ensure_server, list_peers
 from vibedpn.engine.wifi import Station
 
-from .conftest import home_config
+from .conftest import home_config, vps_config
 from .test_apply import PROVIDER_FILE as PROTON_FILE
 from .test_telegram_bot import Box as BotBox
 
@@ -67,8 +69,57 @@ def stand_events(now: float) -> list[Event]:
 SERVICES = ("adguard", "core", "myst-consumer", "tor")
 
 
+def node_stats() -> ProviderStats:
+    """A node that runs and has earned a little: the node page has every block to show"""
+    return ProviderStats(
+        node_version="1.39.5",
+        node_uptime="3h12m",
+        monitoring_status="success",
+        identity=Identity(
+            id="0x2108974ce3ac43191c5a1c82cf83190ecd92d5a9",
+            registration_status="Registered",
+            balance_tokens=Tokens(wei="120000000000000000", human="0.12"),
+            earnings_tokens=Tokens(wei="34000000000000000", human="0.034"),
+            earnings_total_tokens=Tokens(wei="510000000000000000", human="0.51"),
+        ),
+        services=[Service(type="wireguard", status="Running")],
+        sessions=SessionTotals(
+            count=14, consumers=9, bytes_received=3_200_000_000, bytes_sent=410_000_000
+        ),
+    )
+
+
+def vps(port: int, box: Path) -> None:
+    """A VPS with its node and two peers: the home box, and a laptop for the node panel only"""
+    secrets, data = box / "secrets", box / "data"
+    data.mkdir(parents=True, exist_ok=True)
+    secrets.mkdir(mode=0o700, exist_ok=True)
+    (data / SERVICES_FILE).write_text("core\nmyst-provider\nwg-server\n", encoding="utf-8")
+    config = Config.model_validate(vps_config())
+    ensure_server(config, secrets)
+    add_peer(config, secrets, "home")
+    add_peer(config, secrets, "laptop", tunnel_only=True)
+    links = {
+        peer.public_key: PeerLink("203.0.113.40:51820", int(time.time()) - 40, 9_400_000, 1_200_000)
+        for peer in list_peers(config, secrets)
+        if peer.name == "home"
+    }
+    application = create_app(
+        config,
+        stats_source=node_stats,
+        secrets_dir=secrets,
+        data_dir=data,
+        link_source=lambda: links,
+        backups_dir=box / BACKUPS_DIR,
+    )
+    uvicorn.run(application, host="127.0.0.1", port=port, log_level="warning")
+
+
 def main() -> None:
     port, box = int(sys.argv[1]), Path(sys.argv[2])
+    if sys.argv[3:] == ["vps"]:
+        vps(port, box)
+        return
     data, secrets = box / "data", box / "secrets"
     data.mkdir(parents=True, exist_ok=True)
     secrets.mkdir(mode=0o700, exist_ok=True)
@@ -124,6 +175,7 @@ def main() -> None:
     bot = BotBox(box, config, linked=True).bot
     application = create_app(
         config,
+        stats_source=node_stats,
         state=state,
         secrets_dir=secrets,
         data_dir=data,

@@ -17,6 +17,24 @@ export const signInViaUi = async (page: Page, { password }: { password: string }
   await expect(page.locator(`a[href="${routes.signOut()}"]`)).toBeVisible()
 }
 
+// The fonts of the panel come from Google: a slow line to it holds the `load` of every page for seconds, and a
+// test waiting for `load` fails on the network, not on the panel. Text in the fallback font is as good for a test
+const THIRD_PARTY_FONTS = /^https:\/\/fonts\.(googleapis|gstatic)\.com\//
+
+/**
+ * A browser context for the panel: its pages load without the fonts of Google
+ *
+ * @tags test, e2e
+ */
+export const panelContext = async (
+  browser: Browser,
+  options: Parameters<Browser['newContext']>[0] = {},
+): Promise<BrowserContext> => {
+  const context = await browser.newContext(options)
+  await context.route(THIRD_PARTY_FONTS, async (route) => await route.abort())
+  return context
+}
+
 let session: Promise<Awaited<ReturnType<BrowserContext['storageState']>>> | undefined
 
 /**
@@ -34,12 +52,12 @@ export const signedInPage = async (
   { password }: { password: string },
 ): Promise<Page> => {
   session ??= (async () => {
-    const context = await browser.newContext()
+    const context = await panelContext(browser)
     await signInViaUi(await context.newPage(), { password })
     const state = await context.storageState()
     await context.close()
     return state
   })()
-  const context = await browser.newContext({ viewport, storageState: await session })
+  const context = await panelContext(browser, { viewport, storageState: await session })
   return await context.newPage()
 }
