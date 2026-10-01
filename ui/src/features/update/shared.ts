@@ -6,6 +6,8 @@ export type UpdateResult = {
   before: string
   after: string
   finished_at: number
+  /** A newer commit the update left alone: CI had not published its images yet; empty when none */
+  building: string
 }
 
 /** The revision the box runs, an update in progress, and how the last one ended. */

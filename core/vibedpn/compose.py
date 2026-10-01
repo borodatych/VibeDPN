@@ -69,6 +69,8 @@ DIGEST_PANEL = "VIBEDPN_DIGEST_PANEL"
 # not VIBEDPN_DIGEST_WG_<NAME>: an exit named `server` would take the fingerprint of wg-server
 WG_UPLINK_DIGEST_PREFIX = "VIBEDPN_DIGEST_WG_UPLINK_"
 DEFAULT_LOG_TAIL = 100
+# The images CI builds from this repository (compose.yaml); the others are pinned upstream images
+OWN_IMAGE_PREFIX = "ghcr.io/borodatych/vibedpn-"
 # the images this host keeps, named the way `compose config` names them
 IMAGE_LISTING = ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
 # Before 28.0.0 ports published on 127.0.0.1 were reachable from L2 neighbours (Docker release
@@ -486,12 +488,17 @@ def stream(argv: list[str]) -> Iterator[str]:
         raise ComposeError(f"docker compose exited {process.returncode}")
 
 
-def capture(argv: list[str]) -> str:
-    """Run Compose and return stdout; a failure becomes a ``ComposeError`` with its stderr."""
+def capture(argv: list[str], *, timeout: float | None = None) -> str:
+    """Run Compose and return stdout; a failure becomes a ``ComposeError`` with its stderr.
+    ``timeout``: a call silent longer than that is a failure too"""
     try:
-        completed = subprocess.run(argv, check=False, capture_output=True, text=True)
+        completed = subprocess.run(
+            argv, check=False, capture_output=True, text=True, timeout=timeout
+        )
     except FileNotFoundError as exc:
         raise ComposeError("docker not found; run install.sh") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ComposeError(f"{argv[0]} stayed silent for {timeout:g} s") from exc
     if completed.returncode != 0:
         raise ComposeError(
             completed.stderr.strip() or f"docker compose exited {completed.returncode}"

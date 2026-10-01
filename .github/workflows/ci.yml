@@ -79,6 +79,15 @@ jobs:
             test -L /usr/local/bin/vibedpn
             vibedpn --version
             bash /src/install.sh
+            # VIBEDPN_REF moves the checkout to that commit of the branch, not to its head
+            ci() { git -C /tmp/repo -c user.email=ci@example.org -c user.name=ci "$@"; }
+            ci commit -q --allow-empty -m first
+            first=$(git -C /tmp/repo rev-parse HEAD)
+            ci commit -q --allow-empty -m second
+            VIBEDPN_REF=$first bash /src/install.sh
+            test "$(git -C /opt/vibedpn rev-parse HEAD)" = "$first"
+            bash /src/install.sh
+            test "$(git -C /opt/vibedpn rev-parse HEAD)" = "$(git -C /tmp/repo rev-parse HEAD)"
             echo "ci-panels-pw" > /tmp/pw
             vibedpn init --role vps --endpoint 203.0.113.7 --password-file /tmp/pw
             test -f /opt/vibedpn/config.yaml

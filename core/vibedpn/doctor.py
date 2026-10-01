@@ -27,6 +27,7 @@ from vibedpn.bootstrap import (
     secrets_present,
 )
 from vibedpn.compose import (
+    OWN_IMAGE_PREFIX,
     ComposeError,
     ServiceStatus,
     capture,
@@ -268,6 +269,9 @@ class DoctorFacts:
     dpn_connection: str = ""
     access: AccessFacts = field(default_factory=AccessFacts)
     telegram: TelegramFacts = field(default_factory=TelegramFacts)
+    # The commit of the checkout, and the commit each image of ours on the host was built from
+    # (the label CI sets); "" when the box is not a git checkout
+    image_facts: ImageFacts = field(default_factory=lambda: ImageFacts("", {}))
 
 
 @dataclass(frozen=True)
@@ -448,6 +452,33 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
         if not facts.docker_error:
             results.extend(_service_results(facts))
     return results
+
+
+@dataclass(frozen=True)
+class ImageFacts:
+    commit: str  # the checkout; "" when the box is not a git checkout
+    revisions: dict[str, str]  # image of ours → the commit it was built from; "" without a label
+
+
+def images_result(commit: str, revisions: dict[str, str]) -> CheckResult | None:
+    """Whether the images of the box were built from the code the checkout has
+
+    An update that moved the checkout before CI had built ran new code on old images (decision 39)
+    An image built here, with no label, is the owner's own and is not judged
+    """
+    built = {image: revision for image, revision in revisions.items() if revision}
+    if not commit or not built:
+        return None
+    behind = sorted(image for image, revision in built.items() if revision != commit)
+    if behind:
+        names = ", ".join(f"{image} ({built[image][:7]})" for image in behind)
+        return CheckResult(
+            "images",
+            Verdict.WARN,
+            f"built from other code than the checkout {commit[:7]}: {names}",
+            "sudo vibedpn update",
+        )
+    return CheckResult("images", Verdict.OK, f"{len(built)} built from the checkout {commit[:7]}")
 
 
 def _env_result(env_current: bool | None) -> CheckResult:
@@ -1089,7 +1120,9 @@ def _service_results(facts: DoctorFacts) -> list[CheckResult]:
                 "services", Verdict.WARN, f"not started: {', '.join(not_started)}", "vibedpn up"
             )
         ]
-    return [CheckResult("services", Verdict.OK, f"{len(facts.active_services)} running")]
+    running = CheckResult("services", Verdict.OK, f"{len(facts.active_services)} running")
+    images = images_result(facts.image_facts.commit, facts.image_facts.revisions)
+    return [running] if images is None else [running, images]
 
 
 def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
@@ -1195,7 +1228,36 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         lan_wireless=_lan_wireless(config),
         access=_access_facts(box_dir, config, router_table, network=network),
         telegram=_telegram_facts(box_dir, config),
+        image_facts=_image_facts(box_dir, config, docker_error),
     )
+
+
+# The label docker/metadata-action sets on every image CI builds: the full commit it was built from
+REVISION_LABEL = "org.opencontainers.image.revision"
+
+
+def _image_facts(box_dir: Path, config: Config | None, docker_error: str) -> ImageFacts:
+    """The commit of the checkout and the revision of each image of ours the active services run"""
+    none = ImageFacts("", {})
+    if config is None or docker_error or not (box_dir / ".git").is_dir():
+        return none
+    try:
+        commit = capture(["git", "-C", str(box_dir), "rev-parse", "HEAD"]).strip()
+        listing = capture(compose_argv(box_dir, "config", "--images"))
+    except ComposeError:
+        return none
+    revisions: dict[str, str] = {}
+    for image in sorted({line.strip() for line in listing.splitlines()}):
+        if not image.startswith(OWN_IMAGE_PREFIX):
+            continue
+        label = f'{{{{index .Config.Labels "{REVISION_LABEL}"}}}}'
+        try:
+            revisions[image] = capture(
+                ["docker", "image", "inspect", "--format", label, image]
+            ).strip()
+        except ComposeError:
+            revisions[image] = ""  # not pulled yet: `services` says what does not run
+    return ImageFacts(commit, revisions)
 
 
 def _access_facts(

@@ -438,6 +438,7 @@ class UpdateResultView(BaseModel):
     before: str  # short commits; "" when unknown
     after: str
     finished_at: float
+    building: str = ""  # a newer commit left alone: its images were still being built
 
 
 class UpdateView(BaseModel):

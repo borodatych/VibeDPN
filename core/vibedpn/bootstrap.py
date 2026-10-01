@@ -19,6 +19,7 @@ from pathlib import Path
 import bcrypt
 from pydantic import ValidationError
 
+from vibedpn.atomic import write_like
 from vibedpn.config import (
     Config,
     DhcpConfig,
@@ -366,6 +367,21 @@ def preserved_env(env_path: Path, default_tag: str = DEFAULT_IMAGE_TAG) -> dict[
         if sep and key.strip() in PRESERVED_ENV_VARS and value.strip():
             kept[key.strip()] = value.strip()
     return kept
+
+
+def set_image_tag(env_path: Path, tag: str) -> None:
+    """Set ``VIBEDPN_TAG`` of an existing ``.env`` in place, the rest untouched; `vibedpn update`
+    pins it to the commit the checkout moves to, and the next refresh of ``.env`` keeps it"""
+    lines = env_path.read_text(encoding="utf-8").splitlines()
+    line = f"{IMAGE_TAG_VAR}={tag}"
+    at = next(
+        (i for i, item in enumerate(lines) if item.partition("=")[0].strip() == IMAGE_TAG_VAR), None
+    )
+    if at is None:
+        lines.append(line)
+    else:
+        lines[at] = line
+    write_like(env_path, "\n".join(lines) + "\n")
 
 
 def read_env(env_path: Path) -> dict[str, str]:

@@ -6,7 +6,7 @@ const view = (patch: Partial<UpdateView> = {}): UpdateView => ({
   commit: 'def5678',
   committed_at: '2026-09-25T10:00:00+03:00',
   pending: false,
-  last: { ok: true, message: 'updated', before: 'abc1234', after: 'def5678', finished_at: 200 },
+  last: { ok: true, message: 'updated', before: 'abc1234', after: 'def5678', finished_at: 200, building: '' },
   ...patch,
 })
 

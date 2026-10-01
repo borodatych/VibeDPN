@@ -8,7 +8,7 @@ import os
 import sys
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from functools import partial
 from pathlib import Path
@@ -45,6 +45,7 @@ from vibedpn.bootstrap import (
     CONFIG_FILE,
     DEFAULT_BOX_DIR,
     ENV_FILE,
+    IMAGE_TAG_VAR,
     SECRET_DIR_MODE,
     SECRETS_DIR,
     XRAY_LINK_FILE,
@@ -53,11 +54,13 @@ from vibedpn.bootstrap import (
     HostFacts,
     build_config,
     check_password,
+    checkout_image_tag,
     ensure_country_secrets,
     ensure_replaceable,
     public_address,
     read_env,
     read_peer_config,
+    set_image_tag,
     set_panel_password,
     wg_uplink_file,
     write_box,
@@ -65,6 +68,7 @@ from vibedpn.bootstrap import (
 from vibedpn.compose import (
     DEFAULT_LOG_TAIL,
     IMAGE_LISTING,
+    OWN_IMAGE_PREFIX,
     ComposeError,
     adopt_node_password,
     capture,
@@ -183,11 +187,17 @@ from vibedpn.engine.logs import (
 from vibedpn.engine.logs import report_text as logs_report_text
 from vibedpn.engine.myst import MystError, TequilaClient, render_stats
 from vibedpn.engine.update import (
+    COMMIT_TAG_LENGTH,
+    SEARCH_DEPTH,
     UPDATE,
     Revision,
     UpdateResult,
+    commit_tag,
+    managed_tag,
+    pick_target,
     read_update_request,
     read_update_result,
+    retag,
     write_revision,
     write_update_result,
 )
@@ -853,7 +863,7 @@ def update(
         _update_as_requested(box_dir)
         return
     try:
-        typer.echo(_update_box(box_dir))
+        typer.echo(_update_box(box_dir).message)
     except _UpdateFailedError as exc:
         raise _fail(str(exc)) from None
 
@@ -872,8 +882,10 @@ def _update_rounds(box_dir: Path) -> None:
         if asked is None or (last is not None and last.requested_at >= asked):
             return  # nothing asked, or already done
         before = _revision(box_dir)
+        building = ""
         try:
-            ok, message = True, _update_box(box_dir)
+            outcome = _update_box(box_dir)
+            ok, message, building = True, outcome.message, outcome.building
         except _UpdateFailedError as exc:
             ok, message = False, str(exc)
         after = _revision(box_dir)
@@ -886,14 +898,21 @@ def _update_rounds(box_dir: Path) -> None:
                 message=message,
                 before=before.commit if before is not None else "",
                 after=after.commit if after is not None else "",
+                building=building,
             ),
         )
         if not ok:
             raise _fail(message)
 
 
-def _update_box(box_dir: Path) -> str:
-    """Update and restart the box; the line that says what came of it"""
+@dataclass(frozen=True)
+class _UpdateOutcome:
+    message: str  # the line that says what came of it
+    building: str  # a newer commit left alone, its images not out yet; "" when none
+
+
+def _update_box(box_dir: Path) -> _UpdateOutcome:
+    """Update and restart the box"""
     config = _prepare(box_dir, refresh=False)
     installer = box_dir / "install.sh"
     if not (box_dir / ".git").is_dir() or not installer.is_file():
@@ -907,6 +926,9 @@ def _update_box(box_dir: Path) -> str:
         raise _UpdateFailedError(str(exc)) from None
     before = _revision(box_dir)
     environment = {"VIBEDPN_DIR": str(box_dir), "VIBEDPN_BRANCH": branch, "VIBEDPN_REPO": origin}
+    target, note, building = _update_target(box_dir, branch)
+    if target is not None:
+        environment["VIBEDPN_REF"] = target
     if (
         run(
             [
@@ -925,9 +947,85 @@ def _update_box(box_dir: Path) -> str:
         raise _UpdateFailedError("restart after the update failed; see `vibedpn doctor`")
     after = _record_revision(box_dir)
     if before is not None and after is not None and before.commit == after.commit:
-        return f"already the latest {branch} ({after.commit}), images pulled and the box restarted"
+        return _UpdateOutcome(
+            f"already the latest {branch} ({after.commit}) with its images, images pulled"
+            f" and the box restarted{note}",
+            building,
+        )
     moved = f" from {before.commit} to {after.commit}" if before and after else ""
-    return f"updated to the latest {branch}{moved} (role {config.role.value})"
+    return _UpdateOutcome(
+        f"updated to the latest {branch}{moved} (role {config.role.value}){note}", building
+    )
+
+
+def _update_target(box_dir: Path, branch: str) -> tuple[str | None, str, str]:
+    """The commit of ``branch`` the update moves to, with its images pinned in .env, and a note
+
+    The newest commit whose images CI has published (engine/update.py, pick_target), or the one
+    the box runs when none newer is ready; None leaves the head of the branch to install.sh:
+    the image tag is the owner's own, and an update does not pin it
+    """
+    env_path = box_dir / ENV_FILE
+    tag = read_env(env_path).get(IMAGE_TAG_VAR, "")
+    if not managed_tag(tag, checkout_image_tag(box_dir)):
+        return (
+            None,
+            f"; the image tag {tag} is set by hand in .env: the code is not pinned to it",
+            "",
+        )
+    git = ["git", "-C", str(box_dir)]
+    try:
+        _fetch(git, branch)
+        commits = capture(
+            [*git, "rev-list", f"--max-count={SEARCH_DEPTH}", f"origin/{branch}"]
+        ).split()
+        current = capture([*git, "rev-parse", "HEAD"]).strip()
+        listing = capture(compose_argv(box_dir, "config", "--images", all_profiles=True))
+    except ComposeError as exc:
+        raise _UpdateFailedError(f"cannot see what is new on {branch}: {exc}") from None
+    images = sorted(
+        {line.strip() for line in listing.splitlines() if line.startswith(OWN_IMAGE_PREFIX)}
+    )
+
+    def ready(commit: str) -> bool:
+        return all(_published(retag(image, tag, commit_tag(commit))) for image in images)
+
+    chosen = pick_target(commits, current, ready)
+    target = chosen.commit or current
+    try:
+        set_image_tag(env_path, commit_tag(target))
+    except OSError as exc:
+        raise _UpdateFailedError(f"cannot write {env_path}: {exc.strerror or exc}") from None
+    building = chosen.building[:COMMIT_TAG_LENGTH] if chosen.building else ""
+    note = f"; {building} is newer, its images are still being built" if building else ""
+    return target, note, building
+
+
+# As install.sh does it: one of the addresses github.com resolves to is a black hole on some lines,
+# and a git call to it waits forever (knowledge linux/githubBlackholedAddress.md)
+GIT_TIMEOUT_SECONDS = 30.0
+GIT_ATTEMPTS = 3  # install.sh GIT_TRIES
+
+
+def _fetch(git: list[str], branch: str) -> None:
+    """Fetch ``branch`` under a short timeout, trying again: the next try may get a good address"""
+    for attempt in range(1, GIT_ATTEMPTS + 1):
+        try:
+            capture([*git, "fetch", "-q", "origin", branch], timeout=GIT_TIMEOUT_SECONDS)
+        except ComposeError:
+            if attempt == GIT_ATTEMPTS:
+                raise
+        else:
+            return
+
+
+def _published(image: str) -> bool:
+    """Whether the registry has ``image``: its manifest is read, nothing is downloaded"""
+    try:
+        capture(["docker", "manifest", "inspect", image])
+    except ComposeError:
+        return False
+    return True
 
 
 def _revision(box_dir: Path) -> Revision | None:

@@ -11,6 +11,7 @@ Every `up` writes the revision the box runs, so the panel can show it before any
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,58 @@ UPDATE = HostTask(
 )
 
 
+# CI tags every image it publishes with the commit it was built from (docker/metadata-action,
+# type=sha: `sha-` and the first seven characters of the commit)
+COMMIT_TAG_PREFIX = "sha-"
+COMMIT_TAG_LENGTH = 7
+# How far back an update looks for a commit whose images are all published: a burst of pushes
+# while CI builds is far shorter; past it the box stays where it is and says why
+SEARCH_DEPTH = 20
+
+
+def commit_tag(commit: str) -> str:
+    """The image tag CI gives the images of ``commit``"""
+    return f"{COMMIT_TAG_PREFIX}{commit[:COMMIT_TAG_LENGTH]}"
+
+
+def managed_tag(tag: str, branch_tag: str) -> bool:
+    """Whether an update may pin ``tag`` to a commit: the tag of the branch, or a pin of its own
+    A tag the owner set by hand in .env is theirs: an update pulls it as it is"""
+    return tag == branch_tag or tag.startswith(COMMIT_TAG_PREFIX)
+
+
+def retag(image: str, tag_from: str, tag_to: str) -> str:
+    """``image`` with ``tag_from`` at the head of its tag replaced: `vibedpn-ui:next-full` keeps its
+    suffix of the panel variant (compose.yaml appends it to the tag)"""
+    name, _, tag = image.rpartition(":")
+    if not name or not tag.startswith(tag_from):
+        return image
+    return f"{name}:{tag_to}{tag[len(tag_from) :]}"
+
+
+@dataclass(frozen=True)
+class UpdateTarget:
+    commit: str | None  # the commit to move to; None: nothing newer than the box has its images
+    building: str | None  # a newer commit whose images CI has not published yet
+
+
+def pick_target(commits: list[str], current: str, ready: Callable[[str], bool]) -> UpdateTarget:
+    """The newest commit of ``commits`` (newest first) whose images are all published
+
+    The checkout and the images move together: the tag of the branch moves when CI has built,
+    not when the commit lands, and an update between the two ran new code on old images
+    The search stops at the commit the box runs: an update never moves the box back
+    """
+    building: str | None = None
+    for commit in commits:
+        if commit == current:
+            return UpdateTarget(None, building)
+        if ready(commit):
+            return UpdateTarget(commit, building)
+        building = building or commit
+    return UpdateTarget(None, building)
+
+
 @dataclass(frozen=True)
 class Revision:
     """The commit of the checkout the box runs"""
@@ -51,6 +104,8 @@ class UpdateResult:
     message: str
     before: str  # the short commit before, "" when unknown
     after: str
+    # a newer commit of the branch the update left alone: CI had not published its images yet
+    building: str = ""
 
 
 @dataclass(frozen=True)
@@ -81,6 +136,7 @@ def read_update_result(data_dir: Path) -> UpdateResult | None:
             message=str(raw["message"]),
             before=str(raw["before"]),
             after=str(raw["after"]),
+            building=str(raw.get("building", "")),  # a result written before the field: none
         )
     except (KeyError, TypeError, ValueError):
         return None

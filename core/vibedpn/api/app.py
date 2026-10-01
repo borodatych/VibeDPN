@@ -441,6 +441,7 @@ def _update_view(data: Path) -> UpdateView:
             before=last.before,
             after=last.after,
             finished_at=last.finished_at,
+            building=last.building,
         ),
     )
 

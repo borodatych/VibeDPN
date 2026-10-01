@@ -84,6 +84,9 @@ export const UpdateCard = () => {
         {!busy &&
           view?.last &&
           resultLine(view.last, t, formatDate(new Date(view.last.finished_at * 1000), 'date-time-nice', language))}
+        {!busy && view?.last?.ok && view.last.building && (
+          <p className="text-sm text-muted-foreground">{t('update.building', { commit: view.last.building })}</p>
+        )}
         {mutation.isError && <p className="text-xs text-destructive">{mutation.error.message}</p>}
       </div>
     </Card>

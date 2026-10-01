@@ -10,12 +10,15 @@
 #      /usr/local/bin/vibedpn,
 #   4. adds the invoking user to the `docker` group.
 # Overrides: VIBEDPN_REPO (git URL or path), VIBEDPN_BRANCH (default main), VIBEDPN_DIR.
+# VIBEDPN_REF: on an update, the commit of the branch to move to instead of its head — `vibedpn update`
+# passes the newest commit whose images CI has published, so the code never runs ahead of its images.
 # VIBEDPN_IMAGE_BUILD=1: inside the chroot of an OS image (images/os): no Docker daemon runs there,
 # so its version is not checked and no user is added to the docker group.
 set -euo pipefail
 
 VIBEDPN_REPO="${VIBEDPN_REPO:-https://github.com/borodatych/VibeDPN.git}"
 VIBEDPN_BRANCH="${VIBEDPN_BRANCH:-main}"
+VIBEDPN_REF="${VIBEDPN_REF:-}"
 DEFAULT_DIR="/opt/vibedpn"  # `vibedpn init` has the same default; keep them equal
 VIBEDPN_DIR="${VIBEDPN_DIR:-$DEFAULT_DIR}"
 VIBEDPN_IMAGE_BUILD="${VIBEDPN_IMAGE_BUILD:-0}"
@@ -116,10 +119,10 @@ with_retries() {
 
 clone_or_update() {
   if [ -d "$VIBEDPN_DIR/.git" ]; then
-    log "Updating $VIBEDPN_DIR to $VIBEDPN_BRANCH"
+    log "Updating $VIBEDPN_DIR to $VIBEDPN_BRANCH${VIBEDPN_REF:+ at $VIBEDPN_REF}"
     with_retries git -C "$VIBEDPN_DIR" fetch -q origin "$VIBEDPN_BRANCH"
     git -C "$VIBEDPN_DIR" checkout -q "$VIBEDPN_BRANCH"
-    git -C "$VIBEDPN_DIR" merge -q --ff-only "origin/$VIBEDPN_BRANCH"
+    git -C "$VIBEDPN_DIR" merge -q --ff-only "${VIBEDPN_REF:-origin/$VIBEDPN_BRANCH}"
   else
     log "Cloning $VIBEDPN_REPO ($VIBEDPN_BRANCH) into $VIBEDPN_DIR"
     with_retries git clone -q --branch "$VIBEDPN_BRANCH" "$VIBEDPN_REPO" "$VIBEDPN_DIR"
