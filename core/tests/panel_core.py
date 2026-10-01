@@ -28,6 +28,7 @@ from vibedpn.engine.events import Event, EventAction, EventKind, EventStore
 from vibedpn.engine.hostapd import PASSPHRASE_FILE as WIFI_PASSPHRASE_FILE
 from vibedpn.engine.logs import SERVICES_FILE
 from vibedpn.engine.myst import Identity, ProviderStats, Service, SessionTotals, Tokens
+from vibedpn.engine.router import RoutingFacts, used_uplinks
 from vibedpn.engine.wg import PeerLink, add_peer, ensure_server, list_peers
 from vibedpn.engine.wifi import Station
 
@@ -115,6 +116,19 @@ def vps(port: int, box: Path) -> None:
     uvicorn.run(application, host="127.0.0.1", port=port, log_level="warning")
 
 
+def routed_as_configured(config: Config) -> RoutingFacts:
+    """The host routes exactly as config.yaml says: every uplink in use has its rule, its gateway
+    route and its own exit.
+
+    The real reader looks at the routing of the machine running the tests: absent on a Mac, and on
+    a Linux runner foreign, so the status would call the rules stale.
+    """
+    used = used_uplinks(config)
+    return RoutingFacts(
+        True, dict.fromkeys(used, True), dict.fromkeys(used, True), {key: key for key in used}
+    )
+
+
 def main() -> None:
     port, box = int(sys.argv[1]), Path(sys.argv[2])
     if sys.argv[3:] == ["vps"]:
@@ -189,6 +203,7 @@ def main() -> None:
         # the host's `ip` and the access point's socket are not on a developer's machine
         interfaces_source=lambda: (ETH0, [ETH0, WLAN0]),
         wifi_stations=lambda _interface: STATIONS,
+        routing_reader=routed_as_configured,
     )
     uvicorn.run(application, host="127.0.0.1", port=port, log_level="warning")
 

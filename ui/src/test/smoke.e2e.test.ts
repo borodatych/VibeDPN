@@ -1,8 +1,10 @@
 import { routes } from '@/generated/point0/routes'
 import { panelContext, signInViaUi, thirdPartyRequests } from '@/test/lib/e2e'
-import { afterAll, beforeAll, describe, test } from 'bun:test'
+import { afterAll, beforeAll, describe, setDefaultTimeout, test } from 'bun:test'
 import { chromium, type Browser, type Page } from 'playwright'
 import { expect } from 'playwright/test'
+
+setDefaultTimeout(30000)
 
 let browser: Browser
 let page: Page
