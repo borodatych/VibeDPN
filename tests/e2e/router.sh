@@ -1412,6 +1412,20 @@ curl -s --max-time 15 http://127.0.0.1:4480/backups | grep -q '"restore":{"pendi
   fail "a refused archive left a restore waiting"
 echo "backup $archive, restored over mode off, the box leads through the VPS again; a broken archive refused"
 
+log "check of the box from the panel: the host runs doctor and keeps the report core shows"
+answer="$(backups -X POST -H 'Content-Type: application/json' -d '{"network":false}' http://127.0.0.1:4480/doctor)"
+[ "${answer##* }" = 200 ] || fail "core did not ask the host for a check: $answer"
+# what the host's path unit runs on that request; the unit may run it too, and the lock makes it once
+out="$(sudo "$CLI" doctor --requested --dir "$BOX" 2>&1)" || fail "vibedpn doctor --requested failed: $out"
+report="$(curl -s --max-time 15 http://127.0.0.1:4480/doctor)"
+printf '%s' "$report" | grep -q '"name":"router","verdict":"ok"' || fail "the report has no router ok: $report"
+printf '%s' "$report" | grep -q '"state":{"pending":false,"ok":true' || fail "the check has no good result: $report"
+# the daily one, without a request and without leaving the box
+out="$(sudo "$CLI" doctor --report --dir "$BOX" 2>&1)" || fail "vibedpn doctor --report failed: $out"
+curl -s --max-time 15 http://127.0.0.1:4480/doctor | grep -q '"network":false' ||
+  fail "the daily check kept no report"
+echo "check of the box: asked in the panel and daily, the report shows the router ok"
+
 log "panel password from the panel: core wants the current one, AdGuard takes the new one after the host applies"
 NEW_PASSWORD=e2e-pass-456
 panel_password() {
