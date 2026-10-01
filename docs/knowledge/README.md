@@ -33,6 +33,7 @@
   для `down`, двухшаговый `restart`, `.env` как производная перед `up`
 - [extendsMerging.md](compose/extendsMerging.md) — `extends` складывает профили и заменяет монтирования по цели: проверено `docker compose config`
 - [healthcheckTiming.md](compose/healthcheckTiming.md) — долгий `interval` не задерживает первую проверку при `start_period`: движок проверяет раз в `start_interval`, умолчание 5 с (Engine 25+), писать его незачем
+- [logsRedaction.md](compose/logsRedaction.md) — `docker compose logs` для панели: `--no-log-prefix`, `--no-color`, `--tail` по каждому контейнеру; какие секреты пишут службы коробки и как их ловить образцами; ключ WireGuard и REALITY по последней букве
 
 ## docker
 
