@@ -18,7 +18,9 @@ export const signInViaUi = async (page: Page, { password }: { password: string }
 }
 
 // The panel under test runs on this machine: anything else a page asks for is a third party
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+// A RegExp and not a function: Playwright matches a RegExp in its driver, while a function makes the driver hand every
+// request of the page to this process to decide, and pages stalled on that in CI
+const THIRD_PARTY = /^(?!(?:https?|wss?):\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?:[:/]|$))/
 
 /**
  * The requests panel pages made to a third party during this run, which the browser was not let through
@@ -42,13 +44,10 @@ export const panelContext = async (
   options: Parameters<Browser['newContext']>[0] = {},
 ): Promise<BrowserContext> => {
   const context = await browser.newContext(options)
-  await context.route(
-    (url) => !LOCAL_HOSTS.has(url.hostname),
-    async (route) => {
-      thirdPartyRequests.push(route.request().url())
-      await route.abort()
-    },
-  )
+  await context.route(THIRD_PARTY, async (route) => {
+    thirdPartyRequests.push(route.request().url())
+    await route.abort()
+  })
   return context
 }
 

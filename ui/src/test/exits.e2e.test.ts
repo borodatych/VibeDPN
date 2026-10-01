@@ -91,12 +91,17 @@ describe('exits, notifications and the channels of the rules', () => {
     await page.setViewportSize({ width: 375, height: 800 })
     await page.goto(`${routes.uplinks.abs()}?exit=tor`)
     const heading = page.getByRole('heading', { name: /^(Бесплатный выход через Tor|Free exit through Tor)$/ })
-    // the card lays out once the exits load: measured before that, it has no box yet
-    await expect(heading).toBeVisible()
-    const line = await page.locator('[data-item="tor"]').boundingBox()
-    const card = await heading.boundingBox()
-    const next = await page.locator('[data-item="xray"]').boundingBox()
-    expect(line!.y < card!.y && card!.y < next!.y).toBe(true)
+    // the card lays out once the exits load: the order holds when every box is there
+    await expect
+      .poll(async () => {
+        const [line, card, next] = await Promise.all([
+          page.locator('[data-item="tor"]').boundingBox(),
+          heading.boundingBox(),
+          page.locator('[data-item="xray"]').boundingBox(),
+        ])
+        return line !== null && card !== null && next !== null && line.y < card.y && card.y < next.y
+      })
+      .toBe(true)
     expect(await sideScroll()).toBe(0)
     await page.goto(routes.notifications.abs())
     expect(await sideScroll()).toBe(0)
