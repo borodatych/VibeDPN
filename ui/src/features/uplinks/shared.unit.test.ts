@@ -1,6 +1,9 @@
 import {
   ADD_EXIT,
+  bridgeLines,
+  bridgeLinesProblem,
   exitEntries,
+  MAX_TOR_BRIDGES,
   pickExit,
   missingWgParts,
   suggestExitName,
@@ -44,7 +47,9 @@ describe('xrayLinkProblem', () => {
 })
 
 describe('the exit shown on «Exits»', () => {
-  const entries = exitEntries({ enabled: false }, { enabled: true }, [{ name: 'proton', enabled: true, has_file: true }])
+  const entries = exitEntries({ enabled: false }, { enabled: true }, [
+    { name: 'proton', enabled: true, has_file: true },
+  ])
 
   test('the list goes Tor, the masking exit, then the WireGuard exits', () => {
     expect(entries.map((entry) => entry.key)).toEqual(['tor', 'xray', 'wg-proton'])
@@ -59,3 +64,23 @@ describe('the exit shown on «Exits»', () => {
   })
 })
 
+describe('Tor bridges', () => {
+  test('keep the lines as core does: blank lines out, a torrc keyword dropped in any case', () => {
+    expect(bridgeLines('  Bridge obfs4 203.0.113.9:443 ABCD cert=x\n\n bridge snowflake 192.0.2.3:80 \n')).toEqual([
+      'obfs4 203.0.113.9:443 ABCD cert=x',
+      'snowflake 192.0.2.3:80',
+    ])
+  })
+
+  test('name the first line the gateway cannot run, counted among the non-blank ones', () => {
+    expect(bridgeLinesProblem('\n  \n')).toEqual({ kind: 'empty' })
+    expect(bridgeLinesProblem('obfs4 203.0.113.9:443\n\nwebtunnel 203.0.113.9:443 url=x')).toEqual({
+      kind: 'webtunnel',
+      line: 2,
+    })
+    expect(bridgeLinesProblem('snowflake\nobfs4 203.0.113.9:443')).toEqual({ kind: 'line', line: 1 })
+    expect(bridgeLinesProblem('vless://u@host 1')).toEqual({ kind: 'line', line: 1 })
+    expect(bridgeLinesProblem('meek_lite 192.0.2.20:80 url=x\nBridge obfs4 203.0.113.9:443')).toBeNull()
+    expect(bridgeLinesProblem('obfs4 203.0.113.9:443\n'.repeat(MAX_TOR_BRIDGES + 1))).toEqual({ kind: 'tooMany' })
+  })
+})

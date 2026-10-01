@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Sections } from '@/components/ui/section'
 import { Textarea } from '@/components/ui/textarea'
 import {
+  torBridgesMutation,
   torExitMutation,
   torExitQuery,
   xrayExitMutation,
@@ -19,6 +20,8 @@ import {
 } from '@/features/uplinks/api'
 import {
   ADD_EXIT,
+  bridgeLinesProblem,
+  bridgeLines,
   exitEntries,
   exitKey,
   pickExit,
@@ -28,6 +31,7 @@ import {
   PROTON_GUIDE_URL,
   suggestExitName,
   WG_EXIT_NAME,
+  MAX_TOR_BRIDGES,
   TOR_KEY,
   MAX_XRAY_LINK_BYTES,
   XRAY_KEY,
@@ -115,11 +119,92 @@ const TorDetail = ({ tor }: { tor: TorExit }) => {
           <li>{t('uplinks.tor.limits.start')}</li>
         </ul>
         <p className="text-muted-foreground">{t('uplinks.tor.use')}</p>
-        <p className="font-mono text-xs text-muted-foreground">
-          {t('uplinks.tor.bridges', { bridges: tor.bridges.join(', ') })}
-        </p>
+        <TorBridges tor={tor} />
       </div>
     </Card>
+  )
+}
+
+/** The bridges of the exit through Tor: the built-in ones or the owner's own, replaced and given back here */
+const TorBridges = ({ tor }: { tor: TorExit }) => {
+  const save = torBridgesMutation.useMutation()
+  const t = useT()
+  const [editing, setEditing] = useState(false)
+  const [text, setText] = useState('')
+  const problem = text ? bridgeLinesProblem(text) : null
+  const apply = async (bridges: string[] | null) => {
+    await save.mutateAsync({ bridges })
+    await torExitQuery.refetchQuery()
+    setEditing(false)
+    setText('')
+  }
+  return (
+    <div className="space-y-2">
+      <p className="font-mono text-xs text-muted-foreground">
+        {t(tor.custom ? 'uplinks.tor.bridges.own' : 'uplinks.tor.bridges.builtIn', {
+          bridges: tor.bridges.join(', '),
+        })}
+      </p>
+      {editing ? (
+        <div className="space-y-2">
+          <label className="block space-y-1">
+            <span className="block">{t('uplinks.tor.bridges.paste')}</span>
+            <Textarea
+              value={text}
+              rows={5}
+              autoComplete="off"
+              spellCheck={false}
+              className="font-mono text-xs"
+              onChange={(event) => setText(event.target.value)}
+            />
+            <span className="block text-xs text-muted-foreground">{t('uplinks.tor.bridges.hint')}</span>
+          </label>
+          {problem && (
+            <p className="text-destructive">
+              {'line' in problem
+                ? t(`uplinks.tor.bridges.problem.${problem.kind}`, { line: problem.line })
+                : t(`uplinks.tor.bridges.problem.${problem.kind}`, { max: MAX_TOR_BRIDGES })}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              disabled={problem !== null || !text}
+              loading={save.isPending}
+              onClick={() => void apply(bridgeLines(text))}
+            >
+              {t('uplinks.tor.bridges.save')}
+            </Button>
+            <Button size="sm" variant="outline-secondary" onClick={() => setEditing(false)}>
+              {t('uplinks.tor.bridges.cancel')}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline-secondary" onClick={() => setEditing(true)}>
+            {t('uplinks.tor.bridges.replace')}
+          </Button>
+          {tor.custom && (
+            <Button
+              size="sm"
+              variant="outline-secondary"
+              loading={save.isPending}
+              confirm={t('uplinks.tor.bridges.confirmReset')}
+              onClick={() => void apply(null)}
+            >
+              {t('uplinks.tor.bridges.reset')}
+            </Button>
+          )}
+        </div>
+      )}
+      {save.isSuccess && !editing && (
+        <p className="text-muted-foreground">
+          {t(tor.enabled ? 'uplinks.tor.bridges.savedOn' : 'uplinks.tor.bridges.savedOff')}
+        </p>
+      )}
+      {save.isError && <p className="text-destructive">{save.error.message}</p>}
+    </div>
   )
 }
 
@@ -260,7 +345,11 @@ const AddExit = ({ onAdded }: { onAdded: (key: string) => void }) => {
       <div className="mt-4 space-y-3">
         <div className="space-y-1 text-sm">
           <span className="block">{t('uplinks.add.file')}</span>
-          <FilePicker accept=".conf,text/plain" label={t('uplinks.add.file')} onPick={(file) => void chooseFile(file)} />
+          <FilePicker
+            accept=".conf,text/plain"
+            label={t('uplinks.add.file')}
+            onPick={(file) => void chooseFile(file)}
+          />
         </div>
         {tooLarge && <p className="text-sm text-destructive">{t('uplinks.add.tooLarge')}</p>}
         <label className="block space-y-1 text-sm">

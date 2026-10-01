@@ -108,6 +108,7 @@ from vibedpn.config_edit import (
     set_access,
     set_ddns,
     set_routing,
+    set_tor_bridges,
     set_tor_uplink,
     set_wg_uplink,
     set_xray_uplink,
@@ -1538,10 +1539,57 @@ def tor_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     """Whether uplink tor is on and which bridges it uses."""
     config = check_box(box_dir)
     tor = config.upstreams.tor
-    typer.echo(f"tor  {'enabled' if tor.enabled else 'disabled'}  {len(tor.bridges)} bridges")
+    whose = "own" if tor.has_custom_bridges() else "built-in"
+    typer.echo(
+        f"tor  {'enabled' if tor.enabled else 'disabled'}  {len(tor.bridges)} {whose} bridges"
+    )
     for line in tor.bridges:
         words = line.split()
         typer.echo(f"  {words[0]} {words[1]}")
+
+
+tor_bridges_app = typer.Typer(
+    help="The bridges uplink tor reaches Tor through (docs/manuals/torUplink.md).",
+    no_args_is_help=True,
+)
+tor_app.add_typer(tor_bridges_app, name="bridges")
+
+
+def _set_tor_bridges(box_dir: Path, bridges: list[str] | None) -> Config:
+    try:
+        config, _changed = set_tor_bridges(box_dir / CONFIG_FILE, bridges)
+    except ConfigEditError as exc:
+        raise _fail(str(exc)) from None
+    return config
+
+
+@tor_bridges_app.command("set")
+def tor_bridges_set(
+    bridges_file: Annotated[
+        Path,
+        typer.Option("--file", help="Bridge lines, one per line, as bridges.torproject.org gives."),
+    ],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Reach Tor through bridges of your own; `vibedpn up` recreates the gateway with them.
+
+    The lines come from a file, never arguments: a private obfs4 bridge is a secret of its owner,
+    and an argument lands in the shell history and in `ps` for every user of the box.
+    """
+    try:
+        lines = bridges_file.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise _fail(f"cannot read {bridges_file}: {exc.strerror}") from None
+    tor = _set_tor_bridges(box_dir, lines).upstreams.tor
+    whose = "own" if tor.has_custom_bridges() else "built-in"
+    typer.echo(f"uplink tor: {len(tor.bridges)} {whose} bridges; `vibedpn up`")
+
+
+@tor_bridges_app.command("reset")
+def tor_bridges_reset(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Go back to the built-in Snowflake bridges of Tor Browser; `vibedpn up` applies them."""
+    _set_tor_bridges(box_dir, None)
+    typer.echo("uplink tor: built-in Snowflake bridges; `vibedpn up`")
 
 
 dpn_app = typer.Typer(

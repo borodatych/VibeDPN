@@ -68,11 +68,31 @@ describe('exits, notifications and the channels of the rules', () => {
     await expect(page.getByRole('spinbutton')).toHaveValue('120')
   })
 
+  test('the bridges of Tor are replaced on its card and given back to the built-in ones', async () => {
+    await page.goto(`${routes.uplinks.abs()}?exit=tor`)
+    await page.getByRole('button', { name: /^(Заменить мосты|Replace bridges)$/ }).click()
+    const lines = page.getByRole('textbox', { name: /^(Строки мостов|Bridge lines)/ })
+    const save = page.getByRole('button', { name: /^(Сохранить мосты|Save bridges)$/ })
+    await lines.fill('webtunnel 203.0.113.9:443 url=https://bridge.example')
+    await expect(page.getByText(/^(Строка 1: мосты webtunnel|Line 1: webtunnel bridges)/)).toBeVisible()
+    await expect(save).toBeDisabled()
+    // a line pasted from a torrc keeps its keyword; the rest of a private line never comes back
+    await lines.fill('Bridge obfs4 203.0.113.9:443 ABCD cert=secret iat-mode=0')
+    await save.click()
+    await expect(page.getByText(/^(Свои мосты|Your own bridges): obfs4 203\.0\.113\.9:443$/)).toBeVisible()
+    await expect(page.getByText(/cert=secret/)).toHaveCount(0)
+    await page.getByRole('button', { name: /^(Вернуть встроенные|Back to built-in)$/ }).click()
+    await page.getByRole('button', { name: /^(Да|Yes)$/ }).click()
+    await expect(page.getByText(/^(Встроенные мосты Snowflake|Built-in Snowflake bridges)/)).toBeVisible()
+  })
+
   test('a phone gets the exit under its own line, and no side scroll on either page', async () => {
     await page.setViewportSize({ width: 375, height: 800 })
     await page.goto(`${routes.uplinks.abs()}?exit=tor`)
     const line = await page.locator('[data-item="tor"]').boundingBox()
-    const card = await page.getByRole('heading', { name: /^(Бесплатный выход через Tor|Free exit through Tor)$/ }).boundingBox()
+    const card = await page
+      .getByRole('heading', { name: /^(Бесплатный выход через Tor|Free exit through Tor)$/ })
+      .boundingBox()
     const next = await page.locator('[data-item="xray"]').boundingBox()
     expect(line!.y < card!.y && card!.y < next!.y).toBe(true)
     expect(await sideScroll()).toBe(0)

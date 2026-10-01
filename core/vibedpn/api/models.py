@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from ipaddress import IPv4Address
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -457,11 +457,20 @@ class TorUplinkUpdate(BaseModel):
     enabled: bool
 
 
+class TorBridgesUpdate(BaseModel):
+    """``PUT /uplinks/tor/bridges``: bridge lines of the owner's own, or ``None`` for the built-in
+    Snowflake bridges."""
+
+    bridges: list[Annotated[str, Field(max_length=4 * 1024)]] | None = Field(max_length=64)
+
+
 class TorUplinkView(BaseModel):
-    """Uplink tor as the panel shows it; a bridge is given as its transport and address only."""
+    """Uplink tor as the panel shows it; a bridge is given as its transport and address only: the
+    rest of a private bridge line is its secret."""
 
     enabled: bool
     bridges: list[str]  # "snowflake 192.0.2.3:80"
+    custom: bool  # the owner's own bridges rather than the built-in ones
     apply: ApplyView
 
 

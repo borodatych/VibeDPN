@@ -266,6 +266,9 @@ DEFAULT_TOR_BRIDGES = (
 # Transports images/tor has a client for: snowflake-client, and obfs4proxy for obfs4 and meek_lite.
 TOR_TRANSPORTS = frozenset({"snowflake", "obfs4", "meek_lite"})
 MIN_BRIDGE_WORDS = 2  # the transport and the address; the rest are transport arguments
+# The torrc keyword some sources print before a bridge line ("Bridge obfs4 …"); torrc keywords
+# are case-insensitive (https://2019.www.torproject.org/docs/tor-manual.html.en)
+TORRC_BRIDGE_KEYWORD = "bridge"
 MAX_RULE_COUNTRIES = 8  # engine/router.py MAX_COUNTRIES: one consumer per country
 
 
@@ -663,6 +666,14 @@ class WgUplink(StrictModel):
     enabled: bool = True
 
 
+def bridge_line(raw: str) -> str:
+    """A bridge line as Tor writes it after ``Bridge``: stripped, and without that keyword when
+    pasted from a torrc."""
+    line = raw.strip()
+    keyword, _, rest = line.partition(" ")
+    return rest.strip() if keyword.lower() == TORRC_BRIDGE_KEYWORD else line
+
+
 class TorUplink(StrictModel):
     """An exit through Tor: free, no account, no registration, TCP only (decision 27).
 
@@ -680,7 +691,7 @@ class TorUplink(StrictModel):
     def check_bridges(cls, value: list[str]) -> list[str]:
         if not value:
             raise ValueError("upstreams.tor.bridges needs at least one bridge line")
-        lines = [raw.strip() for raw in value]
+        lines = [bridge_line(raw) for raw in value]
         for line in lines:
             words = line.split()
             if "\n" in line or len(words) < MIN_BRIDGE_WORDS or words[0] not in TOR_TRANSPORTS:

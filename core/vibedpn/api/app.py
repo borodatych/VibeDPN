@@ -66,6 +66,7 @@ from vibedpn.api.models import (
     TelegramToken,
     TelegramUpdate,
     TelegramView,
+    TorBridgesUpdate,
     TorUplinkUpdate,
     TorUplinkView,
     UpdateResultView,
@@ -134,6 +135,7 @@ from vibedpn.config_edit import (
     set_network_rule,
     set_routing,
     set_telegram,
+    set_tor_bridges,
     set_tor_uplink,
     set_vps_lan_access,
     set_wg_uplink,
@@ -540,6 +542,7 @@ def _add_tor_uplink_routes(
         return TorUplinkView(
             enabled=tor.enabled,
             bridges=[" ".join(line.split()[:2]) for line in tor.bridges],
+            custom=tor.has_custom_bridges(),
             apply=_apply_view(data),
         )
 
@@ -554,6 +557,19 @@ def _add_tor_uplink_routes(
             return view()
         _run_edit(box_state, lambda path: set_tor_uplink(path, request.enabled))
         _ask_host(data, "uplink tor " + ("enabled" if request.enabled else "disabled"))
+        return view()
+
+    @application.put("/uplinks/tor/bridges", response_model=TorUplinkView)
+    def put_tor_bridges(request: TorBridgesUpdate) -> TorUplinkView:
+        box, box_state, data = box_paths()
+        edited = _run_edit(
+            box_state, lambda path: set_tor_bridges(path, request.bridges), route=False
+        )
+        tor = edited.upstreams.tor
+        # The host writes the bridges for the gateway and recreates it
+        # A stopped gateway reads them at its start, so there is nothing to ask for
+        if tor.enabled and tor.bridges != box.upstreams.tor.bridges:
+            _ask_host(data, "uplink tor bridges changed")
         return view()
 
 

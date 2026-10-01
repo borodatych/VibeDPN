@@ -6,8 +6,64 @@ export type ApplyView = { pending: boolean; ok: boolean | null; message: string;
 
 export type WgExits = { uplinks: WgExit[]; apply: ApplyView }
 
-/** Uplink tor of `GET /uplinks/tor` (core/vibedpn/api/models.py: TorUplinkView); a bridge is its transport and address. */
-export type TorExit = { enabled: boolean; bridges: string[]; apply: ApplyView }
+/**
+ * Uplink tor of `GET /uplinks/tor` (core/vibedpn/api/models.py: TorUplinkView)
+ *
+ * A bridge is its transport and address: the rest of a private bridge line never comes back
+ */
+export type TorExit = { enabled: boolean; bridges: string[]; custom: boolean; apply: ApplyView }
+
+/** core/vibedpn/config.py TOR_TRANSPORTS: the transports the gateway image has a client for. */
+export const TOR_TRANSPORTS = ['snowflake', 'obfs4', 'meek_lite'] as const
+/** core/vibedpn/api/models.py TorBridgesUpdate: lines and the length of each */
+export const MAX_TOR_BRIDGES = 64
+export const MAX_TOR_BRIDGE_LINE = 4 * 1024
+// A transport Tor knows and the gateway does not: named apart, it is the one owners most often paste
+const WEBTUNNEL = 'webtunnel'
+// core/vibedpn/config.py TORRC_BRIDGE_KEYWORD: torrc options are case-insensitive
+const TORRC_BRIDGE_KEYWORD = 'bridge'
+
+/** The bridge lines of a pasted text, as core keeps them: blank lines dropped, a torrc `Bridge` keyword too. */
+export const bridgeLines = (text: string): string[] =>
+  text
+    .split('\n')
+    .map((raw) => raw.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [keyword = '', ...rest] = line.split(/\s+/)
+      return keyword.toLowerCase() === TORRC_BRIDGE_KEYWORD ? rest.join(' ') : line
+    })
+
+/**
+ * What keeps a pasted text from being bridges the gateway can run, or null; core checks again and has the last word
+ *
+ * `line` is the number of the first bad line among the non-blank ones, counted from 1
+ *
+ * @tags uplinks
+ */
+export const bridgeLinesProblem = (
+  text: string,
+): { kind: 'empty' | 'tooMany' } | { kind: 'webtunnel' | 'line'; line: number } | null => {
+  const lines = bridgeLines(text)
+  if (!lines.length) {
+    return { kind: 'empty' }
+  }
+  if (lines.length > MAX_TOR_BRIDGES) {
+    return { kind: 'tooMany' }
+  }
+  const bad = lines.findIndex((line) => {
+    const words = line.split(/\s+/)
+    return (
+      words.length < 2 ||
+      line.length > MAX_TOR_BRIDGE_LINE ||
+      !(TOR_TRANSPORTS as readonly string[]).includes(words[0]!)
+    )
+  })
+  if (bad === -1) {
+    return null
+  }
+  return { kind: lines[bad]!.split(/\s+/)[0] === WEBTUNNEL ? 'webtunnel' : 'line', line: bad + 1 }
+}
 
 /** The routing key of the exit through Tor, as core names it in `routing.default_upstream` and in `GET /status`. */
 export const TOR_KEY = 'tor'
@@ -104,8 +160,8 @@ export const exitEntries = (
 ]
 
 /**
- * The entry the page shows: the one in the URL when the box has it, else the first exit that is on, else the first
- * A WireGuard exit removed while it was open falls back the same way, never to an empty page
+ * The entry the page shows: the one in the URL when the box has it, else the first exit that is on, else the first A
+ * WireGuard exit removed while it was open falls back the same way, never to an empty page
  *
  * @tags uplinks
  */
@@ -116,4 +172,3 @@ export const pickExit = (entries: ExitEntry[], wanted: string | undefined): stri
   const chosen = entries.find((entry) => entry.on) ?? entries.at(0)
   return chosen ? chosen.key : ADD_EXIT
 }
-

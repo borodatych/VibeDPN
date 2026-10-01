@@ -3,6 +3,8 @@ import { AppError } from '@/lib/error'
 import { authorizedOnlyPlugin } from '@/modules/auth/plugins'
 import { coreFetch, coreRequest } from '@/modules/core/client'
 import {
+  MAX_TOR_BRIDGE_LINE,
+  MAX_TOR_BRIDGES,
   MAX_WG_FILE_BYTES,
   MAX_XRAY_LINK_BYTES,
   WG_EXIT_NAME,
@@ -53,6 +55,16 @@ export const torExitMutation = root.lets
   .input(z.object({ enabled: z.boolean() }))
   .loader(async ({ input }) => {
     return { tor: await coreRequest<TorExit>('/uplinks/tor', { method: 'PUT', body: input }) }
+  })
+  .mutation()
+
+export const torBridgesMutation = root.lets
+  .mutation()
+  .use(authorizedOnlyPlugin)
+  // Lines of the owner's own bridges, or `null` for the built-in Snowflake ones; they stay with core
+  .input(z.object({ bridges: z.array(z.string().max(MAX_TOR_BRIDGE_LINE)).max(MAX_TOR_BRIDGES).nullable() }))
+  .loader(async ({ input }) => {
+    return { tor: await coreRequest<TorExit>('/uplinks/tor/bridges', { method: 'PUT', body: input }) }
   })
   .mutation()
 

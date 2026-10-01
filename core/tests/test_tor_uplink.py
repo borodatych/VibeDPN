@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 from vibedpn import cli
 from vibedpn.compose import TOR_BRIDGES_FILE, TOR_CONFIG_DIR, refresh_tor_bridges
 from vibedpn.config import DEFAULT_TOR_BRIDGES, Config, Profile, Upstream
-from vibedpn.config_edit import set_tor_uplink
+from vibedpn.config_edit import ConfigEditError, set_tor_bridges, set_tor_uplink
 from vibedpn.doctor import EXIT_IP_TIMEOUT_SECONDS, TOR_EXIT_IP_TIMEOUT_SECONDS, exit_timeout
 from vibedpn.engine.router import (
     UPLINKS,
@@ -68,6 +68,15 @@ def test_bridge_lines_are_checked_for_a_transport_the_image_runs() -> None:
     }
     bridges = Config.model_validate(raw).upstreams.tor.bridges
     assert bridges == ["obfs4 203.0.113.9:443 ABCD cert=x"]
+    # a line pasted from a torrc keeps its keyword, in any case: Tor options are case-insensitive
+    raw["upstreams"]["tor"]["bridges"] = [
+        "Bridge obfs4 203.0.113.9:443 ABCD",
+        "bridge snowflake 192.0.2.3:80",
+    ]
+    assert Config.model_validate(raw).upstreams.tor.bridges == [
+        "obfs4 203.0.113.9:443 ABCD",
+        "snowflake 192.0.2.3:80",
+    ]
     for bad in ([], ["webtunnel 203.0.113.9:443 url=https://x"], ["snowflake"], ["a\nb c"]):
         raw["upstreams"]["tor"] = {"enabled": True, "bridges": bad}
         with pytest.raises(ValidationError, match="bridge"):
@@ -135,6 +144,66 @@ def test_enable_and_disable_edit_one_key_and_keep_the_rest(tmp_path: Path) -> No
     assert set_tor_uplink(config_path, False)[0].upstreams.tor.enabled is False
 
 
+OWN_BRIDGES = (
+    "Bridge obfs4 203.0.113.9:443 ABCD cert=secret iat-mode=0\n\nmeek_lite 192.0.2.20:80 url=x\n"
+)
+
+
+def test_own_bridges_are_written_and_the_built_in_ones_never(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "version: 1\nrole: home\n# my box\nprovider:\n  enabled: true\n" + BOX_TAIL,
+        encoding="utf-8",
+    )
+    config, changed = set_tor_bridges(config_path, OWN_BRIDGES.splitlines())
+    assert changed and config.upstreams.tor.has_custom_bridges()
+    # the torrc keyword is dropped and the empty line skipped before the file sees them
+    assert config.upstreams.tor.bridges == [
+        "obfs4 203.0.113.9:443 ABCD cert=secret iat-mode=0",
+        "meek_lite 192.0.2.20:80 url=x",
+    ]
+    text = config_path.read_text(encoding="utf-8")
+    assert "# my box" in text and "Bridge" not in text
+    assert "      - obfs4 203.0.113.9:443 ABCD cert=secret iat-mode=0\n" in text
+
+    config, _changed = set_tor_bridges(config_path, None)
+    assert not config.upstreams.tor.has_custom_bridges()
+    assert "bridges" not in config_path.read_text(encoding="utf-8")
+    # the built-in list given back as lines is the built-in list: the key stays out
+    set_tor_bridges(config_path, list(DEFAULT_TOR_BRIDGES))
+    assert "bridges" not in config_path.read_text(encoding="utf-8")
+
+
+def test_bridges_tor_cannot_run_leave_the_file_as_it_was(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("version: 1\nrole: home\nprovider:\n  enabled: true\n" + BOX_TAIL)
+    before = config_path.read_text(encoding="utf-8")
+    for bad in (["webtunnel 203.0.113.9:443 url=https://x"], ["", "  "], ["snowflake"]):
+        with pytest.raises(ConfigEditError, match="bridge"):
+            set_tor_bridges(config_path, bad)
+    assert config_path.read_text(encoding="utf-8") == before
+
+
+def test_cli_sets_own_bridges_from_a_file_and_resets_them(tmp_path: Path) -> None:
+    (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    (tmp_path / "config.yaml").write_text(
+        "version: 1\nrole: home\nprovider:\n  enabled: true\n" + BOX_TAIL, encoding="utf-8"
+    )
+    lines = tmp_path / "bridges.txt"
+    lines.write_text(OWN_BRIDGES, encoding="utf-8")
+    box = ["--dir", str(tmp_path)]
+    set_ = runner.invoke(cli.app, ["tor", "bridges", "set", "--file", str(lines), *box])
+    assert set_.exit_code == 0, set_.output
+    assert "2 own bridges" in set_.output
+    shown = runner.invoke(cli.app, ["tor", "show", *box])
+    assert "2 own bridges" in shown.output and "obfs4 203.0.113.9:443" in shown.output
+    # the rest of a private line is its secret and is not shown
+    assert "cert=secret" not in shown.output
+    reset = runner.invoke(cli.app, ["tor", "bridges", "reset", *box])
+    assert reset.exit_code == 0, reset.output
+    assert "built-in bridges" in runner.invoke(cli.app, ["tor", "show", *box]).output
+
+
 def test_cli_enable_show_and_disable(tmp_path: Path) -> None:
     (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
     (tmp_path / "config.yaml").write_text(
@@ -146,7 +215,8 @@ def test_cli_enable_show_and_disable(tmp_path: Path) -> None:
     assert "enabled with 2 bridges" in enabled.output
     shown = runner.invoke(cli.app, ["tor", "show", "--dir", str(tmp_path)])
     assert shown.exit_code == 0, shown.output
-    assert "tor  enabled  2 bridges" in shown.output and "snowflake 192.0.2.3:80" in shown.output
+    assert "tor  enabled  2 built-in bridges" in shown.output
+    assert "snowflake 192.0.2.3:80" in shown.output
     disabled = runner.invoke(cli.app, ["tor", "disable", "--dir", str(tmp_path)])
     assert disabled.exit_code == 0 and "disabled" in disabled.output
 

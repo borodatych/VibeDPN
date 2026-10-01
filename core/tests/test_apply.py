@@ -265,6 +265,34 @@ def test_tor_is_turned_on_from_the_panel_and_the_host_asked_to_start_it(tmp_path
     assert read_task_request(tmp_path / "data", APPLY) == first
 
 
+def test_tor_bridges_are_changed_from_the_panel(tmp_path: Path) -> None:
+    client, path = box(tmp_path)
+    assert client.get("/uplinks/tor").json()["custom"] is False
+    # off: the file changes, the host is asked for nothing — the gateway reads them at its start
+    own = ["Bridge obfs4 203.0.113.9:443 ABCD cert=secret iat-mode=0"]
+    answer = client.put("/uplinks/tor/bridges", json={"bridges": own})
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["custom"] is True
+    assert answer.json()["bridges"] == ["obfs4 203.0.113.9:443"]
+    assert "cert=secret" not in answer.text
+    assert load_config(path).upstreams.tor.bridges == [own[0].removeprefix("Bridge ")]
+    assert read_task_request(tmp_path / "data", APPLY) is None
+
+    assert client.put("/uplinks/tor", json={"enabled": True}).status_code == 200
+    first = read_task_request(tmp_path / "data", APPLY)
+    assert first is not None
+    # on: the same bridges again ask for nothing new, the built-in ones ask the host to recreate it
+    assert client.put("/uplinks/tor/bridges", json={"bridges": own}).status_code == 200
+    assert read_task_request(tmp_path / "data", APPLY) == first
+    back = client.put("/uplinks/tor/bridges", json={"bridges": None})
+    assert back.status_code == 200 and back.json()["custom"] is False
+    assert back.json()["apply"]["pending"] is True
+    assert read_task_request(tmp_path / "data", APPLY) != first
+
+    bad = client.put("/uplinks/tor/bridges", json={"bridges": ["webtunnel 203.0.113.9:443"]})
+    assert bad.status_code == 422 and "bridge" in bad.json()["detail"]
+
+
 def test_tor_the_lan_goes_through_is_not_turned_off(tmp_path: Path) -> None:
     raw = home_config()
     raw["upstreams"]["tor"] = {"enabled": True}

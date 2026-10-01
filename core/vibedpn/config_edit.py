@@ -21,6 +21,7 @@ from ruamel.yaml.error import YAMLError
 
 from vibedpn.atomic import write_like
 from vibedpn.config import (
+    DEFAULT_TOR_BRIDGES,
     Config,
     DevicePolicy,
     DomainList,
@@ -29,6 +30,7 @@ from vibedpn.config import (
     NetworkRule,
     RoutingMode,
     Weekday,
+    bridge_line,
     normalize_domain,
     normalize_mac,
     parse_yaml,
@@ -169,22 +171,45 @@ def set_dpn_country(path: Path, country: str | None) -> tuple[Config, bool]:
     return _edit(path, mutate)
 
 
+def _tor_section(path: Path, data: CommentedMap) -> CommentedMap:
+    """``upstreams.tor`` of the document, created empty when the box has not named it yet."""
+    upstreams = data.get("upstreams")
+    if not isinstance(upstreams, CommentedMap):
+        raise ConfigEditError(f"{path} has no upstreams section: a box of this role has no uplink")
+    tor = upstreams.get("tor")
+    if tor is None:
+        tor = CommentedMap()
+        upstreams["tor"] = tor
+    if not isinstance(tor, CommentedMap):
+        raise ConfigEditError(f"{path}: upstreams.tor must be a mapping")
+    return tor
+
+
 def set_tor_uplink(path: Path, enabled: bool) -> tuple[Config, bool]:
     """Turn uplink tor on or off (``upstreams.tor.enabled``); the bridge lines stay as they are."""
 
     def mutate(data: CommentedMap) -> None:
-        upstreams = data.get("upstreams")
-        if not isinstance(upstreams, CommentedMap):
-            raise ConfigEditError(
-                f"{path} has no upstreams section: a box of this role has no uplink"
-            )
-        tor = upstreams.get("tor")
-        if tor is None:
-            tor = CommentedMap()
-            upstreams["tor"] = tor
-        if not isinstance(tor, CommentedMap):
-            raise ConfigEditError(f"{path}: upstreams.tor must be a mapping")
-        tor["enabled"] = enabled
+        _tor_section(path, data)["enabled"] = enabled
+
+    return _edit(path, mutate)
+
+
+def set_tor_bridges(path: Path, bridges: Sequence[str] | None) -> tuple[Config, bool]:
+    """Give uplink tor bridges of the owner's own (``upstreams.tor.bridges``), or ``None`` for the
+    built-in Snowflake bridges of Tor Browser.
+
+    The built-in list is never written out: the key is removed instead, so the box follows the
+    list of its version and a later release with new bridges reaches it. The lines are kept as
+    Tor writes them, a ``Bridge`` keyword pasted from a torrc dropped.
+    """
+    lines = None if bridges is None else [bridge_line(raw) for raw in bridges if raw.strip()]
+
+    def mutate(data: CommentedMap) -> None:
+        tor = _tor_section(path, data)
+        if lines is None or lines == list(DEFAULT_TOR_BRIDGES):
+            tor.pop("bridges", None)
+        else:
+            tor["bridges"] = CommentedSeq(lines)
 
     return _edit(path, mutate)
 
