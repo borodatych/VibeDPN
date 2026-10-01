@@ -163,7 +163,7 @@ sudo vibedpn update
 ```bash
 sudo vibedpn status          # ui запущен?
 sudo vibedpn logs ui
-sudo vibedpn password        # задать пароль заново, спросит дважды без эха
+sudo vibedpn password        # забыт пароль: задать заново, спросит дважды без эха, текущего не нужно
 ```
 
 Панель слушает только адрес коробки в LAN — снаружи её нет по замыслу.
