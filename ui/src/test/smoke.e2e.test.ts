@@ -29,6 +29,6 @@ describe('smoke e2e', () => {
   test('the box password opens the panel', async () => {
     await signInViaUi(page, { password })
     await page.goto(routes.home.abs())
-    await expect(page.locator('h1')).toContainText('VibeDPN')
+    await expect(page.locator('h1')).toHaveText(/^(Состояние коробки|Box status)$/)
   })
 })

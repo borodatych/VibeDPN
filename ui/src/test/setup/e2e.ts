@@ -1,6 +1,8 @@
 import { killPort } from '@point0/engine/port'
 import { afterAll, setDefaultTimeout } from 'bun:test'
-import nodePath from 'node:path'
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import nodePath, { join } from 'node:path'
 
 setDefaultTimeout(20000)
 
@@ -31,6 +33,16 @@ if (shouldRun) {
 }
 
 await import('@/preload')
+
+// The pages need a core to show anything: the real API of a home box, from core/tests/panel_core.py, on a data
+// directory of its own and on the port the panel asks (CORE_API_PORT)
+const coreProcess = !shouldRun
+  ? undefined
+  : Bun.spawn(
+      // eslint-disable-next-line no-restricted-properties -- test setup: the port the app process reads too
+      ['uv', 'run', 'python', '-m', 'tests.panel_core', process.env.CORE_API_PORT!, await mkdtemp(join(tmpdir(), 'panel-core-'))],
+      { cwd: nodePath.resolve(__dirname, '..', '..', '..', '..', 'core'), stdout: 'inherit', stderr: 'inherit' },
+    )
 
 const runCommand = async (command: string[]) => {
   const subprocess = Bun.spawn(command, {
@@ -79,6 +91,9 @@ const mainProcess = !shouldRun
 const killMainProcess = () => {
   if (!mainProcess?.killed) {
     mainProcess?.kill()
+  }
+  if (!coreProcess?.killed) {
+    coreProcess?.kill()
   }
 }
 
