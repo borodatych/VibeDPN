@@ -4,6 +4,8 @@ import { Engine } from '@point0/engine'
 // import react from '@vitejs/plugin-react'
 // import svgr from 'vite-plugin-svgr'
 // import { analyzer } from 'vite-bundle-analyzer'
+import { FONTS_STYLESHEET } from './lib/fonts'
+import { panelFonts } from './lib/fonts.build'
 import { clientEnvKeys } from './modules/env/shared'
 
 // The panel variant (docs/uiVariants.md), baked into both bundles as a build-time constant.
@@ -12,6 +14,7 @@ import { clientEnvKeys } from './modules/env/shared'
 // from another module is a variable to the bundler, and the branch with its imports would ship in `lite` too.
 // eslint-disable-next-line no-restricted-properties -- config load also happens for builds and codegen, with no env
 const uiVariant = process.env.UI_VARIANT === 'lite' ? 'lite' : 'full'
+const fonts = panelFonts(import.meta.dir)
 export const engine = Engine.create({
   file: import.meta.url,
   ssr: true,
@@ -88,8 +91,10 @@ export const engine = Engine.create({
     publicdir: {
       source: [
         '../public',
+        fonts.directories,
         {
           '.well-known/appspecific/com.chrome.devtools.json': () => '{}',
+          [FONTS_STYLESHEET]: () => fonts.css,
         },
       ],
       outdir: '../dist/client',

@@ -1,5 +1,5 @@
 import { routes } from '@/generated/point0/routes'
-import { panelContext, signInViaUi } from '@/test/lib/e2e'
+import { panelContext, signInViaUi, thirdPartyRequests } from '@/test/lib/e2e'
 import { afterAll, beforeAll, describe, test } from 'bun:test'
 import { chromium, type Browser, type Page } from 'playwright'
 import { expect } from 'playwright/test'
@@ -30,5 +30,12 @@ describe('smoke e2e', () => {
     await signInViaUi(page, { password })
     await page.goto(routes.home.abs())
     await expect(page.locator('h1')).toHaveText(/^(Состояние коробки|Box status)$/)
+  })
+
+  // A visit to the panel is nobody else's business, and a slow third party would hold the page
+  test('the panel loads nothing from outside the box', async () => {
+    await page.goto(routes.home.abs(), { waitUntil: 'load' })
+    await expect(page.locator('h1')).toBeVisible()
+    expect(thirdPartyRequests).toEqual([])
   })
 })

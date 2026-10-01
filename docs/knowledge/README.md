@@ -150,6 +150,7 @@
   `password.verify` по `htpasswd`, `/api/core/*` за сессией, `hostname` Bun, cookie в LAN; подмена `x-forwarded-for` обходила
   лимит — адрес сокета; вход по имени коробки в `trustedOrigins`; константа `UI_VARIANT` вырезает код только прямо в ветке
 - [point0HotContext.md](frontend/point0HotContext.md) — под `bun run dev` (`point0 dev --hot`) сервер рендерил страницы базовым языком: `App` холодный и берёт исходный `use-t`, страницы — копию из hot-хранилища, контекстов два; модуль с контекстом помечается `@point0/core/cold`, гейт `app.client.unit.test.ts`
+- [selfHostedFonts.md](frontend/selfHostedFonts.md) — шрифты панели с самой коробки, а не с Google: Bun встраивает `url()` CSS до 128 КБ как data URL (`file`-загрузчик не действует), плагин ресурсов Point0 делает из шрифта JS-модуль, `publicdir` копирует только каталоги — `fonts.css` собирается из CSS Fontsource, каталоги `files` монтируются; страж e2e на запросы наружу
 - [svgImageNamespace.md](frontend/svgImageNamespace.md) — SVG картинкой (`<img>`, data-URL) без `xmlns` не рисуется, а `segno.svg_inline` его не ставит: QR для картинки — `save(kind="svg", svgns=True)`
 
 ## python

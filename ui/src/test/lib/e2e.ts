@@ -17,12 +17,23 @@ export const signInViaUi = async (page: Page, { password }: { password: string }
   await expect(page.locator(`a[href="${routes.signOut()}"]`)).toBeVisible()
 }
 
-// The fonts of the panel come from Google: a slow line to it holds the `load` of every page for seconds, and a
-// test waiting for `load` fails on the network, not on the panel. Text in the fallback font is as good for a test
-const THIRD_PARTY_FONTS = /^https:\/\/fonts\.(googleapis|gstatic)\.com\//
+// The panel under test runs on this machine: anything else a page asks for is a third party
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 /**
- * A browser context for the panel: its pages load without the fonts of Google
+ * The requests panel pages made to a third party during this run, which the browser was not let through
+ *
+ * A box asks nothing of anyone outside it, so a test expects this empty
+ *
+ * @tags test, e2e
+ * @related panelContext
+ */
+export const thirdPartyRequests: string[] = []
+
+/**
+ * A browser context for the panel: a request beyond this machine is cut off and recorded in `thirdPartyRequests`
+ *
+ * Cut, so a slow third party never holds a page, and recorded, so a test fails on it instead
  *
  * @tags test, e2e
  */
@@ -31,7 +42,13 @@ export const panelContext = async (
   options: Parameters<Browser['newContext']>[0] = {},
 ): Promise<BrowserContext> => {
   const context = await browser.newContext(options)
-  await context.route(THIRD_PARTY_FONTS, async (route) => await route.abort())
+  await context.route(
+    (url) => !LOCAL_HOSTS.has(url.hostname),
+    async (route) => {
+      thirdPartyRequests.push(route.request().url())
+      await route.abort()
+    },
+  )
   return context
 }
 
@@ -41,8 +58,8 @@ let session: Promise<Awaited<ReturnType<BrowserContext['storageState']>>> | unde
  * A page of the panel already signed in, on its own context of the given size
  *
  * The box admin signs in once per run and every test file reuses that session: the panel limits sign-ins
- * (SIGN_IN_MAX_ATTEMPTS a window), and a sign-in per file runs into the limit as the files add up
- * The sign-in itself is the subject of the smoke test, which still goes through the form
+ * (SIGN_IN_MAX_ATTEMPTS a window), and a sign-in per file runs into the limit as the files add up The sign-in itself is
+ * the subject of the smoke test, which still goes through the form
  *
  * @tags test, e2e
  */

@@ -9,6 +9,7 @@ import { SearchParamsToast, Toaster } from '@/components/ui/sonner'
 import { PaletteProvider } from '@/components/ui/palette'
 import { ThemeProvider } from '@/components/ui/theme'
 import { ErrorPageComponent } from '@/components/other/error'
+import { FONTS_STYLESHEET } from '@/lib/fonts'
 import { queryClient } from '@/lib/query-client'
 import { LanguageProvider } from '@/modules/i18n/provider'
 import { useT } from '@/modules/i18n/use-t'
@@ -36,6 +37,7 @@ export default function App() {
             <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
             <meta name="apple-mobile-web-app-title" content="VibeDPN" />
             <link rel="manifest" href="/site.webmanifest" />
+            <link rel="stylesheet" href={`/${FONTS_STYLESHEET}`} />
           </Head>
           <ThemeProvider />
           <PaletteProvider />

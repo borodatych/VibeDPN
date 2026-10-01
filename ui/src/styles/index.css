@@ -141,10 +141,11 @@
 @theme inline {
   --font-mono:
     ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  --font-logo: 'Fira Code', monospace;
-  --font-body: 'Inter', sans-serif;
+  /* the faces of lib/fonts.build.ts, served by the panel as fonts.css */
+  --font-logo: 'Fira Code Variable', monospace;
+  --font-body: 'Inter Variable', sans-serif;
   --font-title: 'IBM Plex Serif', serif;
-  --font-accent: 'Fira Code', monospace;
+  --font-accent: 'Fira Code Variable', monospace;
 
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
