@@ -1,10 +1,8 @@
 import { getMe } from '@/modules/auth/server'
 import { serverEnv } from '@/modules/env/server'
 import type { Request0 } from '@point0/core/request0'
+import { CORE_API_PREFIX } from '@/modules/core/prefix'
 import '@point0/core/server-only'
-
-/** Everything under this prefix goes to the core API; the rest of `/api/` belongs to the app itself. */
-export const CORE_API_PREFIX = '/api/core'
 
 /** Core listens on loopback only; the panel is on the host network next to it. */
 export const CORE_API_HOST = '127.0.0.1'

@@ -44,7 +44,8 @@ describe('peers', () => {
 
 describe('pages of a role', () => {
   test('a VPS has peers and no LAN pages; a home box the other way round', () => {
-    expect(pagesOfRole('vps')).toEqual(['home', 'peers', 'node', 'access', 'notifications'])
+    expect(pagesOfRole('vps')).toEqual(['home', 'peers', 'node', 'access', 'notifications', 'backup'])
+    expect(pagesOfRole('home')).toContain('backup') // every role keeps a copy of itself
     expect(pagesOfRole('home')).not.toContain('peers')
     expect(pagesOfRole('home')).toContain('rules')
     expect(pagesOfRole(undefined)).toEqual(pagesOfRole('home'))

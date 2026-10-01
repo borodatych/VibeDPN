@@ -38,6 +38,7 @@ const pageLinks = (t: T): Record<PageName, NavItem> => ({
   access: { label: t('nav.access'), to: routes.access() },
   notifications: { label: t('nav.notifications'), to: routes.notifications() },
   journal: { label: t('nav.journal'), to: routes.journal() },
+  backup: { label: t('nav.backup'), to: routes.backup() },
 })
 
 type PageName = ReturnType<typeof pagesOfRole>[number]

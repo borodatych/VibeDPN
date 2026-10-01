@@ -9,5 +9,16 @@ export const VPS_ROLE = 'vps'
  */
 export const pagesOfRole = (role: string | null | undefined) =>
   role === VPS_ROLE
-    ? (['home', 'peers', 'node', 'access', 'notifications'] as const)
-    : (['home', 'devices', 'rules', 'node', 'network', 'uplinks', 'access', 'notifications', 'journal'] as const)
+    ? (['home', 'peers', 'node', 'access', 'notifications', 'backup'] as const)
+    : ([
+        'home',
+        'devices',
+        'rules',
+        'node',
+        'network',
+        'uplinks',
+        'access',
+        'notifications',
+        'journal',
+        'backup',
+      ] as const)
