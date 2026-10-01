@@ -32,3 +32,22 @@ describe('Button confirm', () => {
     expect(onClick).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('Button name', () => {
+  const renderButton = (loading: boolean) =>
+    render(
+      <LanguageContext.Provider value={{ language: 'ru', strings: { ...baseStrings, ...ru } }}>
+        <Button loading={loading}>Проверить</Button>
+      </LanguageContext.Provider>,
+    )
+
+  test('an idle button is named by its text alone, the spinner speaks only while it loads', () => {
+    const idle = renderButton(false)
+    expect(screen.getByRole('button', { name: 'Проверить' })).toBeTruthy()
+    expect(screen.queryByRole('status')).toBeNull()
+    idle.unmount()
+    renderButton(true)
+    expect(screen.getByRole('status', { name: ru['app.loading'] })).toBeTruthy()
+  })
+})
+

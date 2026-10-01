@@ -216,7 +216,9 @@ const Button = React.forwardRef<
       {...props}
       {...linkProps}
     >
+      {/* An idle spinner is only transparent, not gone: hidden from the reader, or every button is named «Loading…» */}
       <span
+        aria-hidden={!loading || undefined}
         className={cn(
           'pointer-events-none absolute inset-0 grid place-items-center transition-opacity duration-200 ease-out',
           loading ? 'opacity-100' : 'opacity-0',
