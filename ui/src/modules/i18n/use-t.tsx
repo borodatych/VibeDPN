@@ -1,3 +1,5 @@
+// Cold: under `point0 dev --hot` App and the pages must share this module, or each gets a context of its own
+import '@point0/core/cold'
 import { baseStrings, type T } from '@/modules/i18n/base'
 import { BASE_LANGUAGE, type Strings, translate } from '@/modules/i18n/shared'
 import { createContext, useCallback, useContext } from 'react'

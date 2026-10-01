@@ -149,6 +149,7 @@
   runtime ~205–283 МиБ плюс Postgres ~70 МиБ, Bun на Pi 4 исправлен в v1.3.9; вход паролем коробки через
   `password.verify` по `htpasswd`, `/api/core/*` за сессией, `hostname` Bun, cookie в LAN; подмена `x-forwarded-for` обходила
   лимит — адрес сокета; вход по имени коробки в `trustedOrigins`; константа `UI_VARIANT` вырезает код только прямо в ветке
+- [point0HotContext.md](frontend/point0HotContext.md) — под `bun run dev` (`point0 dev --hot`) сервер рендерил страницы базовым языком: `App` холодный и берёт исходный `use-t`, страницы — копию из hot-хранилища, контекстов два; модуль с контекстом помечается `@point0/core/cold`, гейт `app.client.unit.test.ts`
 - [svgImageNamespace.md](frontend/svgImageNamespace.md) — SVG картинкой (`<img>`, data-URL) без `xmlns` не рисуется, а `segno.svg_inline` его не ставит: QR для картинки — `save(kind="svg", svgns=True)`
 
 ## python

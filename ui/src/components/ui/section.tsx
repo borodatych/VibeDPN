@@ -1,3 +1,5 @@
+// Cold: under `point0 dev --hot` App and the pages must share this module, or each gets a context of its own
+import '@point0/core/cold'
 import { cn } from '@/utils'
 import { cva, type VariantProps } from 'class-variance-authority'
 import * as React from 'react'

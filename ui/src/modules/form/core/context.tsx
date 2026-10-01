@@ -1,3 +1,5 @@
+// Cold: under `point0 dev --hot` App and the pages must share this module, or each gets a context of its own
+import '@point0/core/cold'
 import type { ReactNode } from 'react'
 import { createContext, useContext } from 'react'
 import type { FieldValues } from 'react-hook-form'
