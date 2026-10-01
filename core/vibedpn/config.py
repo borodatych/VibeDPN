@@ -966,6 +966,19 @@ LAN_SECTIONS = ("network", "routing", "devices", "upstreams", "dns")
 VPS_SECTIONS = ("firewall",)
 
 
+DEFAULT_BACKUP_KEEP = 10
+
+
+class BackupConfig(StrictModel):
+    """The archives of ``vibedpn backup`` in ``backups/`` of the box
+
+    A new one beyond ``keep`` removes the oldest
+    Each is tens of MB, and a weekly or panel-made copy would fill the disk quietly
+    """
+
+    keep: int = Field(default=DEFAULT_BACKUP_KEEP, ge=1)
+
+
 class Config(StrictModel):
     """Top level of ``config.yaml``."""
 
@@ -984,6 +997,7 @@ class Config(StrictModel):
     access: AccessConfig = Field(default_factory=AccessConfig)
     ddns: DdnsConfig = Field(default_factory=DdnsConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    backup: BackupConfig = Field(default_factory=BackupConfig)
 
     @model_validator(mode="before")
     @classmethod

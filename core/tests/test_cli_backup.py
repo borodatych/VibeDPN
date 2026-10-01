@@ -1,6 +1,10 @@
 """vibedpn backup / restore / update with Compose, git and systemctl recorded, not run."""
 
 import json
+import shutil
+import tarfile
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -9,9 +13,19 @@ from typer.testing import CliRunner
 from vibedpn import cli
 from vibedpn.bootstrap import render_config
 from vibedpn.config import Config
+from vibedpn.engine.apply import (
+    BACKUP,
+    BOX_DATA_DIR,
+    RESTORE,
+    read_task_request,
+    read_task_result,
+    request_task,
+)
+from vibedpn.engine.backup import RESTORE_SLOT, create_archive
 
-from .conftest import home_config
+from .conftest import home_config, vps_config
 from .test_cli_compose import Recorder
+from .test_cli_init import FakeProbe, init_home
 
 runner = CliRunner()
 
@@ -58,19 +72,149 @@ def test_backup_of_a_stopped_box_starts_nothing(
     assert not any("up" in call or "stop" in call for call in verbs(recorder))
 
 
-def test_restore_takes_the_box_down_and_keeps_the_old_files(
+def init_box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *extra: str) -> Recorder:
+    """A box `vibedpn init` made, with every secret `up` checks for; Compose is recorded"""
+    monkeypatch.setattr(cli, "HostProbe", FakeProbe)
+    code, output = init_home(tmp_path, *extra)
+    assert code == 0, output
+    (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    recorder = Recorder()
+    monkeypatch.setattr(cli, "run", recorder.run)
+    monkeypatch.setattr(cli, "capture", recorder.capture)
+    monkeypatch.setattr(cli, "preflight", lambda: None)
+    return recorder
+
+
+def backed_up(tmp_path: Path) -> Path:
+    out = tmp_path / "copy.tar.gz"
+    result = runner.invoke(cli.app, ["backup", "--out", str(out), "--dir", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    return out
+
+
+def test_restore_starts_the_box_from_the_archive_and_keeps_the_old_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    make_box(tmp_path, monkeypatch)
-    out = tmp_path / "copy.tar.gz"
-    assert (
-        runner.invoke(cli.app, ["backup", "--out", str(out), "--dir", str(tmp_path)]).exit_code == 0
-    )
-    (tmp_path / "secrets" / "htpasswd").write_text("admin:changed\n", encoding="utf-8")
+    recorder = init_box(tmp_path, monkeypatch)
+    htpasswd = tmp_path / "secrets" / "htpasswd"
+    before = htpasswd.read_text(encoding="utf-8")
+    out = backed_up(tmp_path)
+    htpasswd.write_text("admin:changed\n", encoding="utf-8")
+    recorder.calls.clear()
     result = runner.invoke(cli.app, ["restore", str(out), "--dir", str(tmp_path)])
     assert result.exit_code == 0, result.output
-    assert (tmp_path / "secrets" / "htpasswd").read_text(encoding="utf-8") == "admin:x\n"
-    assert "previous files are in" in result.output
+    assert htpasswd.read_text(encoding="utf-8") == before
+    assert "previous files are in" in result.output and "restored copy.tar.gz" in result.output
+    flat = verbs(recorder)
+    assert any(call.endswith("down") for call in flat)
+    assert flat[-1].endswith("-d --remove-orphans")  # the box starts from the archive by itself
+
+
+def test_a_restored_box_that_does_not_start_gets_its_files_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = init_box(tmp_path, monkeypatch)
+    out = backed_up(tmp_path)
+    htpasswd = tmp_path / "secrets" / "htpasswd"
+    htpasswd.write_text("admin:changed\n", encoding="utf-8")
+    starts: list[int] = []
+
+    def first_up_fails(argv: list[str]) -> int:
+        recorder.calls.append(argv)
+        if argv[-3:] == ["up", "-d", "--remove-orphans"]:
+            starts.append(1)
+            return 1 if len(starts) == 1 else 0
+        return 0
+
+    monkeypatch.setattr(cli, "run", first_up_fails)
+    result = runner.invoke(cli.app, ["restore", str(out), "--dir", str(tmp_path)])
+    assert result.exit_code == 1 and "restore undone, the box runs as before" in result.output
+    assert htpasswd.read_text(encoding="utf-8") == "admin:changed\n"  # the previous files are back
+    assert len(starts) == 2  # and the box started from them
+    (failed,) = tmp_path.glob("restore-failed-*")
+    assert (failed / "config.yaml").is_file()  # the restored files are kept, not deleted
+    assert not list(tmp_path.glob("restore-backup-*"))
+
+
+def test_an_archive_this_box_cannot_start_is_refused_before_anything_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "home").mkdir()
+    recorder = init_box(tmp_path / "home", monkeypatch)
+    vps = tmp_path / "vps"
+    vps.mkdir()
+    (vps / "config.yaml").write_text(
+        render_config(Config.model_validate(vps_config())), encoding="utf-8"
+    )
+    foreign = tmp_path / "vps.tar.gz"
+    create_archive(vps, foreign)
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "config.yaml").write_text("version: 1\nrole: nobody\n", encoding="utf-8")
+    bad = tmp_path / "broken.tar.gz"
+    create_archive(broken, bad)
+    before = (tmp_path / "home" / "config.yaml").read_text(encoding="utf-8")
+    recorder.calls.clear()
+    for archive, reason in [(foreign, "the archive is of a vps box"), (bad, "is not a valid box")]:
+        result = runner.invoke(cli.app, ["restore", str(archive), "--dir", str(tmp_path / "home")])
+        assert result.exit_code == 1 and reason in result.output, result.output
+    assert (tmp_path / "home" / "config.yaml").read_text(encoding="utf-8") == before
+    assert recorder.calls == [] and not list((tmp_path / "home").glob("restore-*"))
+
+
+def test_a_backup_beyond_keep_removes_the_oldest_archives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    init_box(tmp_path, monkeypatch)
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace("  keep: 10\n", "  keep: 2\n"), encoding="utf-8"
+    )
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    for old in ("vibedpn-20260101-000000.tar.gz", "vibedpn-20260102-000000.tar.gz"):
+        (backups / old).write_bytes(b"old")
+    (backups / "notes.txt").write_text("not an archive of the box\n", encoding="utf-8")
+    result = runner.invoke(cli.app, ["backup", "--dir", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "removed the old vibedpn-20260101-000000.tar.gz (backup.keep)" in result.output
+    assert result.output.splitlines()[-1].startswith("wrote ")  # scripts/pullBackup.sh reads it
+    names = sorted(entry.name for entry in backups.iterdir())
+    assert len(names) == 3 and "vibedpn-20260102-000000.tar.gz" in names and "notes.txt" in names
+
+
+def test_the_panel_asks_and_the_host_backs_up_and_restores_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    init_box(tmp_path, monkeypatch)
+    data = tmp_path / BOX_DATA_DIR
+    data.mkdir(parents=True, exist_ok=True)
+    request_task(data, BACKUP, 100.0, "backup asked in the panel")
+    result = runner.invoke(cli.app, ["backup", "--requested", "--dir", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    made = read_task_result(data, BACKUP)
+    assert made is not None and made.ok and made.requested_at == 100.0
+    assert (tmp_path / "backups" / made.message).is_file()  # the result names the archive
+    again = runner.invoke(cli.app, ["backup", "--requested", "--dir", str(tmp_path)])
+    assert again.exit_code == 0 and len(list((tmp_path / "backups").iterdir())) == 1  # once
+    # the archive does not carry the request: restoring it must not ask for a backup again
+    with tarfile.open(tmp_path / "backups" / made.message) as tar:
+        assert "data/core/backup-request" not in tar.getnames()
+
+    htpasswd = tmp_path / "secrets" / "htpasswd"
+    before = htpasswd.read_text(encoding="utf-8")
+    htpasswd.write_text("admin:changed\n", encoding="utf-8")
+    slot = tmp_path / "backups" / RESTORE_SLOT
+    shutil.copy(tmp_path / "backups" / made.message, slot)
+    request_task(data, RESTORE, 200.0, "restore asked in the panel")
+    result = runner.invoke(cli.app, ["restore", "--requested", "--dir", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert htpasswd.read_text(encoding="utf-8") == before and not slot.exists()
+    restored = read_task_result(data, RESTORE)  # in the data/core the archive brought
+    assert restored is not None and restored.ok and restored.requested_at == 200.0
+    assert read_task_request(data, BACKUP) is None  # nothing replays
+    both = runner.invoke(cli.app, ["restore", str(slot), "--requested", "--dir", str(tmp_path)])
+    assert both.exit_code != 0
 
 
 def test_update_needs_a_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -192,3 +336,31 @@ def test_images_that_never_download_stop_the_update_before_the_restart(
     flat = [" ".join(call) for call in recorder.calls]
     assert sum(call.endswith(" pull") for call in flat) == 3
     assert not any(" -m vibedpn restart " in call for call in flat)
+
+
+def test_a_task_the_unit_and_the_owner_both_run_is_done_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The path unit and a hand-run command both see the request: the second waits for the lock,
+    then finds the result written"""
+    init_box(tmp_path, monkeypatch)
+    data = tmp_path / BOX_DATA_DIR
+    data.mkdir(parents=True, exist_ok=True)
+    request_task(data, BACKUP, 100.0, "backup asked in the panel")
+    runs: list[str] = []
+    started = threading.Event()
+
+    def slow() -> str:
+        runs.append("work")
+        started.set()
+        time.sleep(0.3)
+        return "vibedpn-20261001-120000.tar.gz"
+
+    first = threading.Thread(target=cli._run_requested, args=(tmp_path, BACKUP, slow))
+    first.start()
+    assert started.wait(5)
+    cli._run_requested(tmp_path, BACKUP, slow)  # blocks until the first one is done
+    first.join()
+    assert runs == ["work"]
+    made = read_task_result(data, BACKUP)
+    assert made is not None and made.ok

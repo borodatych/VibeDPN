@@ -182,6 +182,7 @@ REACH = {
     "access.target": CORE,
     "ddns": CORE,
     "telegram": CORE,
+    "backup": NOBODY,  # the host prunes the archives; no service reads it
 }
 
 

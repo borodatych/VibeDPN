@@ -8,6 +8,10 @@
 /secrets/
 /data/
 /backups/
+# What a restore moves aside, and the lock of the tasks the host runs for the panel
+/restore-backup-*/
+/restore-failed-*/
+/.host-task.lock
 
 # Python
 __pycache__/

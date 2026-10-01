@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, ValidationError
 
 from vibedpn import __version__
+from vibedpn.api.backups import add_backup_routes
 from vibedpn.api.consumer import ConsumerStatus
 from vibedpn.api.lists import ListsStatus
 from vibedpn.api.models import (
@@ -81,6 +82,7 @@ from vibedpn.api.models import (
 )
 from vibedpn.api.smart import SmartLoop
 from vibedpn.api.state import BoxState
+from vibedpn.api.tasks import ask_host, task_view
 from vibedpn.api.telegram import TelegramBot, link_url
 from vibedpn.api.traffic import ACCESS_TRAFFIC_DIR
 from vibedpn.api.uplink import UplinkWatchers
@@ -148,7 +150,7 @@ from vibedpn.engine.access import (
     remove_person,
 )
 from vibedpn.engine.adguard import AdguardError, close_upstream_connections, set_dns_mode
-from vibedpn.engine.apply import ApplyError, apply_state, request_apply
+from vibedpn.engine.apply import APPLY, ApplyError
 from vibedpn.engine.consumer import (
     CONSUMER_TEQUILAPI,
     CONSUMER_TIMEOUT_SECONDS,
@@ -467,24 +469,12 @@ def _add_update_routes(application: FastAPI, data_dir: Path | None) -> None:
 
 def _apply_view(data: Path) -> ApplyView:
     """The last change the host applied for the panel, and whether one is still waiting."""
-    progress = apply_state(data, time.time())
-    last = progress.last
-    return ApplyView(
-        pending=progress.pending,
-        ok=None if last is None else last.ok,
-        message="" if last is None else last.message,
-        finished_at=None if last is None else last.finished_at,
-    )
+    return task_view(data, APPLY)
 
 
 def _ask_host(data: Path, reason: str) -> None:
     """Leave the request the host's path unit picks up: core cannot start containers itself."""
-    try:
-        request_apply(data, time.time(), reason)
-    except ApplyError as exc:
-        raise HTTPException(
-            status_code=503, detail=f"saved, but the host was not asked to apply it: {exc}"
-        ) from exc
+    ask_host(data, APPLY, reason)
 
 
 WRONG_PASSWORD = "the current password is wrong"
@@ -1499,6 +1489,7 @@ def create_app(
     telegram: TelegramBot | None = None,
     hostapd_dir: Path | None = None,
     wifi_reload: WifiReload | None = None,
+    backups_dir: Path | None = None,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -1566,6 +1557,7 @@ def create_app(
     )
 
     _add_panel_routes(application, current, secrets_dir, data_dir)
+    add_backup_routes(application, current, data_dir, backups_dir)
     _add_wifi_routes(
         application,
         current,

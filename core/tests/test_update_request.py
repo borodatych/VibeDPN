@@ -11,14 +11,14 @@ from vibedpn import cli
 from vibedpn.api.app import create_app
 from vibedpn.bootstrap import render_config
 from vibedpn.config import Config
+from vibedpn.engine.apply import render_task_units
 from vibedpn.engine.update import (
-    UPDATE_TIMEOUT_SECONDS,
+    UPDATE,
     Revision,
     UpdateResult,
     read_revision,
     read_update_request,
     read_update_result,
-    render_update_units,
     request_update,
     update_state,
     write_revision,
@@ -40,7 +40,7 @@ def test_a_request_waits_for_its_result_and_is_not_left_waiting_forever(tmp_path
     state = update_state(tmp_path, 170.0)
     assert state.pending is False and state.last == read_update_result(tmp_path)
     request_update(tmp_path, 200.0)  # the host never runs the unit
-    silent = update_state(tmp_path, 200.0 + UPDATE_TIMEOUT_SECONDS + 1)
+    silent = update_state(tmp_path, 200.0 + UPDATE.timeout + 1)
     assert silent.pending is False and silent.last is not None and not silent.last.ok
     assert "journalctl -u vibedpn-update-request" in silent.last.message
 
@@ -53,7 +53,7 @@ def test_the_revision_is_kept_and_a_broken_file_reads_as_none(tmp_path: Path) ->
 
 
 def test_the_units_run_one_fixed_command_for_the_request() -> None:
-    units = render_update_units(Path("/opt/vibedpn"), "/usr/bin/python3")
+    units = render_task_units(Path("/opt/vibedpn"), "/usr/bin/python3", UPDATE)
     path = units["vibedpn-update-request.path"]
     assert "PathChanged=/opt/vibedpn/data/core/update-request" in path
     service = units["vibedpn-update-request.service"]

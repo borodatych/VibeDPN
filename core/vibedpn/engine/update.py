@@ -16,17 +16,21 @@ from pathlib import Path
 from typing import Any
 
 from vibedpn.atomic import write_private
-from vibedpn.engine.apply import BOX_DATA_DIR, ApplyError, request_time, write_request
+from vibedpn.engine.apply import ApplyError, HostTask, request_time, write_request
 
-UPDATE_REQUEST_FILE = "update-request"
-UPDATE_RESULT_FILE = "update-result.json"
 REVISION_FILE = "revision.json"
-UPDATE_REQUEST_UNIT = "vibedpn-update-request"
-# install.sh, a pull of every image and a restart of the box: minutes on a slow line
-# A request with no result after this means the host never ran the unit — said, not left "updating"
-UPDATE_TIMEOUT_SECONDS = 30 * 60.0
-NO_UPDATE_ANSWER = (
-    "the host did not run the update: journalctl -u vibedpn-update-request, or sudo vibedpn update"
+# Its result carries the revisions before and after, so it keeps its own result functions below
+UPDATE = HostTask(
+    request="update-request",
+    result="update-result.json",
+    unit="vibedpn-update-request",
+    path_description="VibeDPN: an update asked in the panel",
+    service_description="VibeDPN: vibedpn update asked in the panel",
+    command="update --requested",
+    # install.sh, a pull of every image and a restart of the box: minutes on a slow line
+    timeout=30 * 60.0,
+    no_answer="the host did not run the update: journalctl -u vibedpn-update-request,"
+    " or sudo vibedpn update",
 )
 
 
@@ -56,19 +60,19 @@ class UpdateState:
 
 
 def request_update(data_dir: Path, now: float) -> None:
-    write_request(data_dir / UPDATE_REQUEST_FILE, now, "update asked in the panel")
+    write_request(data_dir / UPDATE.request, now, "update asked in the panel")
 
 
 def read_update_request(data_dir: Path) -> float | None:
-    return request_time(data_dir / UPDATE_REQUEST_FILE)
+    return request_time(data_dir / UPDATE.request)
 
 
 def write_update_result(data_dir: Path, result: UpdateResult) -> None:
-    _write(data_dir / UPDATE_RESULT_FILE, asdict(result))
+    _write(data_dir / UPDATE.result, asdict(result))
 
 
 def read_update_result(data_dir: Path) -> UpdateResult | None:
-    raw = _read(data_dir / UPDATE_RESULT_FILE)
+    raw = _read(data_dir / UPDATE.result)
     try:
         return UpdateResult(
             requested_at=float(raw["requested_at"]),
@@ -86,8 +90,8 @@ def update_state(data_dir: Path, now: float) -> UpdateState:
     requested = read_update_request(data_dir)
     last = read_update_result(data_dir)
     waiting = requested is not None and (last is None or last.requested_at < requested)
-    if requested is not None and waiting and now - requested > UPDATE_TIMEOUT_SECONDS:
-        timed_out = UpdateResult(requested, now, False, NO_UPDATE_ANSWER, "", "")
+    if requested is not None and waiting and now - requested > UPDATE.timeout:
+        timed_out = UpdateResult(requested, now, False, UPDATE.no_answer, "", "")
         return UpdateState(pending=False, last=timed_out)
     return UpdateState(pending=waiting, last=last)
 
@@ -102,32 +106,6 @@ def read_revision(data_dir: Path) -> Revision | None:
         return Revision(str(raw["branch"]), str(raw["commit"]), str(raw["committed_at"]))
     except (KeyError, TypeError):
         return None
-
-
-def render_update_units(box_dir: Path, python: str) -> dict[str, str]:
-    """The path unit watching the request and the service running the update for it
-
-    A oneshot service has no start timeout by default (systemd.service(5)): an update takes minutes
-    """
-    request = box_dir / BOX_DATA_DIR / UPDATE_REQUEST_FILE
-    return {
-        f"{UPDATE_REQUEST_UNIT}.path": (
-            "[Unit]\n"
-            "Description=VibeDPN: an update asked in the panel\n\n"
-            "[Path]\n"
-            f"PathChanged={request}\n\n"
-            "[Install]\n"
-            "WantedBy=multi-user.target\n"
-        ),
-        f"{UPDATE_REQUEST_UNIT}.service": (
-            "[Unit]\n"
-            "Description=VibeDPN: vibedpn update asked in the panel\n"
-            "After=docker.service network-online.target\n\n"
-            "[Service]\n"
-            "Type=oneshot\n"
-            f"ExecStart={python} -m vibedpn update --requested --dir {box_dir}\n"
-        ),
-    }
 
 
 def _write(path: Path, data: dict[str, Any]) -> None:

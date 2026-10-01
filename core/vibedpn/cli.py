@@ -111,22 +111,30 @@ from vibedpn.detect import DetectError, HostProbe, find_tool
 from vibedpn.device_view import render_devices
 from vibedpn.doctor import evaluate, gather, has_failures, render, to_json
 from vibedpn.engine.apply import (
-    APPLY_UNIT,
+    APPLY,
+    BACKUP,
     BOX_DATA_DIR,
+    RESTORE,
+    TASKS,
     ApplyError,
     ApplyResult,
-    read_request,
-    read_result,
-    render_units,
-    write_result,
+    HostTask,
+    host_lock,
+    read_task_request,
+    read_task_result,
+    render_task_units,
+    write_task_result,
 )
 from vibedpn.engine.backup import (
     BACKUPS_DIR,
+    RESTORE_SLOT,
     BackupError,
+    archive_config,
+    archive_name,
     create_archive,
-    read_members,
+    prune_archives,
     restore_archive,
-    stamp,
+    undo_restore,
 )
 from vibedpn.engine.consumer import (
     CONSUMER_TEQUILAPI,
@@ -149,12 +157,11 @@ from vibedpn.engine.hostapd import (
 )
 from vibedpn.engine.myst import MystError, TequilaClient, render_stats
 from vibedpn.engine.update import (
-    UPDATE_REQUEST_UNIT,
+    UPDATE,
     Revision,
     UpdateResult,
     read_update_request,
     read_update_result,
-    render_update_units,
     write_revision,
     write_update_result,
 )
@@ -600,17 +607,11 @@ def _running_services(box_dir: Path) -> list[str]:
     return [item.service for item in services if item.state == "running"]
 
 
-@app.command()
-def backup(
-    out: Annotated[
-        Path | None,
-        typer.Option(help="Archive to write; default backups/vibedpn-<time>.tar.gz in the box."),
-    ] = None,
-    box_dir: BoxDir = DEFAULT_BOX_DIR,
-) -> None:
-    """Archive config.yaml, .env, secrets/ and data/; the box pauses for the copy."""
-    _prepare(box_dir, refresh=False)
-    target = out or box_dir / BACKUPS_DIR / f"vibedpn-{stamp(time.time())}.tar.gz"
+def _make_backup(box_dir: Path, out: Path | None) -> tuple[Path, list[str], list[str]]:
+    """The archive, the names it holds and the old archives removed beyond backup.keep; the box
+    pauses for the copy and comes back whatever happens"""
+    config = _prepare(box_dir, refresh=False)
+    target = out or box_dir / BACKUPS_DIR / archive_name(time.time())
     running = _running_services(box_dir)
     if running:
         _compose(box_dir, "stop")
@@ -621,31 +622,134 @@ def backup(
     finally:
         if running:
             _compose(box_dir, "up", "-d")
+    try:
+        pruned = prune_archives(box_dir / BACKUPS_DIR, config.backup.keep)
+    except BackupError as exc:
+        raise _fail(str(exc)) from None
+    return target, names, pruned
+
+
+@app.command()
+def backup(
+    out: Annotated[
+        Path | None,
+        typer.Option(help="Archive to write; default backups/vibedpn-<time>.tar.gz in the box."),
+    ] = None,
+    requested: Annotated[
+        bool,
+        typer.Option(
+            "--requested",
+            help="Only when the panel asked for it (the systemd unit vibedpn-backup-request).",
+        ),
+    ] = False,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Archive config.yaml, .env, secrets/ and data/; the box pauses for the copy. Beyond
+    backup.keep, the oldest archives of backups/ go."""
+    if requested:
+        _run_requested(box_dir, BACKUP, lambda: _make_backup(box_dir, None)[0].name)
+        return
+    target, names, pruned = _make_backup(box_dir, out)
+    for name in pruned:
+        typer.echo(f"removed the old {name} (backup.keep)")
+    # last: scripts/pullBackup.sh takes the archive from this line
     typer.echo(f"wrote {target} ({', '.join(names)}); it holds secrets: keep it private")
+
+
+def _run_requested(box_dir: Path, task: HostTask, work: Callable[[], str]) -> None:
+    """Do ``work`` for the request core left, once, and write how it went
+
+    The result goes to data/core as it is after the work: a restore puts a whole new one in place
+    """
+    data_dir = box_dir / BOX_DATA_DIR
+    with host_lock(box_dir):
+        requested = read_task_request(data_dir, task)
+        last = read_task_result(data_dir, task)
+        if requested is None or (last is not None and last.requested_at >= requested):
+            return  # nothing asked, or already done
+        try:
+            ok, message = True, work()
+        except typer.Exit as exc:
+            ok = exc.exit_code == 0
+            message = f"failed (exit {exc.exit_code}); journalctl -u {task.unit}"
+        write_task_result(data_dir, task, ApplyResult(requested, time.time(), ok, message))
+    if not ok:
+        raise typer.Exit(EXIT_USER_ERROR)
+
+
+def _restore_box(box_dir: Path, archive: Path) -> str:
+    """Restore ``archive`` and start the box from it
+
+    Refused before anything moves when the archive is not a box of this role this version can start
+    A box that does not start from it gets its previous files back and starts from them
+    """
+    try:
+        restored = archive_config(archive)
+    except BackupError as exc:
+        raise _fail(str(exc)) from None
+    if (box_dir / CONFIG_FILE).exists():
+        current = _prepare(box_dir, refresh=False)
+        if restored.role is not current.role:
+            raise _fail(
+                f"the archive is of a {restored.role.value} box, this one is {current.role.value}:"
+                " restore it on a box of its role"
+            )
+        _compose(box_dir, "down", all_profiles=True)
+    now = time.time()
+    try:
+        aside = restore_archive(box_dir, archive, now)
+    except BackupError as exc:
+        raise _fail(str(exc)) from None
+    if aside is not None:
+        typer.echo(f"the previous files are in {aside}")
+    try:
+        up(box_dir)
+    except typer.Exit:
+        typer.secho("the restored box did not start: the previous files come back", err=True)
+        try:
+            failed = undo_restore(box_dir, aside, now)
+        except BackupError as exc:
+            raise _fail(str(exc)) from None
+        up(box_dir)
+        raise _fail(
+            f"restore undone, the box runs as before; the restored files are in {failed}"
+        ) from None
+    return f"restored {archive.name}" + (
+        f"; the previous files are in {aside.name}" if aside else ""
+    )
 
 
 @app.command()
 def restore(
     archive: Annotated[
-        Path, typer.Argument(help="Archive from `vibedpn backup`.", exists=True, dir_okay=False)
-    ],
+        Path | None,
+        typer.Argument(help="Archive from `vibedpn backup`.", exists=True, dir_okay=False),
+    ] = None,
+    requested: Annotated[
+        bool,
+        typer.Option(
+            "--requested",
+            help="The archive the panel left in backups/"
+            " (the systemd unit vibedpn-restore-request).",
+        ),
+    ] = False,
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
-    """Put a backup back: the box goes down, the current files move aside, nothing is deleted."""
-    try:
-        read_members(archive)
-    except BackupError as exc:
-        raise _fail(str(exc)) from None
-    if (box_dir / CONFIG_FILE).exists():
-        _prepare(box_dir, refresh=False)
-        _compose(box_dir, "down", all_profiles=True)
-    try:
-        aside = restore_archive(box_dir, archive, time.time())
-    except BackupError as exc:
-        raise _fail(str(exc)) from None
-    if aside is not None:
-        typer.echo(f"the previous files are in {aside}")
-    typer.echo("restored; check config.yaml, then: vibedpn up")
+    """Put a backup back and start the box from it: the current files move aside, nothing is
+    deleted, and a box that does not start from the archive gets its previous files back."""
+    if requested == (archive is not None):
+        raise _fail("give the archive or --requested, one of them")
+    if archive is not None:
+        typer.echo(_restore_box(box_dir, archive))
+        return
+    slot = box_dir / BACKUPS_DIR / RESTORE_SLOT
+
+    def from_slot() -> str:
+        message = _restore_box(box_dir, slot)
+        slot.unlink(missing_ok=True)
+        return message
+
+    _run_requested(box_dir, RESTORE, from_slot)
 
 
 def _switch_update_timer(box_dir: Path, switch: Switch) -> None:
@@ -718,6 +822,11 @@ def update(
 
 def _update_as_requested(box_dir: Path) -> None:
     """The update the panel asked for; a request made while it ran is served by the next round"""
+    with host_lock(box_dir):
+        _update_rounds(box_dir)
+
+
+def _update_rounds(box_dir: Path) -> None:
     data_dir = box_dir / BOX_DATA_DIR
     while True:
         asked = read_update_request(data_dir)
@@ -1007,9 +1116,10 @@ def _ensure_apply_units(box_dir: Path) -> None:
     if systemctl is None or os.geteuid() != 0:
         return
     changed = False
-    units = render_units(box_dir.resolve(), sys.executable) | render_update_units(
-        box_dir.resolve(), sys.executable
-    )
+    tasks = (*TASKS, UPDATE)
+    units: dict[str, str] = {}
+    for task in tasks:
+        units |= render_task_units(box_dir.resolve(), sys.executable, task)
     try:
         for name, text in units.items():
             unit = SYSTEMD_DIR / name
@@ -1025,7 +1135,7 @@ def _ensure_apply_units(box_dir: Path) -> None:
         return
     if changed:
         run([systemctl, "daemon-reload"])
-    for path_unit in (f"{APPLY_UNIT}.path", f"{UPDATE_REQUEST_UNIT}.path"):
+    for path_unit in (f"{task.unit}.path" for task in tasks):
         if changed or run([systemctl, "is-enabled", "--quiet", path_unit]) != 0:
             run([systemctl, "enable", "--now", path_unit])
 
@@ -1033,10 +1143,15 @@ def _ensure_apply_units(box_dir: Path) -> None:
 @app.command()
 def apply(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     """Run `up` for a change the panel asked for (the systemd unit vibedpn-apply runs this)."""
+    with host_lock(box_dir):
+        _apply_requested(box_dir)
+
+
+def _apply_requested(box_dir: Path) -> None:
     data_dir = box_dir / BOX_DATA_DIR
     while True:
-        requested = read_request(data_dir)
-        last = read_result(data_dir)
+        requested = read_task_request(data_dir, APPLY)
+        last = read_task_result(data_dir, APPLY)
         if requested is None or (last is not None and last.requested_at >= requested):
             return  # nothing asked, or already applied
         try:
@@ -1047,9 +1162,9 @@ def apply(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
             message = (
                 "applied"
                 if ok
-                else f"vibedpn up failed (exit {exc.exit_code}); journalctl -u {APPLY_UNIT}"
+                else f"vibedpn up failed (exit {exc.exit_code}); journalctl -u {APPLY.unit}"
             )
-        write_result(data_dir, ApplyResult(requested, time.time(), ok, message))
+        write_task_result(data_dir, APPLY, ApplyResult(requested, time.time(), ok, message))
         if not ok:
             raise typer.Exit(EXIT_USER_ERROR)
         # a change made while `up` ran was asked for after `requested`: the loop applies it too

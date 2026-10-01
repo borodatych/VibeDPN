@@ -22,7 +22,7 @@ from vibedpn.bootstrap import (
 )
 from vibedpn.compose import adopt_node_password
 from vibedpn.config import Config
-from vibedpn.engine.apply import REQUEST_FILE
+from vibedpn.engine.apply import APPLY
 
 from .conftest import client_config, home_config, vps_config
 
@@ -53,7 +53,7 @@ def test_the_new_password_needs_the_current_one(tmp_path: Path) -> None:
     short = client.put("/panel/password", json={"current": OLD, "new": "short"})
     assert short.status_code == 422 and "at least 8 characters" in short.json()["detail"]
     assert htpasswd.read_text(encoding="utf-8") == before
-    assert not (data / NODEUI_PASS_FILE).exists() and not (data / REQUEST_FILE).exists()
+    assert not (data / NODEUI_PASS_FILE).exists() and not (data / APPLY.request).exists()
 
 
 def test_the_panel_takes_it_at_once_adguard_and_the_node_after_the_host(tmp_path: Path) -> None:
@@ -66,7 +66,7 @@ def test_the_panel_takes_it_at_once_adguard_and_the_node_after_the_host(tmp_path
     assert htpasswd.stat().st_ino == inode and htpasswd.stat().st_mode & 0o777 == 0o600
     staged = data / NODEUI_PASS_FILE
     assert matches(staged, NEW) and staged.stat().st_mode & 0o777 == 0o600
-    assert (data / REQUEST_FILE).exists()  # the host recreates AdGuard and the node
+    assert (data / APPLY.request).exists()  # the host recreates AdGuard and the node
     assert panel_password_matches(htpasswd.parent, NEW)
 
 

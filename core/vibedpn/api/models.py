@@ -365,6 +365,21 @@ class ApplyView(BaseModel):
     finished_at: float | None
 
 
+class ArchiveView(BaseModel):
+    name: str  # vibedpn-<time>.tar.gz in backups/ of the box
+    size: int  # bytes
+    created_at: float  # the moment in its name
+
+
+class BackupsView(BaseModel):
+    """The archives of the box and the backup or restore the panel asked of the host"""
+
+    archives: list[ArchiveView]  # newest first
+    keep: int  # backup.keep: a new archive beyond it removes the oldest
+    backup: ApplyView
+    restore: ApplyView
+
+
 class UpdateResultView(BaseModel):
     """How the last update asked in the panel ended (engine/update.py)"""
 

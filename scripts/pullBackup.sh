@@ -58,19 +58,15 @@ chmod 600 "$backupDir/$name"
 tar -tzf "$backupDir/$name" >/dev/null || die "the archive is not readable: $backupDir/$name"
 log "Kept $backupDir/$name ($(du -h "$backupDir/$name" | cut -f1))"
 
-# Both sides are pruned: the box has one disk for everything it does, and a daily archive of
-# data/ fills it quietly. No mapfile and no `xargs -r` here — the owner's machine may be a Mac,
-# where bash is 3.2 and has neither; the names are ours and hold no newlines.
+# Only this side is pruned here: the box prunes its own archives by backup.keep of its config.yaml
+# when `vibedpn backup` writes a new one. No mapfile and no `xargs -r` here — the owner's machine
+# may be a Mac, where bash is 3.2 and has neither; the names are ours and hold no newlines.
 # Sorted by age, which find cannot do portably.
 # shellcheck disable=SC2012
 ls -1t "$backupDir"/vibedpn-*.tar.gz 2>/dev/null | tail -n +$((keep + 1)) | while IFS= read -r old; do
   log "Pruning $(basename "$old")"
   rm -f -- "$old"
 done
-
-sshTo "$sshAlias" \
-  "sudo -n sh -c 'ls -1t /opt/vibedpn/backups/vibedpn-*.tar.gz 2>/dev/null | tail -n +$((keep + 1)) | while read -r old; do rm -f \"\$old\"; done'" \
-  || log "could not prune the archives on the box; do it there by hand"
 
 held="$(find "$backupDir" -maxdepth 1 -name 'vibedpn-*.tar.gz' | wc -l | tr -d ' ')"
 log "Done. $held archive(s) in $backupDir"

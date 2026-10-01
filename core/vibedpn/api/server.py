@@ -36,6 +36,7 @@ from vibedpn.engine.adguard import (
     give_to_adguard,
     querylog_fetcher,
 )
+from vibedpn.engine.backup import BACKUPS_DIR
 from vibedpn.engine.ddns import STATE_FILE as DDNS_STATE_FILE
 from vibedpn.engine.ddns import watch_ddns
 from vibedpn.engine.devices import DB_FILE, DeviceError, DeviceStore
@@ -185,6 +186,7 @@ def main() -> None:
         lists=lists,
         events=events,
         data_dir=data_dir,
+        backups_dir=config_path.parent / BACKUPS_DIR,
         access_dir=access_dir,
         telegram=bot,
     )

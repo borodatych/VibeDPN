@@ -33,7 +33,7 @@ from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.atomic import write_private
 from vibedpn.config import Config
 from vibedpn.engine.access import AccessError, list_people
-from vibedpn.engine.apply import ApplyResult, apply_state
+from vibedpn.engine.apply import APPLY, ApplyResult, task_state
 from vibedpn.engine.ddns import STATE_FILE as DDNS_STATE_FILE
 from vibedpn.engine.ddns import DdnsState
 from vibedpn.engine.ddns import load_state as load_ddns_state
@@ -301,7 +301,7 @@ class TelegramBot:
         self._looked_at = now
         ddns_path = self._data_dir / DDNS_STATE_FILE
         ddns = load_ddns_state(ddns_path) if config.ddns.enabled and ddns_path.exists() else None
-        return ddns, apply_state(self._data_dir, now).last
+        return ddns, task_state(self._data_dir, APPLY, now).last
 
     def _step(
         self,

@@ -320,3 +320,7 @@ ui:
 # API ядра: слушает только 127.0.0.1, на LAN его отдаёт панель ui под /api/core/ только после входа.
 api:
   port: {{ config.api.port }}
+
+# Архивы vibedpn backup в backups/ коробки: новый сверх keep удаляет самые старые.
+backup:
+  keep: {{ config.backup.keep }}
