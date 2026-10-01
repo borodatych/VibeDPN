@@ -137,6 +137,7 @@
   shellcheck раннера отстаёт от локального — версия прибита с проверкой sha256
 - [e2eStand.md](ci/e2eStand.md) — E2E-стенд коробки: адрес выхода вместо счётчиков туннеля, свой
   «интернет» 198.18.0.0/24, endpoint на мосту стенда, чего стенд не воспроизводит, Docker раннера; стенд Wi-Fi — в VM Debian 13 под KVM: в ядре раннера (Azure) нет `mac80211_hwsim`
+- [imagesFollowCommit.md](ci/imagesFollowCommit.md) — тег ветки сдвигается после сборки, а не с коммитом: `update` берёт самый новый коммит с опубликованными образами `sha-…` (`docker manifest inspect`), закрепляет тег в `.env`; `doctor` сверяет метку revision
 
 ## frontend
 
