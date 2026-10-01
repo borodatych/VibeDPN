@@ -1,7 +1,7 @@
 """Docker Compose over the box directory.
 
-Pure parts (argv building, precondition checks, ``ps`` parsing) are unit-tested; ``run`` and
-``preflight`` are the only functions that execute anything.
+Pure parts (argv building, precondition checks, ``ps`` parsing) are unit-tested; ``run``,
+``stream``, ``capture`` and ``preflight`` are the functions that execute anything.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -466,6 +467,23 @@ def run(argv: list[str]) -> int:
         return subprocess.run(argv, check=False).returncode
     except FileNotFoundError as exc:
         raise ComposeError("docker not found; run install.sh") from exc
+
+
+def stream(argv: list[str]) -> Iterator[str]:
+    """Run Compose and yield its lines as they come, stdout and stderr together (``logs`` passes
+    the two streams of a container through as they are); a failure becomes a ``ComposeError``"""
+    try:
+        process = subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
+        )
+    except FileNotFoundError as exc:
+        raise ComposeError("docker not found; run install.sh") from exc
+    assert process.stdout is not None  # stdout=PIPE
+    with process:
+        for line in process.stdout:
+            yield line.rstrip("\n")
+    if process.returncode != 0:
+        raise ComposeError(f"docker compose exited {process.returncode}")
 
 
 def capture(argv: list[str]) -> str:

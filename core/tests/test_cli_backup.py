@@ -107,7 +107,8 @@ def test_restore_starts_the_box_from_the_archive_and_keeps_the_old_files(
     assert "previous files are in" in result.output and "restored copy.tar.gz" in result.output
     flat = verbs(recorder)
     assert any(call.endswith("down") for call in flat)
-    assert flat[-1].endswith("-d --remove-orphans")  # the box starts from the archive by itself
+    # the box starts from the archive by itself, and tells core its services
+    assert flat[-2].endswith("-d --remove-orphans") and flat[-1].endswith("config --services")
 
 
 def test_a_restored_box_that_does_not_start_gets_its_files_back(

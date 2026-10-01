@@ -20,6 +20,7 @@ from vibedpn.api.backups import add_backup_routes
 from vibedpn.api.consumer import ConsumerStatus
 from vibedpn.api.doctor import add_doctor_routes
 from vibedpn.api.lists import ListsStatus
+from vibedpn.api.logs import add_logs_routes
 from vibedpn.api.models import (
     AccessLink,
     AccessPerson,
@@ -1560,6 +1561,7 @@ def create_app(
     _add_panel_routes(application, current, secrets_dir, data_dir)
     add_backup_routes(application, current, data_dir, backups_dir)
     add_doctor_routes(application, data_dir)
+    add_logs_routes(application, data_dir)
     _add_wifi_routes(
         application,
         current,

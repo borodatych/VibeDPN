@@ -1,5 +1,6 @@
 """up / down / restart / status / logs with Compose replaced by a recorder."""
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -27,10 +28,15 @@ class Recorder:
         self.active_services = "core\nmyst-provider\nwg-server\n"
         self.config_json = '{"services": {}}'
         self.image_listing = ""
+        self.log_lines: list[str] = []
 
     def run(self, argv: list[str]) -> int:
         self.calls.append(argv)
         return self.exit_code
+
+    def stream(self, argv: list[str]) -> Iterator[str]:
+        self.calls.append(argv)
+        yield from self.log_lines
 
     def capture(self, argv: list[str]) -> str:
         self.calls.append(argv)
@@ -48,6 +54,7 @@ def box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Recorder
     recorder = Recorder()
     monkeypatch.setattr(cli, "run", recorder.run)
     monkeypatch.setattr(cli, "capture", recorder.capture)
+    monkeypatch.setattr(cli, "stream", recorder.stream)
     monkeypatch.setattr(cli, "preflight", lambda: None)
     (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
     config = build_config(Answers(Role.VPS, endpoint="vps.example.com"), HostFacts(None, True))
@@ -55,6 +62,7 @@ def box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Recorder
     (tmp_path / "secrets").mkdir()
     (tmp_path / "secrets" / "htpasswd").write_text("admin:x\n", encoding="utf-8")
     (tmp_path / "data" / "myst-provider").mkdir(parents=True)
+    (tmp_path / "data" / "core").mkdir()  # bind-mounted for core, so there after any up
     (tmp_path / "data" / "myst-provider" / "nodeui-pass").write_text("$2b$x\n", encoding="utf-8")
     return tmp_path, recorder
 
@@ -75,7 +83,10 @@ def test_up_refreshes_env_and_starts(box: tuple[Path, Recorder]) -> None:
         ["--profile", "*", "config", "--services"],
         ["config", "--services"],
         ["up", "-d", "--remove-orphans"],
+        ["config", "--services"],
     ]
+    services = box_dir / "data" / "core" / "services"
+    assert services.read_text(encoding="utf-8") == "core\nmyst-provider\nwg-server\n"
     assert "COMPOSE_PROFILES=provider,wg-server" in (box_dir / ".env").read_text(encoding="utf-8")
 
 
@@ -124,9 +135,20 @@ def test_restart_stops_then_brings_up_in_dependency_order(box: tuple[Path, Recor
 
 def test_logs_passes_service_follow_and_tail(box: tuple[Path, Recorder]) -> None:
     box_dir, recorder = box
+    recorder.log_lines = ["xray-1  | user vless://0b9c3f7e-1d2a-4c5b-8e6f-7a8b9c0d1e2f@box:443 ok"]
     result = runner.invoke(cli.app, ["logs", "core", "-f", "--tail", "20", "--dir", str(box_dir)])
     assert result.exit_code == 0, result.output
-    assert tail(recorder.calls[0]) == ["--profile", "*", "logs", "--tail", "20", "--follow", "core"]
+    assert tail(recorder.calls[0]) == [
+        "--profile",
+        "*",
+        "logs",
+        "--no-color",
+        "--tail",
+        "20",
+        "--follow",
+        "core",
+    ]
+    assert result.output == "xray-1  | user vless://***@box:443 ok\n"  # the terminal is cleaned too
 
 
 def test_status_prints_config_and_containers(box: tuple[Path, Recorder]) -> None:

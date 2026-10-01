@@ -7,7 +7,7 @@ import contextlib
 import os
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from enum import StrEnum
 from functools import partial
@@ -81,6 +81,7 @@ from vibedpn.compose import (
     refresh_xray_config,
     run,
     stale_services,
+    stream,
 )
 from vibedpn.config import (
     WG_UPLINK_NAME,
@@ -126,6 +127,7 @@ from vibedpn.engine.apply import (
     BOX_DATA_DIR,
     DOCTOR,
     DOCTOR_TIMER_UNIT,
+    LOGS,
     RESTORE,
     TASKS,
     ApplyError,
@@ -169,6 +171,16 @@ from vibedpn.engine.hostapd import (
     read_passphrase,
     write_passphrase,
 )
+from vibedpn.engine.logs import REPORT_FILE as LOGS_REPORT_FILE
+from vibedpn.engine.logs import SERVICES_FILE as LOGS_SERVICES_FILE
+from vibedpn.engine.logs import (
+    LogsError,
+    LogsReport,
+    parse_request,
+    parse_services,
+    redact,
+)
+from vibedpn.engine.logs import report_text as logs_report_text
 from vibedpn.engine.myst import MystError, TequilaClient, render_stats
 from vibedpn.engine.update import (
     UPDATE,
@@ -544,8 +556,20 @@ def up(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     _retire_stale(box_dir)
     _compose(box_dir, "up", "-d", "--remove-orphans")
     _record_revision(box_dir)
+    _record_services(box_dir)
     if "core" not in recreated:
         _reread(config)
+
+
+def _record_services(box_dir: Path) -> None:
+    """Tell core the services this box runs: the panel offers their logs, and only theirs"""
+    try:
+        services = parse_services(capture(compose_argv(box_dir, "config", "--services")))
+        write_private(
+            box_dir / BOX_DATA_DIR / LOGS_SERVICES_FILE, "".join(f"{s}\n" for s in services)
+        )
+    except (ComposeError, OSError) as exc:
+        typer.secho(f"the panel will not offer the logs: {exc}", fg=typer.colors.YELLOW)
 
 
 def _reread(config: Config) -> None:
@@ -1677,16 +1701,64 @@ def logs(
     service: Annotated[str | None, typer.Argument(help="One service, or all when omitted.")] = None,
     follow: Annotated[bool, typer.Option("--follow", "-f", help="Keep streaming.")] = False,
     tail: Annotated[int, typer.Option("--tail", help="Lines per container.")] = DEFAULT_LOG_TAIL,
+    requested: Annotated[
+        bool,
+        typer.Option(
+            "--requested",
+            help="Only when the panel asked for it (the systemd unit vibedpn-logs-request).",
+        ),
+    ] = False,
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
-    """Container logs (docker compose logs)."""
+    """Container logs (docker compose logs), with share links, tokens and keys hidden."""
     _prepare(box_dir, refresh=False)
-    args = ["logs", "--tail", str(tail)]
+    if requested:
+        _run_requested(box_dir, LOGS, lambda: _keep_log(box_dir))
+        return
+    args = ["logs", "--no-color", "--tail", str(tail)]
     if follow:
         args.append("--follow")
     if service:
         args.append(service)
-    _compose(box_dir, *args, all_profiles=True)
+    for line in _log_lines(box_dir, *args):
+        typer.echo(line)
+
+
+def _log_lines(box_dir: Path, *args: str) -> Iterator[str]:
+    """The lines of `docker compose` ``args`` as they come, cleaned of secrets"""
+    try:
+        for line in stream(compose_argv(box_dir, *args, all_profiles=True)):
+            yield redact(line)
+    except ComposeError as exc:
+        raise _fail(str(exc)) from None
+
+
+def _keep_log(box_dir: Path) -> str:
+    """Read the lines the panel asked for and keep them where core shows them"""
+    data_dir = box_dir / BOX_DATA_DIR
+    try:
+        services = parse_services(capture(compose_argv(box_dir, "config", "--services")))
+        asked = parse_request(read_task_reason(data_dir, LOGS), services)
+    except (ComposeError, LogsError) as exc:
+        raise _fail(str(exc)) from None
+    lines = list(
+        _log_lines(
+            box_dir,
+            "logs",
+            "--no-color",
+            "--no-log-prefix",
+            "--tail",
+            str(asked.tail),
+            asked.service,
+        )
+    )
+    report = LogsReport(asked.service, asked.tail, time.time(), "\n".join(lines))
+    path = data_dir / LOGS_REPORT_FILE
+    try:
+        write_private(path, logs_report_text(report))
+    except OSError as exc:
+        raise _fail(f"cannot write {path}: {exc.strerror or exc}; run with sudo?") from None
+    return f"{len(lines)} lines of {asked.service}"
 
 
 @app.command()

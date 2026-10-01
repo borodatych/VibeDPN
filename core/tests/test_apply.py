@@ -218,6 +218,7 @@ def test_up_installs_the_units_once_and_enables_the_path(
     assert (tmp_path / "vibedpn-backup-request.path").is_file()  # a backup and a restore too
     assert (tmp_path / "vibedpn-restore-request.path").is_file()
     assert (tmp_path / "vibedpn-doctor-request.path").is_file()  # a check asked in the panel
+    assert (tmp_path / "vibedpn-logs-request.path").is_file()  # a log asked in the panel
     timer = (tmp_path / "vibedpn-doctor.timer").read_text(encoding="utf-8")  # and the daily one
     assert "OnCalendar=*-*-* 05:30:00\n" in timer and "Persistent=true\n" in timer
     assert "-m vibedpn doctor --report --dir /opt/vibedpn\n" in (
@@ -229,6 +230,7 @@ def test_up_installs_the_units_once_and_enables_the_path(
         ["enable", "--now", "vibedpn-backup-request.path"],
         ["enable", "--now", "vibedpn-restore-request.path"],
         ["enable", "--now", "vibedpn-doctor-request.path"],
+        ["enable", "--now", "vibedpn-logs-request.path"],
         ["enable", "--now", "vibedpn-update-request.path"],
         ["enable", "--now", "vibedpn-doctor.timer"],
     ]
@@ -239,6 +241,7 @@ def test_up_installs_the_units_once_and_enables_the_path(
         ["is-enabled", "--quiet", "vibedpn-backup-request.path"],
         ["is-enabled", "--quiet", "vibedpn-restore-request.path"],
         ["is-enabled", "--quiet", "vibedpn-doctor-request.path"],
+        ["is-enabled", "--quiet", "vibedpn-logs-request.path"],
         ["is-enabled", "--quiet", "vibedpn-update-request.path"],
         ["is-enabled", "--quiet", "vibedpn-doctor.timer"],
     ]

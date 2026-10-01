@@ -91,8 +91,22 @@ DOCTOR = HostTask(
     no_answer="the host did not check the box: journalctl -u vibedpn-doctor-request,"
     " or sudo vibedpn doctor",
 )
+# The last lines of a container's log asked in the panel; the request names the service and the
+# number of lines, and the lines go next to the result (engine/logs.py)
+LOGS = HostTask(
+    request="logs-request",
+    result="logs-result.json",
+    unit="vibedpn-logs-request",
+    path_description="VibeDPN: a container log asked in the panel",
+    service_description="VibeDPN: vibedpn logs asked in the panel",
+    command="logs --requested",
+    # reading a log takes a second, but it waits for a backup or a restore holding the host lock
+    timeout=BACKUP.timeout + 60.0,
+    no_answer="the host did not read the log: journalctl -u vibedpn-logs-request,"
+    " or sudo vibedpn logs",
+)
 # The tasks whose result is an ApplyResult; the update has its own (engine/update.py)
-TASKS = (APPLY, BACKUP, RESTORE, DOCTOR)
+TASKS = (APPLY, BACKUP, RESTORE, DOCTOR, LOGS)
 # The check the box makes of itself every day, without leaving it, so the panel shows a fresh report
 DOCTOR_TIMER_UNIT = "vibedpn-doctor"
 # A night hour off the weekly update (Sunday 04:00 and up to an hour), and a missed run is caught

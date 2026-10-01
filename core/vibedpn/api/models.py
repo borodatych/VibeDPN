@@ -6,7 +6,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from vibedpn.compose import DEFAULT_LOG_TAIL
 from vibedpn.config import DevicePolicy, Weekday
+from vibedpn.engine.logs import MAX_TAIL, SERVICE_PATTERN
 
 
 class PeerCreate(BaseModel):
@@ -388,6 +390,28 @@ class DoctorView(BaseModel):
     """The last report of the box and the check asked in the panel"""
 
     report: DoctorReportView | None  # None: no check kept a report yet
+    state: ApplyView
+
+
+class LogsReportView(BaseModel):
+    """The last lines of one service's log, read by the host and cleaned of secrets"""
+
+    service: str
+    tail: int
+    finished_at: float
+    text: str
+
+
+class LogsRequest(BaseModel):
+    service: str = Field(pattern=SERVICE_PATTERN)
+    tail: int = Field(default=DEFAULT_LOG_TAIL, ge=1, le=MAX_TAIL)
+
+
+class LogsView(BaseModel):
+    """The services whose logs the panel offers, the last log read and the read asked"""
+
+    services: list[str]  # empty: `vibedpn up` has not told core yet
+    report: LogsReportView | None
     state: ApplyView
 
 
