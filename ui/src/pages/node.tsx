@@ -2,6 +2,7 @@ import { useHead } from '@unhead/react'
 import { Section, Sections } from '@/components/ui/section'
 import { nodeStatsQuery } from '@/features/node/api'
 import { formatMyst, humanBytes, shortUptime } from '@/features/node/shared'
+import { LogsCard } from '@/features/logs/card'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import { useT } from '@/modules/i18n/use-t'
@@ -84,6 +85,7 @@ export const nodePage = generalLayout.lets
             </ul>
           </Section>
         )}
+        <LogsCard scope="node" />
       </Sections>
     )
   })

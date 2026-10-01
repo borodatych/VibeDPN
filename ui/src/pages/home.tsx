@@ -27,6 +27,7 @@ import { UpdateCard } from '@/features/update/card'
 import { DoctorCard } from '@/features/doctor/card'
 import { boxRoleQuery } from '@/features/box/api'
 import { VPS_ROLE } from '@/features/box/shared'
+import { LogsCard } from '@/features/logs/card'
 import { routes } from '@/generated/point0/routes'
 import { NavLink } from '@/lib/navigation'
 import { generalLayout } from '@/layouts/general'
@@ -447,6 +448,7 @@ const VpsHome = () => {
         </div>
       </Section>
       <DoctorCard />
+      <LogsCard scope="all" />
       <UpdateCard />
     </Sections>
   )
@@ -481,6 +483,7 @@ const LanHome = () => {
           <UplinkCard key={uplink.name} uplink={uplink} failopen={status.failopen} />
         ))}
       <DoctorCard />
+      <LogsCard scope="all" />
       <UpdateCard />
     </Sections>
   )

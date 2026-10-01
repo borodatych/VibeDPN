@@ -136,6 +136,17 @@ const table = {
   'doctor.runNetwork.confirm':
     'The box asks api.ipify.org for its address through every exit: the service sees each of them. Check?',
 
+  'logs.title': 'Logs',
+  'logs.description':
+    'The last lines a service wrote. Share links, tokens and keys are hidden before the lines leave the box.',
+  'logs.lines': '{count} lines',
+  'logs.read': 'Show',
+  'logs.readOne': 'Show the log of {service}',
+  'logs.pending': 'The box is reading the log.',
+  'logs.failed': 'The log was not read: {message}',
+  'logs.summary': '{service}, the last {tail} lines, read {time}:',
+  'logs.empty': 'The service wrote nothing.',
+
   'backup.title': 'Backup of the box',
   'backup.description':
     'One archive of its settings, secrets and data: everything that makes this box itself. The newest {keep} are kept.',

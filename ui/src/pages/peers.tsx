@@ -7,6 +7,7 @@ import { XSwitch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { qrImageSource } from '@/features/access/shared'
 import { humanBytes } from '@/features/node/shared'
+import { LogsCard } from '@/features/logs/card'
 import {
   peerAddMutation,
   peerFileMutation,
@@ -239,6 +240,7 @@ export const peersPage = generalLayout.lets
         <Section h2={t('peers.add.title')} size="lg" description={t('peers.add.description')}>
           <AddPeer onFile={setFile} />
         </Section>
+        <LogsCard scope="peers" />
       </Sections>
     )
   })

@@ -31,6 +31,7 @@ import {
   type WgExit,
 } from '@/features/uplinks/shared'
 import { ApplyLine } from '@/features/uplinks/apply-line'
+import { LogsCard } from '@/features/logs/card'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import { useT } from '@/modules/i18n/use-t'
@@ -327,6 +328,7 @@ export const uplinksPage = generalLayout.lets
           )}
         </Section>
         {exits && <AddExit />}
+        <LogsCard scope="uplinks" />
       </Sections>
     )
   })

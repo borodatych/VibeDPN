@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { eventListQuery, wifiClientsQuery } from '@/features/events/api'
 import { deviceName, DROPS_WINDOW_HOURS, durationText, wifiDrops } from '@/features/events/shared'
 import { networkQuery, networkUpdateMutation, wifiPassphraseMutation } from '@/features/network/api'
+import { LogsCard } from '@/features/logs/card'
 import {
   currentChoice,
   lanOptions,
@@ -162,6 +163,7 @@ export const networkPage = generalLayout.lets
           )}
         </Section>
         <WifiSection />
+        <LogsCard scope="network" />
       </Sections>
     )
   })

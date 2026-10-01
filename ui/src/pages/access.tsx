@@ -27,6 +27,7 @@ import {
 } from '@/features/access/shared'
 import { humanBytes } from '@/features/node/shared'
 import { ApplyLine } from '@/features/uplinks/apply-line'
+import { LogsCard } from '@/features/logs/card'
 import { generalLayout } from '@/layouts/general'
 import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import { useLanguage, useT } from '@/modules/i18n/use-t'
@@ -338,6 +339,7 @@ export const accessPage = generalLayout.lets
         {server && <ServerCard server={server} />}
         {server && <PeopleCard server={server} />}
         {ddns && <DdnsCard ddns={ddns} />}
+        <LogsCard scope="access" />
       </Sections>
     )
   })
