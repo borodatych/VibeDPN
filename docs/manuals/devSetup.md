@@ -30,7 +30,7 @@
    затем `bun run check` (типы TypeScript 7 и eslint) и `bun run test:unit && bun run test:dom`. Вариант панели — константа сборки: `UI_VARIANT=lite bun run build:code` (по умолчанию `full`). Запуск на своей машине —
    `ui/docs/setup.md`: локальный Postgres, `env.example` → `.env`, файл `htpasswd.local` с bcrypt-строкой `admin`.
    Сквозные тесты панели — `E2E_BOX_PASSWORD=<пароль из htpasswd.local> bun run test:e2e:dev`: они сами поднимают
-   дев-сервер и поддельное ядро `core/tests/panel_core.py` (настоящий API домашней коробки с выходами DPN и Tor) на
+   дев-сервер и поддельное ядро `core/tests/panel_core.py` (настоящий API домашней коробки с выходами DPN, Tor и WireGuard) на
    `CORE_API_PORT` из `.env`, страницы проверяют в Playwright на 1320 и 375 px. Нужен `uv` и собранное окружение ядра.
 6. Образы: `docker compose --profile '*' build` — собирает `core`, `wg`, `ui` локально. Сборка `ui` требует около 2 ГиБ
    памяти (`dist`): на colima с 2 ГиБ она падает по памяти, образ панели проверяет CI (задача `ui-image`).
