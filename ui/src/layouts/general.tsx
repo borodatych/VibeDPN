@@ -7,22 +7,29 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from '@/components/ui/drawer'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { PaletteSwitcher } from '@/components/ui/palette'
 import { ThemeSwitcher } from '@/components/ui/theme'
 import { routes } from '@/generated/point0/routes'
 import { NavLink } from '@/lib/navigation'
 import { root } from '@/lib/root'
 import { boxRoleQuery } from '@/features/box/api'
-import { pagesOfRole } from '@/features/box/shared'
+import { navOfRole, type pagesOfRole } from '@/features/box/shared'
 import { getMeQuery } from '@/modules/auth/api'
 import type { Me } from '@/modules/auth/server'
 import type { T } from '@/modules/i18n/base'
 import { languageQuery } from '@/modules/i18n/api'
 import { LanguageSwitcher } from '@/modules/i18n/provider'
 import { useLanguage, useT } from '@/modules/i18n/use-t'
+import { useLocation } from '@point0/core/navigation'
 import { useHead } from '@unhead/react'
 import { cn } from '@/utils'
-import { Menu, X } from 'lucide-react'
+import { ChevronDown, Menu, X } from 'lucide-react'
 import { type ComponentProps, useState } from 'react'
 
 type NavItem = { label: string; to: string }
@@ -44,34 +51,72 @@ const pageLinks = (t: T): Record<PageName, NavItem> => ({
 
 type PageName = ReturnType<typeof pagesOfRole>[number]
 
-const navLinks = (t: T, role: string | null | undefined): NavItem[] => {
+type NavLinks = { main: NavItem[]; more: NavItem[] }
+
+/** The pages of the header: in sight, and in the menu «Ещё» with the password of the panel when signed in */
+const navLinks = (t: T, role: string | null | undefined, signedIn: boolean): NavLinks => {
   const links = pageLinks(t)
-  return pagesOfRole(role).map((page) => links[page])
+  const { main, more } = navOfRole(role)
+  return {
+    main: main.map((page) => links[page]),
+    more: [
+      ...more.map((page) => links[page]),
+      ...(signedIn ? [{ label: t('nav.password'), to: routes.password() }] : []),
+    ],
+  }
 }
 
-/** The pages of the signed-in box: the role comes from core, and asking it needs a session. */
-const RoleNavItems = (props: Omit<ComponentProps<typeof NavItems>, 'links'>) => {
+/** The role comes from core, and asking it needs a session */
+const SignedInNav = ({ children }: { children: (links: NavLinks) => React.ReactNode }) => {
   const t = useT()
   const role = boxRoleQuery.useQuery().data?.role
-  return <NavItems links={navLinks(t, role)} {...props} />
+  return <>{children(navLinks(t, role, true))}</>
 }
 
-const MainNavItems = ({
-  me,
-  ...props
-}: Omit<ComponentProps<typeof NavItems>, 'links'> & { me: Me | null | undefined }) => {
+/** Signed out, the pages of a LAN box are shown */
+const RoleNav = ({ me, children }: { me: Me | null | undefined; children: (links: NavLinks) => React.ReactNode }) => {
   const t = useT()
-  return me ? <RoleNavItems {...props} /> : <NavItems links={navLinks(t, null)} {...props} />
+  return me ? <SignedInNav>{children}</SignedInNav> : <>{children(navLinks(t, null, false))}</>
 }
 
 // Right of the header — depends on who's signed in.
 const accountLinks = (me: Me | null | undefined, t: T): NavItem[] =>
-  !me
-    ? [{ label: t('nav.signIn'), to: routes.signIn() }]
-    : [
-        { label: t('nav.password'), to: routes.password() },
-        { label: t('nav.signOut'), to: routes.signOut() },
-      ]
+  !me ? [{ label: t('nav.signIn'), to: routes.signIn() }] : [{ label: t('nav.signOut'), to: routes.signOut() }]
+
+/** The pages opened now and then; the trigger is marked when one of them is the current page */
+const MoreMenu = ({ links }: { links: NavItem[] }) => {
+  const t = useT()
+  const { pathname } = useLocation()
+  const current = links.some((link) => link.to === pathname)
+  if (links.length === 0) {
+    return null
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        className={cn(
+          'flex items-center gap-1 font-accent text-sm text-muted-foreground transition-colors outline-none hover:text-foreground',
+          current && 'font-semibold text-foreground',
+        )}
+      >
+        {t('nav.more')}
+        <ChevronDown className="size-3.5" aria-hidden />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-auto min-w-44">
+        {links.map((link) => (
+          <DropdownMenuItem key={link.label} asChild>
+            <NavLink
+              to={link.to}
+              className={({ exact }) => cn('font-accent', exact && 'font-semibold')}
+            >
+              {link.label}
+            </NavLink>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
 const navLinkClassName = ({ exact }: { exact: boolean }) =>
   cn(
@@ -108,7 +153,7 @@ export const generalLayout = root.lets
     return (
       <div className="flex min-h-dvh w-full flex-col">
         <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur">
-          <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between gap-4 px-4 sm:px-6">
+          <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
             <div className="flex items-center gap-8">
               <NavLink
                 to={routes.home()}
@@ -119,12 +164,19 @@ export const generalLayout = root.lets
               >
                 VibeDPN
               </NavLink>
-              <nav className="hidden items-center gap-6 xl:flex">
-                <MainNavItems me={me} />
+              <nav className="hidden items-center gap-6 lg:flex">
+                <RoleNav me={me}>
+                  {(links) => (
+                    <>
+                      <NavItems links={links.main} />
+                      <MoreMenu links={links.more} />
+                    </>
+                  )}
+                </RoleNav>
               </nav>
             </div>
 
-            <div className="hidden items-center gap-6 xl:flex">
+            <div className="hidden items-center gap-6 lg:flex">
               <nav className="flex items-center gap-6">
                 <NavItems links={accountLinks(me, t)} />
               </nav>
@@ -133,7 +185,7 @@ export const generalLayout = root.lets
               <PaletteSwitcher />
             </div>
 
-            <div className="flex items-center gap-1 xl:hidden">
+            <div className="flex items-center gap-1 lg:hidden">
               <LanguageSwitcher />
               <ThemeSwitcher compact />
               <PaletteSwitcher />
@@ -148,7 +200,15 @@ export const generalLayout = root.lets
                     <DrawerClose asChild className="mb-2 self-end">
                       <Button variant="ghost" size="icon-default" aria-label={t('nav.closeMenu')} icon={X} />
                     </DrawerClose>
-                    <MainNavItems me={me} className={mobileLinkClassName} onNavigate={() => setMenuOpen(false)} />
+                    <RoleNav me={me}>
+                      {(links) => (
+                        <>
+                          <NavItems links={links.main} className={mobileLinkClassName} onNavigate={() => setMenuOpen(false)} />
+                          <div className="my-2 h-px bg-border" />
+                          <NavItems links={links.more} className={mobileLinkClassName} onNavigate={() => setMenuOpen(false)} />
+                        </>
+                      )}
+                    </RoleNav>
                     <div className="my-2 h-px bg-border" />
                     <NavItems
                       links={accountLinks(me, t)}
@@ -162,7 +222,7 @@ export const generalLayout = root.lets
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6 lg:py-12" data-layout-content>
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 lg:py-12" data-layout-content>
           {children}
         </main>
       </div>

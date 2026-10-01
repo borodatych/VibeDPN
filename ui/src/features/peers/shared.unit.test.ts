@@ -1,5 +1,5 @@
 import { PEER_NAME, peerFileName, peerLinkState, trafficSince, type Peer } from '@/features/peers/shared'
-import { pagesOfRole } from '@/features/box/shared'
+import { navOfRole, pagesOfRole } from '@/features/box/shared'
 import { describe, expect, test } from 'bun:test'
 
 const NOW = 1_790_000_000
@@ -51,3 +51,19 @@ describe('pages of a role', () => {
     expect(pagesOfRole(undefined)).toEqual(pagesOfRole('home'))
   })
 })
+
+describe('header of a role', () => {
+  test('a LAN box shows its six main pages, the rest go to «Ещё»', () => {
+    expect(navOfRole('home').main).toEqual(['home', 'devices', 'rules', 'network', 'uplinks', 'access'])
+    expect(navOfRole('home').more).toEqual(['node', 'notifications', 'journal', 'backup'])
+  })
+
+  test('every page of every role is in exactly one list, none is lost', () => {
+    for (const role of ['home', 'vps', undefined]) {
+      const { main, more } = navOfRole(role)
+      expect([...main, ...more].sort()).toEqual([...pagesOfRole(role)].sort())
+      expect(main.filter((page) => (more as readonly string[]).includes(page))).toEqual([])
+    }
+  })
+})
+

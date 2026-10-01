@@ -22,3 +22,20 @@ export const pagesOfRole = (role: string | null | undefined) =>
         'journal',
         'backup',
       ] as const)
+
+// The pages a box opens now and then: in the menu «Ещё» of the header, so the header fits a laptop screen
+const MORE_PAGES: readonly string[] = ['node', 'notifications', 'journal', 'backup']
+
+/**
+ * The pages of a role split for the header: the ones in sight, and the ones in the menu «Ещё»
+ * Every page of the role is in exactly one of them, in the order of `pagesOfRole`
+ *
+ * @tags box
+ */
+export const navOfRole = (role: string | null | undefined) => {
+  const pages = pagesOfRole(role)
+  return {
+    main: pages.filter((page) => !MORE_PAGES.includes(page)),
+    more: pages.filter((page) => MORE_PAGES.includes(page)),
+  }
+}

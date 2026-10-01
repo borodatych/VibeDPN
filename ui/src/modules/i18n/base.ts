@@ -58,6 +58,7 @@ const table = {
   'nav.openMenu': 'Open menu',
   'nav.closeMenu': 'Close menu',
   'nav.menu': 'Menu',
+  'nav.more': 'More',
   'nav.primary': 'Primary navigation',
 
   'palette.menu': 'Palette of the panel',
