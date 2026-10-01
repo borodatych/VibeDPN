@@ -7,12 +7,7 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from '@/components/ui/drawer'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { PaletteSwitcher } from '@/components/ui/palette'
 import { ThemeSwitcher } from '@/components/ui/theme'
 import { routes } from '@/generated/point0/routes'
@@ -73,15 +68,13 @@ const SignedInNav = ({ children }: { children: (links: NavLinks) => React.ReactN
   return <>{children(navLinks(t, role, true))}</>
 }
 
-/** Signed out, the pages of a LAN box are shown */
-const RoleNav = ({ me, children }: { me: Me | null | undefined; children: (links: NavLinks) => React.ReactNode }) => {
-  const t = useT()
-  return me ? <SignedInNav>{children}</SignedInNav> : <>{children(navLinks(t, null, false))}</>
-}
+/** Signed out, no pages at all: each of them leads back to the sign-in, and the form is all there is to do */
+const RoleNav = ({ me, children }: { me: Me | null | undefined; children: (links: NavLinks) => React.ReactNode }) =>
+  me ? <SignedInNav>{children}</SignedInNav> : null
 
-// Right of the header — depends on who's signed in.
+// Right of the header: the sign-out, when signed in; signed out, the page itself is the sign-in
 const accountLinks = (me: Me | null | undefined, t: T): NavItem[] =>
-  !me ? [{ label: t('nav.signIn'), to: routes.signIn() }] : [{ label: t('nav.signOut'), to: routes.signOut() }]
+  me ? [{ label: t('nav.signOut'), to: routes.signOut() }] : []
 
 /** The pages opened now and then; the trigger is marked when one of them is the current page */
 const MoreMenu = ({ links }: { links: NavItem[] }) => {
@@ -105,10 +98,7 @@ const MoreMenu = ({ links }: { links: NavItem[] }) => {
       <DropdownMenuContent align="start" className="w-auto min-w-44">
         {links.map((link) => (
           <DropdownMenuItem key={link.label} asChild>
-            <NavLink
-              to={link.to}
-              className={({ exact }) => cn('font-accent', exact && 'font-semibold')}
-            >
+            <NavLink to={link.to} className={({ exact }) => cn('font-accent', exact && 'font-semibold')}>
               {link.label}
             </NavLink>
           </DropdownMenuItem>
@@ -164,22 +154,26 @@ export const generalLayout = root.lets
               >
                 VibeDPN
               </NavLink>
-              <nav className="hidden items-center gap-6 lg:flex">
-                <RoleNav me={me}>
-                  {(links) => (
-                    <>
-                      <NavItems links={links.main} />
-                      <MoreMenu links={links.more} />
-                    </>
-                  )}
-                </RoleNav>
-              </nav>
+              {me && (
+                <nav className="hidden items-center gap-6 lg:flex">
+                  <RoleNav me={me}>
+                    {(links) => (
+                      <>
+                        <NavItems links={links.main} />
+                        <MoreMenu links={links.more} />
+                      </>
+                    )}
+                  </RoleNav>
+                </nav>
+              )}
             </div>
 
             <div className="hidden items-center gap-6 lg:flex">
-              <nav className="flex items-center gap-6">
-                <NavItems links={accountLinks(me, t)} />
-              </nav>
+              {me && (
+                <nav className="flex items-center gap-6">
+                  <NavItems links={accountLinks(me, t)} />
+                </nav>
+              )}
               <LanguageSwitcher />
               <ThemeSwitcher compact />
               <PaletteSwitcher />
@@ -189,35 +183,45 @@ export const generalLayout = root.lets
               <LanguageSwitcher />
               <ThemeSwitcher compact />
               <PaletteSwitcher />
-              <Drawer open={menuOpen} onOpenChange={setMenuOpen} direction="right">
-                <DrawerTrigger asChild>
-                  <Button variant="ghost" size="icon-default" aria-label={t('nav.openMenu')} icon={Menu} />
-                </DrawerTrigger>
-                <DrawerContent className="w-[80vw] max-w-xs text-foreground">
-                  <DrawerTitle className="sr-only">{t('nav.menu')}</DrawerTitle>
-                  <DrawerDescription className="sr-only">{t('nav.primary')}</DrawerDescription>
-                  <div className="flex flex-col gap-1 p-4">
-                    <DrawerClose asChild className="mb-2 self-end">
-                      <Button variant="ghost" size="icon-default" aria-label={t('nav.closeMenu')} icon={X} />
-                    </DrawerClose>
-                    <RoleNav me={me}>
-                      {(links) => (
-                        <>
-                          <NavItems links={links.main} className={mobileLinkClassName} onNavigate={() => setMenuOpen(false)} />
-                          <div className="my-2 h-px bg-border" />
-                          <NavItems links={links.more} className={mobileLinkClassName} onNavigate={() => setMenuOpen(false)} />
-                        </>
-                      )}
-                    </RoleNav>
-                    <div className="my-2 h-px bg-border" />
-                    <NavItems
-                      links={accountLinks(me, t)}
-                      className={mobileLinkClassName}
-                      onNavigate={() => setMenuOpen(false)}
-                    />
-                  </div>
-                </DrawerContent>
-              </Drawer>
+              {me && (
+                <Drawer open={menuOpen} onOpenChange={setMenuOpen} direction="right">
+                  <DrawerTrigger asChild>
+                    <Button variant="ghost" size="icon-default" aria-label={t('nav.openMenu')} icon={Menu} />
+                  </DrawerTrigger>
+                  <DrawerContent className="w-[80vw] max-w-xs text-foreground">
+                    <DrawerTitle className="sr-only">{t('nav.menu')}</DrawerTitle>
+                    <DrawerDescription className="sr-only">{t('nav.primary')}</DrawerDescription>
+                    <div className="flex flex-col gap-1 p-4">
+                      <DrawerClose asChild className="mb-2 self-end">
+                        <Button variant="ghost" size="icon-default" aria-label={t('nav.closeMenu')} icon={X} />
+                      </DrawerClose>
+                      <RoleNav me={me}>
+                        {(links) => (
+                          <>
+                            <NavItems
+                              links={links.main}
+                              className={mobileLinkClassName}
+                              onNavigate={() => setMenuOpen(false)}
+                            />
+                            <div className="my-2 h-px bg-border" />
+                            <NavItems
+                              links={links.more}
+                              className={mobileLinkClassName}
+                              onNavigate={() => setMenuOpen(false)}
+                            />
+                          </>
+                        )}
+                      </RoleNav>
+                      <div className="my-2 h-px bg-border" />
+                      <NavItems
+                        links={accountLinks(me, t)}
+                        className={mobileLinkClassName}
+                        onNavigate={() => setMenuOpen(false)}
+                      />
+                    </div>
+                  </DrawerContent>
+                </Drawer>
+              )}
             </div>
           </div>
         </header>

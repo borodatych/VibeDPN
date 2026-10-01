@@ -64,3 +64,20 @@ const DAY_MS = 24 * 60 * 60 * 1000
 /** The first day of the period as core takes it: `YYYY-MM-DD`. */
 export const trafficSince = (now: Date, days: number = TRAFFIC_DAYS): string =>
   new Date(now.getTime() - (days - 1) * DAY_MS).toISOString().slice(0, 10)
+
+/** The pseudo-entry of the list of peers that opens the form adding one */
+export const ADD_PEER = 'add'
+
+/**
+ * The entry «Peers» shows: the peer in the URL when the VPS has it, else the first peer, else the form adding one
+ * A peer removed while it was open falls back the same way
+ *
+ * @tags peers
+ */
+export const pickPeer = (names: string[], wanted: string | undefined): string => {
+  if (wanted !== undefined && (wanted === ADD_PEER || names.includes(wanted))) {
+    return wanted
+  }
+  return names.at(0) ?? ADD_PEER
+}
+

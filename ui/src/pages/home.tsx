@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { PageTitle } from '@/components/blocks/page-title'
 import { Card } from '@/components/ui/card'
 import { Section, Sections } from '@/components/ui/section'
 import { XSelect } from '@/components/ui/select'
@@ -13,6 +14,9 @@ import {
   vpsLanAccessMutation,
 } from '@/features/status/api'
 import { formatMyst } from '@/features/node/shared'
+import { nodeStatsQuery } from '@/features/node/api'
+import { peersQuery } from '@/features/peers/api'
+import { peerLinkState } from '@/features/peers/shared'
 import { REGISTERED } from '@/features/status/shared'
 import {
   raiseInChain,
@@ -36,7 +40,7 @@ import { redirectUnauthorizedPlugin } from '@/modules/auth/plugins'
 import type { T } from '@/modules/i18n/base'
 import { useLanguage, useT } from '@/modules/i18n/use-t'
 import { formatDate } from '@/utils/date'
-import { ArrowUpIcon, XIcon } from 'lucide-react'
+import { ArrowRightIcon, ArrowUpIcon, XIcon } from 'lucide-react'
 
 const TONE_BADGE = { ok: 'success', warning: 'warning', danger: 'destructive' } as const
 
@@ -515,22 +519,63 @@ const StatusGrid = ({ main, side }: { main: React.ReactNode; side: React.ReactNo
   </div>
 )
 
+/** A page of the VPS as a card that opens it, with the numbers that tell whether to open it */
+const LinkCard = ({ to, title, lines }: { to: string; title: string; lines: string[] }) => (
+  <NavLink
+    to={to}
+    className="block rounded-xl border border-border bg-card px-5 py-4 text-card-foreground transition-colors hover:bg-muted"
+  >
+    <span className="flex items-center justify-between gap-3 font-title text-xl font-semibold tracking-tight text-accent-foreground">
+      {title}
+      <ArrowRightIcon className="size-4 shrink-0" aria-hidden />
+    </span>
+    {lines.map((line) => (
+      <span key={line} className="mt-1 block text-sm text-muted-foreground">
+        {line}
+      </span>
+    ))}
+  </NavLink>
+)
+
 const VpsHome = () => {
   const t = useT()
+  const listed = peersQuery.useQuery().data
+  const stats = nodeStatsQuery.useQuery().data?.stats ?? null
+  const peers = listed?.peers ?? []
+  const online = peers.filter((peer) => peerLinkState(peer, listed?.checkedAt ?? 0) === 'online').length
+  const identity = stats?.identity ?? null
   return (
     <Sections gap="lg">
-      <Section h1={t('status.title')} description={t('status.vps.description')}>
-        <div className="flex flex-wrap gap-4 font-accent text-sm">
-          <NavLink to={routes.peers()} className="underline">
-            {t('nav.peers')}
-          </NavLink>
-          <NavLink to={routes.node()} className="underline">
-            {t('nav.node')}
-          </NavLink>
-        </div>
-      </Section>
+      <PageTitle title={t('status.title')} description={t('status.vps.description')} />
       <StatusGrid
-        main={<LogsCard scope="all" />}
+        main={
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <LinkCard
+                to={routes.peers()}
+                title={t('nav.peers')}
+                lines={[t('status.vps.peers', { count: peers.length, online })]}
+              />
+              <LinkCard
+                to={routes.node()}
+                title={t('nav.node')}
+                lines={
+                  stats
+                    ? [
+                        identity
+                          ? t('status.vps.balance', {
+                              balance: t('common.myst', { amount: formatMyst(identity.balance_tokens.wei) }),
+                            })
+                          : t('node.noIdentity'),
+                        t('status.vps.sessions', { count: stats.sessions.count }),
+                      ]
+                    : [t('status.vps.nodeSilent')]
+                }
+              />
+            </div>
+            <LogsCard scope="all" />
+          </>
+        }
         side={
           <>
             <DoctorCard />

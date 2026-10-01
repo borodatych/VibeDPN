@@ -2,9 +2,11 @@ import { useHead } from '@unhead/react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Section, Sections } from '@/components/ui/section'
+import { ListDetail } from '@/components/blocks/list-detail'
+import { PageTitle } from '@/components/blocks/page-title'
+import { Card } from '@/components/ui/card'
+import { Sections } from '@/components/ui/section'
 import { XSwitch } from '@/components/ui/switch'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { qrImageSource } from '@/features/access/shared'
 import { humanBytes } from '@/features/node/shared'
 import { LogsCard } from '@/features/logs/card'
@@ -16,6 +18,8 @@ import {
   peersQuery,
 } from '@/features/peers/api'
 import {
+  ADD_PEER,
+  pickPeer,
   PEER_NAME,
   TRAFFIC_DAYS,
   peerFileName,
@@ -31,6 +35,7 @@ import type { MessageKey } from '@/modules/i18n/base'
 import { useLanguage, useT } from '@/modules/i18n/use-t'
 import { formatDate } from '@/utils/date'
 import { useState } from 'react'
+import { z } from 'zod'
 
 // Sample value for the empty name field: data in the form the field takes, the same in every language
 const EXAMPLE_PEER = 'dacha'
@@ -88,18 +93,21 @@ const FileCard = ({ file, onClose }: { file: PeerFile; onClose: () => void }) =>
   )
 }
 
-const PeerRow = ({
+/** The chosen peer: how it is linked, what it carried, its file, and its removal in the header */
+const PeerDetail = ({
   peer,
   checkedAt,
   total,
+  file,
   onFile,
   onRemoved,
 }: {
   peer: Peer
   checkedAt: number
   total: PeerTraffic | undefined
-  onFile: (file: PeerFile) => void
-  onRemoved: (name: string) => void
+  file: PeerFile | null
+  onFile: (file: PeerFile | null) => void
+  onRemoved: () => void
 }) => {
   const t = useT()
   const language = useLanguage()
@@ -111,35 +119,17 @@ const PeerRow = ({
   }
   const drop = async () => {
     await remove.mutateAsync({ name: peer.name })
-    onRemoved(peer.name)
+    onRemoved()
     await peersQuery.refetchQuery()
   }
   return (
-    <TableRow>
-      <TableCell>
-        <p className="font-mono text-sm">{peer.name}</p>
-        {peer.tunnel_only && <p className="text-xs text-muted-foreground">{t('peers.tunnelOnly')}</p>}
-      </TableCell>
-      <TableCell className="font-mono text-xs">{peer.address}</TableCell>
-      <TableCell>
-        <Badge variant={STATE_BADGES[state]}>{t(STATE_KEYS[state])}</Badge>
-        {peer.latest_handshake ? (
-          <p className="mt-1 text-xs text-muted-foreground">
-            {formatDate(new Date(peer.latest_handshake * MS_PER_SECOND), 'date-time', language)}
-          </p>
-        ) : null}
-      </TableCell>
-      <TableCell className="text-xs whitespace-nowrap">
-        {total
-          ? t('peers.traffic', { rx: humanBytes(total.rx_bytes), tx: humanBytes(total.tx_bytes) })
-          : t('common.none')}
-      </TableCell>
-      <TableCell className="whitespace-nowrap">
-        <Button variant="ghost" size="sm" loading={fetchFile.isPending} onClick={() => void showFile()}>
-          {t('peers.fileAction')}
-        </Button>
+    <Card
+      compact
+      h2={peer.name}
+      size="sm"
+      action={
         <Button
-          variant="ghost"
+          variant="outline-secondary"
           size="sm"
           loading={remove.isPending}
           confirm={t('peers.confirmRemove', { name: peer.name })}
@@ -147,10 +137,40 @@ const PeerRow = ({
         >
           {t('common.remove')}
         </Button>
-        {fetchFile.isError && <p className="mt-1 text-xs text-destructive">{fetchFile.error.message}</p>}
-        {remove.isError && <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>}
-      </TableCell>
-    </TableRow>
+      }
+    >
+      <div className="space-y-4 text-sm">
+        {peer.tunnel_only && <p className="text-muted-foreground">{t('peers.tunnelOnly')}</p>}
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 font-accent">
+          <dt className="text-muted-foreground">{t('peers.column.address')}</dt>
+          <dd className="font-mono text-xs">{peer.address}</dd>
+          <dt className="text-muted-foreground">{t('peers.column.state')}</dt>
+          <dd>
+            <Badge variant={STATE_BADGES[state]}>{t(STATE_KEYS[state])}</Badge>
+            {peer.latest_handshake ? (
+              <span className="ml-2 text-xs text-muted-foreground">
+                {formatDate(new Date(peer.latest_handshake * MS_PER_SECOND), 'date-time', language)}
+              </span>
+            ) : null}
+          </dd>
+          <dt className="text-muted-foreground">{t('peers.column.traffic', { days: TRAFFIC_DAYS })}</dt>
+          <dd>
+            {total
+              ? t('peers.traffic', { rx: humanBytes(total.rx_bytes), tx: humanBytes(total.tx_bytes) })
+              : t('common.none')}
+          </dd>
+        </dl>
+        {file?.name === peer.name ? (
+          <FileCard file={file} onClose={() => onFile(null)} />
+        ) : (
+          <Button variant="outline-secondary" size="sm" loading={fetchFile.isPending} onClick={() => void showFile()}>
+            {t('peers.fileAction')}
+          </Button>
+        )}
+        {fetchFile.isError && <p className="text-xs text-destructive">{fetchFile.error.message}</p>}
+        {remove.isError && <p className="text-xs text-destructive">{remove.error.message}</p>}
+      </div>
+    </Card>
   )
 }
 
@@ -194,53 +214,68 @@ const AddPeer = ({ onFile }: { onFile: (file: PeerFile) => void }) => {
 
 export const peersPage = generalLayout.lets
   .page('/peers')
+  .search(z.object({ peer: z.string().optional() }))
   .use(redirectUnauthorizedPlugin)
-  .page(() => {
+  .page(({ search, setSearch }) => {
     const t = useT()
     useHead({ title: t('nav.peers') })
     const listed = peersQuery.useQuery().data
     const peers = listed?.peers ?? []
     const totals = peerTrafficQuery.useQuery().data?.totals ?? []
     const [file, setFile] = useState<PeerFile | null>(null)
-    const totalOf = (peer: Peer) => totals.find((item) => item.public_key === peer.public_key)
-
+    const picked = pickPeer(
+      peers.map((peer) => peer.name),
+      search.peer,
+    )
+    const pick = (key: string) => setSearch({ peer: key })
+    const shown = peers.find((peer) => peer.name === picked)
+    const detail = (
+      <div className="flex min-w-0 flex-col gap-6">
+        {shown ? (
+          <PeerDetail
+            peer={shown}
+            checkedAt={listed?.checkedAt ?? 0}
+            total={totals.find((item) => item.public_key === shown.public_key)}
+            file={file}
+            onFile={setFile}
+            // the file of a removed peer no longer works: it leaves the screen with the peer
+            onRemoved={() => setFile(null)}
+          />
+        ) : (
+          <Card compact h2={t('peers.add.title')} size="sm">
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">{t('peers.add.description')}</p>
+              {/* a new peer opens at once, with its file shown: it is needed right away */}
+              <AddPeer
+                onFile={(added) => {
+                  setFile(added)
+                  pick(added.name)
+                }}
+              />
+            </div>
+          </Card>
+        )}
+        <LogsCard scope="peers" />
+      </div>
+    )
     return (
       <Sections gap="lg">
-        <Section h1={t('peers.title')} description={t('peers.description')}>
-          {file && <FileCard file={file} onClose={() => setFile(null)} />}
-          {peers.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t('peers.empty')}</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('peers.column.name')}</TableHead>
-                  <TableHead>{t('peers.column.address')}</TableHead>
-                  <TableHead>{t('peers.column.state')}</TableHead>
-                  <TableHead>{t('peers.column.traffic', { days: TRAFFIC_DAYS })}</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {peers.map((peer) => (
-                  <PeerRow
-                    key={peer.name}
-                    peer={peer}
-                    checkedAt={listed?.checkedAt ?? 0}
-                    total={totalOf(peer)}
-                    onFile={setFile}
-                    // the file of a removed peer no longer works: it leaves the screen with the peer
-                    onRemoved={(name) => setFile((shown) => (shown?.name === name ? null : shown))}
-                  />
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </Section>
-        <Section h2={t('peers.add.title')} size="lg" description={t('peers.add.description')}>
-          <AddPeer onFile={setFile} />
-        </Section>
-        <LogsCard scope="peers" />
+        <PageTitle title={t('peers.title')} description={t('peers.description')} />
+        <ListDetail
+          label={t('peers.title')}
+          items={peers.map((peer) => {
+            const state = peerLinkState(peer, listed?.checkedAt ?? 0)
+            return {
+              key: peer.name,
+              title: peer.name,
+              aside: <Badge variant={STATE_BADGES[state]}>{t(STATE_KEYS[state])}</Badge>,
+            }
+          })}
+          picked={picked}
+          onPick={pick}
+          add={{ key: ADD_PEER, label: t('peers.add.title') }}
+          detail={detail}
+        />
       </Sections>
     )
   })

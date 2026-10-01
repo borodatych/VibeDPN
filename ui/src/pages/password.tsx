@@ -1,7 +1,9 @@
 import { useHead } from '@unhead/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Section, Sections } from '@/components/ui/section'
+import { PageTitle } from '@/components/blocks/page-title'
+import { Card } from '@/components/ui/card'
+import { Sections } from '@/components/ui/section'
 import { panelPasswordMutation } from '@/features/password/api'
 import { PASSWORD_MAX_BYTES, PASSWORD_MIN, passwordProblem } from '@/features/password/shared'
 import { generalLayout } from '@/layouts/general'
@@ -40,7 +42,18 @@ export const passwordPage = generalLayout.lets
     const result = save.data
     return (
       <Sections gap="lg">
-        <Section h1={t('password.title')} description={t('password.description')}>
+        <PageTitle title={t('password.title')} description={t('password.description')} />
+        <Card
+          compact
+          h2={t('password.card')}
+          size="sm"
+          className="max-w-xl"
+          action={
+            <Button size="sm" disabled={!typed || problem !== null} loading={save.isPending} onClick={() => void submit()}>
+              {t('password.save')}
+            </Button>
+          }
+        >
           <div className="space-y-3">
             <PasswordInput
               label={t('password.current')}
@@ -61,9 +74,6 @@ export const passwordPage = generalLayout.lets
               onChange={(event) => setRepeat(event.target.value)}
             />
             <p className="text-xs text-muted-foreground">{t('password.hint', limits)}</p>
-            <Button disabled={!typed || problem !== null} loading={save.isPending} onClick={() => void submit()}>
-              {t('password.save')}
-            </Button>
             {problem && <p className="text-sm text-destructive">{t(`password.problem.${problem}`, limits)}</p>}
             {save.isError && <p className="text-sm text-destructive">{save.error.message}</p>}
             {result?.wrongCurrent && <p className="text-sm text-destructive">{t('password.wrongCurrent')}</p>}
@@ -80,7 +90,7 @@ export const passwordPage = generalLayout.lets
               </div>
             )}
           </div>
-        </Section>
+        </Card>
       </Sections>
     )
   })

@@ -1,4 +1,4 @@
-import { PEER_NAME, peerFileName, peerLinkState, trafficSince, type Peer } from '@/features/peers/shared'
+import { ADD_PEER, pickPeer, PEER_NAME, peerFileName, peerLinkState, trafficSince, type Peer } from '@/features/peers/shared'
 import { navOfRole, pagesOfRole } from '@/features/box/shared'
 import { describe, expect, test } from 'bun:test'
 
@@ -58,12 +58,26 @@ describe('header of a role', () => {
     expect(navOfRole('home').more).toEqual(['node', 'notifications', 'journal', 'backup'])
   })
 
+  test('a VPS keeps its node in sight: few pages, and the node is one of its main ones', () => {
+    expect(navOfRole('vps').main).toEqual(['home', 'peers', 'node', 'access'])
+    expect(navOfRole('vps').more).toEqual(['notifications', 'backup'])
+  })
+
   test('every page of every role is in exactly one list, none is lost', () => {
     for (const role of ['home', 'vps', undefined]) {
       const { main, more } = navOfRole(role)
       expect([...main, ...more].sort()).toEqual([...pagesOfRole(role)].sort())
       expect(main.filter((page) => (more as readonly string[]).includes(page))).toEqual([])
     }
+  })
+})
+
+describe('the peer shown on «Peers»', () => {
+  test('the one in the URL, else the first, else the form adding one', () => {
+    expect(pickPeer(['home', 'laptop'], 'laptop')).toBe('laptop')
+    expect(pickPeer(['home', 'laptop'], ADD_PEER)).toBe(ADD_PEER)
+    expect(pickPeer(['home', 'laptop'], 'removed')).toBe('home')
+    expect(pickPeer([], undefined)).toBe(ADD_PEER)
   })
 })
 

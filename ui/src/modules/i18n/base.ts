@@ -52,7 +52,6 @@ const table = {
   'nav.node': 'Node',
   'nav.network': 'Network',
   'nav.access': 'Access',
-  'nav.signIn': 'Sign In',
   'nav.signOut': 'Sign Out',
   'nav.password': 'Password',
   'nav.openMenu': 'Open menu',
@@ -78,6 +77,7 @@ const table = {
   'palette.midnight': 'Midnight',
 
   'auth.signIn': 'Sign In',
+  'auth.title': 'Sign in to VibeDPN',
   'auth.signOut': 'Sign Out',
   'auth.password': 'Password',
   'auth.passwordHint': 'The password from vibedpn init',
@@ -98,6 +98,10 @@ const table = {
 
   'status.title': 'Box status',
   'status.vps.description': 'This box is a VPS: it routes no LAN. The home boxes and devices of its tunnel are on the Peers page, its Mysterium node on the Node page.',
+  'status.vps.peers': '{count} peers, {online} online',
+  'status.vps.balance': 'Balance {balance}',
+  'status.vps.sessions': '{count} sessions',
+  'status.vps.nodeSilent': 'The node does not answer',
   'status.tone.ok': 'OK',
   'status.tone.attention': 'Attention',
   'status.headline.noExit':
@@ -197,6 +201,7 @@ const table = {
   'backup.upload.problem.size': 'The file is larger than {max}: the panel cannot carry it.',
 
   'password.title': 'Panel password',
+  'password.card': 'A new password',
   'password.description': 'One password for this panel, AdGuard and the NodeUI of the node.',
   'password.current': 'Current password',
   'password.new': 'New password',
@@ -302,7 +307,6 @@ const table = {
   'node.earnings': 'Earnings',
   'node.earningsTotal': 'Earnings in total',
   'node.noIdentity': 'No identity yet: the node creates one on its first start.',
-  'node.sessionsTitle': 'Sessions',
   'node.sessions': 'Sessions',
   'node.sessionsCount': '{count} ({consumers} consumers)',
   'node.received': 'Received',
@@ -526,8 +530,6 @@ const table = {
   'access.server.title': 'Server',
   'peers.title': 'Peers of the tunnel',
   'peers.description': 'Home boxes and devices that reach this VPS through its WireGuard tunnel. Each has a file of its own.',
-  'peers.empty': 'No peers yet: add the first one below.',
-  'peers.column.name': 'Name',
   'peers.column.address': 'Tunnel address',
   'peers.column.state': 'Link',
   'peers.column.traffic': 'Traffic, {days} days',

@@ -1,5 +1,5 @@
 import { useHead } from '@unhead/react'
-import { Section } from '@/components/ui/section'
+import { Card } from '@/components/ui/card'
 import { generalLayout } from '@/layouts/general'
 import { SignInForm } from '@/modules/auth/components/sign-in'
 import { redirectAuthorizedPlugin } from '@/modules/auth/plugins'
@@ -11,9 +11,12 @@ export const signInPage = generalLayout.lets
   .page(() => {
     const t = useT()
     useHead({ title: t('auth.signIn') })
+    // the door of the box: centred in a card, and the header shows no pages behind it (layouts/general.tsx)
     return (
-      <Section h1={t('auth.signIn')}>
-        <SignInForm />
-      </Section>
+      <div className="flex justify-center pt-4 lg:pt-12">
+        <Card compact h1={t('auth.title')} size="sm" className="w-full max-w-md">
+          <SignInForm />
+        </Card>
+      </div>
     )
   })
