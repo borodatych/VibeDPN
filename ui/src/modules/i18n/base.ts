@@ -472,6 +472,7 @@ const table = {
   'update.pending': 'Updating: the box takes the new version and restarts…',
   'update.restarting': 'The box is restarting; the page reloads itself when it is back',
   'update.done': 'Updated from {before} to {after} {time}',
+  'update.unanswered': 'The image registry did not answer about {commit}: it may be newer. Try the update again later.',
   'update.building': 'A newer version, {commit}, is still being built: the next update takes it.',
   'update.latest': 'Already the latest version ({commit}), checked {time}',
   'update.failed': 'The update did not go through: {message}',

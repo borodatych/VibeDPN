@@ -190,6 +190,15 @@ sudo docker pull ghcr.io/borodatych/vibedpn-core:next
 sudo vibedpn update
 ```
 
+**`the registry did not answer about …`** — у коробки есть более новый коммит, но реестр образов
+не ответил, собран ли он: `docker manifest inspect` трижды не получил ответа (тот же мёртвый адрес
+`ghcr.io`). Это не «образы ещё собираются»: коробка осталась на прежнем коммите, потому что
+неизвестно, готовы ли образы нового. Повторите `sudo vibedpn update` позже. Проверить руками:
+
+```bash
+sudo docker manifest inspect ghcr.io/borodatych/vibedpn-core:sha-<коммит>
+```
+
 **Правка `install.sh` доезжает со следующего прогона:** скрипт обновляет собственный файл, а
 работает всё ещё со старого. Это не ошибка, просто запустите его второй раз.
 

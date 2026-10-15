@@ -14,6 +14,7 @@ from vibedpn.compose import ComposeError
 from vibedpn.config import Config
 from vibedpn.doctor import Verdict, images_result
 from vibedpn.engine.update import (
+    Readiness,
     commit_tag,
     managed_tag,
     pick_target,
@@ -29,17 +30,33 @@ DATA = Path("data") / "core"
 CURRENT = "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 BUILT = "2222222bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 BUILDING = "3333333ccccccccccccccccccccccccccccccccc"
+TRANSPORT_FAILURE = (
+    'failed to configure transport: error pinging v2 registry: Get "https://ghcr.io/v2/": '
+    "net/http: request canceled while waiting for connection (Client.Timeout exceeded)"
+)
 IMAGES = ("ghcr.io/borodatych/vibedpn-core:next", "ghcr.io/borodatych/vibedpn-ui:next-full")
 
 
 def test_the_newest_commit_with_all_its_images_is_the_target() -> None:
-    ready = {BUILT}.__contains__
+    def ready(commit: str) -> Readiness:
+        return Readiness.PUBLISHED if commit == BUILT else Readiness.ABSENT
+
     chosen = pick_target([BUILDING, BUILT, CURRENT], CURRENT, ready)
     assert (chosen.commit, chosen.building) == (BUILT, BUILDING)
     nothing = pick_target([BUILDING, CURRENT], CURRENT, ready)
     assert (nothing.commit, nothing.building) == (None, BUILDING)
     # never back: a commit older than the box is not a target even with its images
     assert pick_target([CURRENT, BUILT], CURRENT, ready).commit is None
+
+
+def test_a_commit_the_registry_does_not_answer_about_is_not_called_unbuilt() -> None:
+    def ready(commit: str) -> Readiness:
+        return Readiness.UNREACHABLE if commit == BUILT else Readiness.ABSENT
+
+    # the search stops at the silent commit: older ones would be silent too
+    chosen = pick_target([BUILDING, BUILT, "4444444"], CURRENT, ready)
+    assert (chosen.commit, chosen.building, chosen.unanswered) == (None, BUILDING, BUILT)
+    assert pick_target([BUILT], CURRENT, ready).unanswered == BUILT
 
 
 def test_the_tag_moves_with_its_variant_and_only_ours_is_pinned() -> None:
@@ -60,6 +77,8 @@ class Host:
         self.calls: list[list[str]] = []
         self.ref: str | None = None
         self.silent_fetches = 0  # fetches that time out before one gets through
+        self.silent_manifests = 0  # manifest calls that time out before one gets through
+        self.dead_registry = False  # every manifest call times out
         monkeypatch.setattr(cli, "run", self.run)
         monkeypatch.setattr(cli, "capture", self.capture)
         monkeypatch.setattr(cli, "preflight", lambda: None)
@@ -89,8 +108,12 @@ class Host:
         if "fetch" in argv and self.silent_fetches > 0:
             self.silent_fetches -= 1
             raise ComposeError(f"git stayed silent for {timeout:g} s")
-        if argv[:3] == ["docker", "manifest", "inspect"] and commit_tag(BUILT) not in argv[3]:
-            raise ComposeError("manifest unknown")
+        if argv[:3] == ["docker", "manifest", "inspect"]:
+            if self.dead_registry or self.silent_manifests > 0:
+                self.silent_manifests -= 1
+                raise ComposeError(TRANSPORT_FAILURE)
+            if commit_tag(BUILT) not in argv[3]:
+                raise ComposeError("manifest unknown")
         answers = {
             "rev-list": f"{BUILDING}\n{BUILT}\n{CURRENT}\n",
             "HEAD": f"{self.commit}\n",
@@ -162,3 +185,50 @@ def test_a_silent_fetch_is_tried_again_and_a_dead_one_fails_the_update(
     assert failed.exit_code == 1
     done = read_update_result(tmp_path / DATA)
     assert done is not None and not done.ok and "cannot see what is new on next" in done.message
+
+
+def test_a_manifest_call_without_an_answer_is_tried_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = Host(tmp_path, monkeypatch, "next")
+    host.silent_manifests = 2  # a dead address twice, then a good one
+    update(tmp_path)
+    assert host.ref == BUILT
+    first = [argv for argv in host.calls if argv[:3] == ["docker", "manifest", "inspect"]][:3]
+    assert len({argv[3] for argv in first}) == 1  # the same image, asked three times
+
+
+def test_published_tells_published_absent_and_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    answers: list[str | None] = []
+
+    def capture(argv: list[str], *, timeout: float | None = None) -> str:
+        message = answers.pop(0)
+        if message is not None:
+            raise ComposeError(message)
+        return "{}"
+
+    monkeypatch.setattr(cli, "capture", capture)
+    answers[:] = [None]
+    assert cli._published(IMAGES[0]) is Readiness.PUBLISHED
+    answers[:] = ["manifest unknown"]
+    assert cli._published(IMAGES[0]) is Readiness.ABSENT
+    answers[:] = [TRANSPORT_FAILURE, "manifest unknown"]
+    assert cli._published(IMAGES[0]) is Readiness.ABSENT  # a later answer settles it
+    answers[:] = [TRANSPORT_FAILURE] * cli.REGISTRY_ATTEMPTS
+    assert cli._published(IMAGES[0]) is Readiness.UNREACHABLE
+    assert not answers
+
+
+def test_a_silent_registry_is_reported_as_no_answer_not_as_building(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = Host(tmp_path, monkeypatch, "next")
+    host.dead_registry = True
+    message = update(tmp_path)
+    assert host.ref is None or host.ref == CURRENT  # the box stays where it is
+    assert "still being built" not in message
+    assert "did not answer about 3333333" in message
+    done = read_update_result(tmp_path / DATA)
+    assert done is not None and done.building == "" and done.unanswered == "3333333"

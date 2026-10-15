@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -64,25 +65,41 @@ def retag(image: str, tag_from: str, tag_to: str) -> str:
     return f"{name}:{tag_to}{tag[len(tag_from) :]}"
 
 
+class Readiness(StrEnum):
+    """What the registry said about the images of one commit"""
+
+    PUBLISHED = "published"
+    ABSENT = "absent"  # the registry answered: there is no such image (yet)
+    UNREACHABLE = "unreachable"  # no answer: the line, not the registry, is what failed
+
+
 @dataclass(frozen=True)
 class UpdateTarget:
     commit: str | None  # the commit to move to; None: nothing newer than the box has its images
     building: str | None  # a newer commit whose images CI has not published yet
+    unanswered: str | None = None  # a newer commit the registry did not answer about
 
 
-def pick_target(commits: list[str], current: str, ready: Callable[[str], bool]) -> UpdateTarget:
+def pick_target(
+    commits: list[str], current: str, ready: Callable[[str], Readiness]
+) -> UpdateTarget:
     """The newest commit of ``commits`` (newest first) whose images are all published
 
     The checkout and the images move together: the tag of the branch moves when CI has built,
     not when the commit lands, and an update between the two ran new code on old images
     The search stops at the commit the box runs: an update never moves the box back
+    It stops at a commit the registry does not answer about too: older commits would go the same
+    way, and "not answered" must not pass for "not built"
     """
     building: str | None = None
     for commit in commits:
         if commit == current:
             return UpdateTarget(None, building)
-        if ready(commit):
+        state = ready(commit)
+        if state is Readiness.PUBLISHED:
             return UpdateTarget(commit, building)
+        if state is Readiness.UNREACHABLE:
+            return UpdateTarget(None, building, commit)
         building = building or commit
     return UpdateTarget(None, building)
 
@@ -106,6 +123,8 @@ class UpdateResult:
     after: str
     # a newer commit of the branch the update left alone: CI had not published its images yet
     building: str = ""
+    # a newer commit of the branch the registry did not answer about: unknown, not "not built"
+    unanswered: str = ""
 
 
 @dataclass(frozen=True)
@@ -137,6 +156,7 @@ def read_update_result(data_dir: Path) -> UpdateResult | None:
             before=str(raw["before"]),
             after=str(raw["after"]),
             building=str(raw.get("building", "")),  # a result written before the field: none
+            unanswered=str(raw.get("unanswered", "")),
         )
     except (KeyError, TypeError, ValueError):
         return None

@@ -448,6 +448,7 @@ def _update_view(data: Path) -> UpdateView:
             after=last.after,
             finished_at=last.finished_at,
             building=last.building,
+            unanswered=last.unanswered,
         ),
     )
 

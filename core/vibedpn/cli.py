@@ -213,6 +213,7 @@ from vibedpn.engine.update import (
     COMMIT_TAG_LENGTH,
     SEARCH_DEPTH,
     UPDATE,
+    Readiness,
     Revision,
     UpdateResult,
     commit_tag,
@@ -1008,10 +1009,11 @@ def _update_rounds(box_dir: Path) -> None:
         if asked is None or (last is not None and last.requested_at >= asked):
             return  # nothing asked, or already done
         before = _revision(box_dir)
-        building = ""
+        building = unanswered = ""
         try:
             outcome = _update_box(box_dir)
-            ok, message, building = True, outcome.message, outcome.building
+            ok, message = True, outcome.message
+            building, unanswered = outcome.building, outcome.unanswered
         except _UpdateFailedError as exc:
             ok, message = False, str(exc)
         after = _revision(box_dir)
@@ -1025,6 +1027,7 @@ def _update_rounds(box_dir: Path) -> None:
                 before=before.commit if before is not None else "",
                 after=after.commit if after is not None else "",
                 building=building,
+                unanswered=unanswered,
             ),
         )
         if not ok:
@@ -1035,6 +1038,7 @@ def _update_rounds(box_dir: Path) -> None:
 class _UpdateOutcome:
     message: str  # the line that says what came of it
     building: str  # a newer commit left alone, its images not out yet; "" when none
+    unanswered: str = ""  # a newer commit the registry did not answer about; "" when none
 
 
 def _update_box(box_dir: Path) -> _UpdateOutcome:
@@ -1052,7 +1056,7 @@ def _update_box(box_dir: Path) -> _UpdateOutcome:
         raise _UpdateFailedError(str(exc)) from None
     before = _revision(box_dir)
     environment = {"VIBEDPN_DIR": str(box_dir), "VIBEDPN_BRANCH": branch, "VIBEDPN_REPO": origin}
-    target, note, building = _update_target(box_dir, branch)
+    target, note, building, unanswered = _update_target(box_dir, branch)
     if target is not None:
         environment["VIBEDPN_REF"] = target
     if (
@@ -1084,14 +1088,17 @@ def _update_box(box_dir: Path) -> _UpdateOutcome:
             f"already the latest {branch} ({after.commit}) with its images;"
             f" only what the pull changed was recreated{note}",
             building,
+            unanswered,
         )
     moved = f" from {before.commit} to {after.commit}" if before and after else ""
     return _UpdateOutcome(
-        f"updated to the latest {branch}{moved} (role {config.role.value}){note}", building
+        f"updated to the latest {branch}{moved} (role {config.role.value}){note}",
+        building,
+        unanswered,
     )
 
 
-def _update_target(box_dir: Path, branch: str) -> tuple[str | None, str, str]:
+def _update_target(box_dir: Path, branch: str) -> tuple[str | None, str, str, str]:
     """The commit of ``branch`` the update moves to, with its images pinned in .env, and a note
 
     The newest commit whose images CI has published (engine/update.py, pick_target), or the one
@@ -1104,6 +1111,7 @@ def _update_target(box_dir: Path, branch: str) -> tuple[str | None, str, str]:
         return (
             None,
             f"; the image tag {tag} is set by hand in .env: the code is not pinned to it",
+            "",
             "",
         )
     git = ["git", "-C", str(box_dir)]
@@ -1120,8 +1128,12 @@ def _update_target(box_dir: Path, branch: str) -> tuple[str | None, str, str]:
         {line.strip() for line in listing.splitlines() if line.startswith(OWN_IMAGE_PREFIX)}
     )
 
-    def ready(commit: str) -> bool:
-        return all(_published(retag(image, tag, commit_tag(commit))) for image in images)
+    def ready(commit: str) -> Readiness:
+        for image in images:
+            state = _published(retag(image, tag, commit_tag(commit)))
+            if state is not Readiness.PUBLISHED:
+                return state  # the first image that is absent or unanswered settles the commit
+        return Readiness.PUBLISHED
 
     chosen = pick_target(commits, current, ready)
     target = chosen.commit or current
@@ -1130,8 +1142,13 @@ def _update_target(box_dir: Path, branch: str) -> tuple[str | None, str, str]:
     except OSError as exc:
         raise _UpdateFailedError(f"cannot write {env_path}: {exc.strerror or exc}") from None
     building = chosen.building[:COMMIT_TAG_LENGTH] if chosen.building else ""
+    unanswered = chosen.unanswered[:COMMIT_TAG_LENGTH] if chosen.unanswered else ""
     note = f"; {building} is newer, its images are still being built" if building else ""
-    return target, note, building
+    if unanswered:
+        note += (
+            f"; the registry did not answer about {unanswered}: it may be newer, try again later"
+        )
+    return target, note, building, unanswered
 
 
 # As install.sh does it: one of the addresses github.com resolves to is a black hole on some lines,
@@ -1152,13 +1169,42 @@ def _fetch(git: list[str], branch: str) -> None:
             return
 
 
-def _published(image: str) -> bool:
-    """Whether the registry has ``image``: its manifest is read, nothing is downloaded"""
-    try:
-        capture(["docker", "manifest", "inspect", image])
-    except ComposeError:
-        return False
-    return True
+# The same rotating dead address as for github.com, now on ghcr.io
+# (knowledge linux/githubBlackholedAddress.md)
+REGISTRY_TIMEOUT_SECONDS = 30.0
+REGISTRY_ATTEMPTS = 3
+# What `docker manifest inspect` prints when it never reached the registry, measured on the box:
+# `failed to configure transport: error pinging v2 registry: Get "https://ghcr.io/v2/": ...`
+# A registry that answered says `manifest unknown` (distribution spec code MANIFEST_UNKNOWN)
+# or `denied` (a repository that does not exist), and none of these words
+_TRANSPORT_FAILURE_MARKERS = (
+    "failed to configure transport",
+    "error pinging v2 registry",
+    "client.timeout",
+    "stayed silent",
+    "i/o timeout",
+    "no such host",
+    "connection refused",
+    "connection reset",
+    "tls handshake",
+    "eof",
+)
+
+
+def _published(image: str) -> Readiness:
+    """Whether the registry has ``image``: its manifest is read, nothing is downloaded
+
+    A call that got no answer is tried again: the next one may resolve to a live address
+    """
+    for _ in range(REGISTRY_ATTEMPTS):
+        try:
+            capture(["docker", "manifest", "inspect", image], timeout=REGISTRY_TIMEOUT_SECONDS)
+        except ComposeError as exc:
+            if not any(marker in str(exc).lower() for marker in _TRANSPORT_FAILURE_MARKERS):
+                return Readiness.ABSENT
+        else:
+            return Readiness.PUBLISHED
+    return Readiness.UNREACHABLE
 
 
 def _revision(box_dir: Path) -> Revision | None:

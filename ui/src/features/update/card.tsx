@@ -87,6 +87,9 @@ export const UpdateCard = () => {
         {!busy && view?.last?.ok && view.last.building && (
           <p className="text-sm text-muted-foreground">{t('update.building', { commit: view.last.building })}</p>
         )}
+        {!busy && view?.last?.ok && view.last.unanswered && (
+          <p className="text-sm text-warning">{t('update.unanswered', { commit: view.last.unanswered })}</p>
+        )}
         {mutation.isError && <p className="text-xs text-destructive">{mutation.error.message}</p>}
       </div>
     </Card>

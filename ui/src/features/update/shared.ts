@@ -8,6 +8,8 @@ export type UpdateResult = {
   finished_at: number
   /** A newer commit the update left alone: CI had not published its images yet; empty when none */
   building: string
+  /** A newer commit the registry did not answer about, so nobody knows whether it is built; empty when none */
+  unanswered: string
 }
 
 /** The revision the box runs, an update in progress, and how the last one ended. */

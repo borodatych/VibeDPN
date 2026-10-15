@@ -439,6 +439,7 @@ class UpdateResultView(BaseModel):
     after: str
     finished_at: float
     building: str = ""  # a newer commit left alone: its images were still being built
+    unanswered: str = ""  # a newer commit the registry did not answer about
 
 
 class UpdateView(BaseModel):
