@@ -2,6 +2,7 @@
 
 import base64
 import os
+import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -223,6 +224,58 @@ def test_wg_server_waits_for_core_to_render_its_config() -> None:
     assert compose["services"]["wg-server"]["depends_on"]["core"]["condition"] == "service_healthy"
 
 
+REPO = Path(__file__).parents[2]
+WG_IMAGE = REPO / "images" / "wg"
+
+
+def compose_services() -> dict[str, Any]:
+    compose = cast(
+        "dict[str, Any]", parse_yaml((REPO / "compose.yaml").read_text(encoding="utf-8"))
+    )
+    return cast("dict[str, Any]", compose["services"])
+
+
+def dockerfile_arg(path: Path, name: str) -> str:
+    match = re.search(rf"^ARG {name}=(\S+)$", path.read_text(encoding="utf-8"), re.MULTILINE)
+    assert match is not None, f"{path} has no ARG {name}="
+    return match.group(1)
+
+
+def test_tunnel_containers_get_the_tun_device() -> None:
+    """The daemon makes wg0 from /dev/net/tun; the named exits extend wg-client and inherit it."""
+    services = compose_services()
+    for name in ("wg-client", "wg-server"):
+        assert "/dev/net/tun:/dev/net/tun" in services[name]["devices"], name
+
+
+def test_daemon_socket_directory_is_shared_by_wg_server_and_core() -> None:
+    """core reads the live peers through the socket of the daemon in wg-server (`awg show`)."""
+    services = compose_services()
+    entrypoint = (WG_IMAGE / "entrypoint.sh").read_text(encoding="utf-8")
+    socket_dir = re.search(r"^SOCKET_DIR=(\S+)$", entrypoint, re.MULTILINE)
+    assert socket_dir is not None
+    # /var/run is a symlink to /run in both images, so the mount target is the same directory
+    target = socket_dir.group(1).replace("/var/run/", "/run/")
+    mounts = {
+        name: next(
+            m for m in services[name]["volumes"] if isinstance(m, str) and m.endswith(target)
+        )
+        for name in ("wg-server", "core")
+    }
+    assert mounts["wg-server"].split(":")[0] == mounts["core"].split(":")[0]
+    assert dockerfile_arg(WG_IMAGE / "Dockerfile", "UAPI_SOCKET_DIR") == socket_dir.group(1)
+
+
+def test_core_and_the_wg_image_build_the_same_awg() -> None:
+    """One protocol version on both ends of the socket: the pins of the two Dockerfiles agree."""
+    pin = "AMNEZIAWG_TOOLS_COMMIT"
+    assert dockerfile_arg(WG_IMAGE / "Dockerfile", pin) == dockerfile_arg(
+        REPO / "core" / "Dockerfile", pin
+    )
+    commit = dockerfile_arg(WG_IMAGE / "Dockerfile", "AMNEZIAWG_GO_COMMIT")
+    assert re.fullmatch(r"[0-9a-f]{40}", commit), "a commit pin is a full SHA, not a tag"
+
+
 def test_write_private_flushes_the_file_and_the_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -358,23 +411,31 @@ def test_dump_is_parsed_without_keeping_the_interface_line() -> None:
     assert idle == wg.PeerLink(endpoint=None, latest_handshake=0, rx_bytes=0, tx_bytes=0)
     busy = links["3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08="]
     assert busy == wg.PeerLink("203.0.113.7:40312", 1789236372, 15432, 9876)
-    interface_private_key = DUMP.split("\t", 1)[0]
-    assert all(interface_private_key not in str(link) for link in links.values())
+    interface_secrets = DUMP.splitlines()[0].split("\t")
+    # the first line carries the private key and, with AmneziaWG, the header protection key too
+    for secret in (interface_secrets[0], "aE+FWzYi13h8y8I0WQ872zC2PkRj8k1OVvZWOfy8Q0A="):
+        assert secret in interface_secrets
+        assert all(secret not in str(link) for link in links.values())
 
 
 def test_read_wg_dump_degrades_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(wg, "find_tool", lambda _name: None)
     assert wg.read_wg_dump() is None
-    monkeypatch.setattr(wg, "find_tool", lambda _name: "/usr/bin/wg")
+    monkeypatch.setattr(wg, "find_tool", lambda name: f"/usr/local/bin/{name}")
     monkeypatch.setattr(
         subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=1, stdout="", stderr="")
     )
     assert wg.read_wg_dump() is None
-    monkeypatch.setattr(
-        subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=0, stdout=DUMP, stderr="")
-    )
+    asked: list[list[str]] = []
+
+    def answer(argv: list[str], **_kwargs: object) -> SimpleNamespace:
+        asked.append(argv)
+        return SimpleNamespace(returncode=0, stdout=DUMP, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", answer)
     links = wg.read_wg_dump()
     assert links is not None and len(links) == 2
+    assert asked == [["/usr/local/bin/awg", "show", "wg0", "dump"]]
 
 
 # --- subnet changes and failed writes ------------------------------------------------------

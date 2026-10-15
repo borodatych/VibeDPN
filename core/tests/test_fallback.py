@@ -358,7 +358,7 @@ def router_verdict(config: Config, **overrides: object) -> CheckResult:
         "config_hint": "",
         "env_current": True,
         "secrets": {},
-        "wireguard": True,
+        "tun": True,
         "nf_tables": True,
         "ip_forward": True,
         "listeners": [],

@@ -9,7 +9,7 @@ Debian 12 bookworm (2023-06-10, ядро 6.1) собирают `CONFIG_WIREGUARD
 `NFT_REJECT=m`, `NFT_FIB_INET=m`. Raspberry Pi OS с 2025-10-02 основана на trixie; апгрейд
 с bookworm на месте не поддерживается — только чистый образ. Docker Engine на Pi OS 64-bit
 ставится по инструкции для Debian (Stage 1).
-**Применение:** `vibedpn doctor` проверяет наличие модуля `wireguard` и `nf_tables`, а не ставит их.
+**Применение:** `vibedpn doctor` проверяет наличие `/dev/net/tun` и модуля `nf_tables`, а не ставит их (туннель — userspace AmneziaWG, модуль `wireguard` ему не нужен).
 
 ## [провайдер] Системный Python и установка Docker на хост
 

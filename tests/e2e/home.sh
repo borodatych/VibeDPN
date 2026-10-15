@@ -9,7 +9,7 @@
 # which is Stage 8), while myst-provider sits on its own Docker bridge and must reach the internet
 # with the same address as the host.
 #
-# Needs: Linux, Docker Engine >= 28, the wireguard module, sudo, curl, python3 (or a python with the
+# Needs: Linux, Docker Engine >= 28, /dev/net/tun, sudo, curl, python3 (or a python with the
 # CLI installed in VIBEDPN_E2E_PYTHON), the internet, images ghcr.io/borodatych/vibedpn-core:$TAG
 # and ghcr.io/borodatych/vibedpn-ui:$TAG-full. VIBEDPN_E2E_EXIT_URL: an echo service of the exit
 # address (default https://api.ipify.org, the one `doctor --network` uses).

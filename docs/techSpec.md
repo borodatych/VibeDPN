@@ -10,7 +10,7 @@
 |---|---|
 | ОС | Debian 12 (bookworm, ядро 6.1) / Debian 13 (trixie, ядро 6.12) / Raspberry Pi OS 64-bit (trixie) |
 | Архитектуры | amd64, arm64 (Raspberry Pi 4/5, N100, любой Debian-хост или VPS) |
-| Требования | Docker Engine + Compose v2 (проверено на 5.5.1), модули ядра `wireguard` и `nf_tables` (в стоковых ядрах есть) |
+| Требования | Docker Engine + Compose v2 (проверено на 5.5.1), устройство `/dev/net/tun` (туннель — AmneziaWG в userspace, модуль `wireguard` не нужен) и модуль ядра `nf_tables` (в стоковых ядрах есть) |
 | Каталог | `/opt/vibedpn` — клон репозитория (`install.sh`); там же `venv/` с CLI, симлинк `/usr/local/bin/vibedpn`; рядом `config.yaml`, `.env`, `secrets/`, `data/` |
 
 ## Стек

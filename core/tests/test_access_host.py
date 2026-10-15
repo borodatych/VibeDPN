@@ -47,7 +47,7 @@ def facts(config: Config, access_facts: AccessFacts, **overrides: object) -> Doc
         "config_hint": "",
         "env_current": True,
         "secrets": {},
-        "wireguard": True,
+        "tun": True,
         "nf_tables": True,
         "ip_forward": True,
         "listeners": [],

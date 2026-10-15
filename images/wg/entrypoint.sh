@@ -2,13 +2,28 @@
 # vibedpn/wg entrypoint: `server` (the VPS end of the tunnel) or `client` (uplink gateway with
 # a kill switch). A third mode, `health`, is what the compose healthcheck runs.
 #
-# wg-quick is deliberately not used: it needs bash, writes its own nftables table and hides what
+# The tunnel is AmneziaWG: `amneziawg-go` makes the interface (a TUN device, no kernel module) and
+# `awg` configures it. A config without obfuscation keys is plain WireGuard to the peer, so a file
+# from a WireGuard provider works as it is (docs/knowledge/wireguard/amnezia.md).
+#
+# awg-quick is deliberately not used: it needs bash, writes its own nftables table and hides what
 # it does behind PostUp hooks. Here the interface, the addresses, the routes and the firewall are
 # explicit, and the process stays in the foreground so Docker owns the lifecycle.
 set -eu
 
 IFACE=wg0
 CONF=/etc/wireguard/wg0.conf
+AWG=awg
+DAEMON=amneziawg-go
+# The control socket of the daemon: <RUNSTATEDIR of awg>/amneziawg/<iface>.sock (the image fixes
+# both ends). Server mode shares this directory with core, which reads the peers through it.
+SOCKET_DIR=/var/run/amneziawg
+SOCKET="$SOCKET_DIR/$IFACE.sock"
+# The daemon makes the interface and its socket within a moment; ten seconds is a hung start.
+DAEMON_POLL_SECONDS=0.2
+DAEMON_POLLS_PER_SECOND=5
+DAEMON_START_SECONDS=10
+DAEMON_PID=""
 STATE_DIR=/run/vibedpn-wg
 MODE_FILE="$STATE_DIR/mode"
 NFT_FAMILY=inet
@@ -16,7 +31,7 @@ NFT_TABLE=vibedpn_wg
 # Present while the tunnel of a client is down: core probes the gateway with ping, and a gateway
 # that is up with a dead peer behind it must look silent, or core would route the LAN into it.
 PROBE_TABLE=vibedpn_probe
-# `wg set fwmark` marks the encrypted packets WireGuard sends out itself. Both the policy
+# `awg set fwmark` marks the encrypted packets the tunnel sends out itself. Both the policy
 # routing of a full tunnel and the kill switch key on that mark; wg-quick uses the number as
 # the routing table id too, and so do we.
 FWMARK=51820
@@ -67,10 +82,12 @@ conf_field() {
   conf_values "$1" | tail -n 1
 }
 
-# The config without the keys wg-quick invented: wg(8) itself knows only PrivateKey, ListenPort
-# and FwMark in [Interface], and `wg setconf` fails on anything else.
+# The config without the keys wg-quick invented: awg(8) itself knows only PrivateKey, ListenPort,
+# FwMark and the AmneziaWG obfuscation keys (Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5, HeaderProtectionKey,
+# ContentPaddingAddition, timings, RandomTrailers, DisableCookies) in [Interface], and `awg setconf`
+# fails on anything else. The obfuscation keys pass through untouched: only the names below go.
 #
-# A client gets FwMark written in: the kill switch lets WireGuard's own encrypted packets out by
+# A client gets FwMark written in: the kill switch lets the tunnel's own encrypted packets out by
 # that mark, so it has to be set before the first handshake leaves, not after `setconf` returns.
 strip_conf() {
   awk -v fwmark="$1" '
@@ -110,7 +127,7 @@ interface_digest() {
     in_interface { print line }' "$CONF" 2>/dev/null | sha256sum | cut -d' ' -f1
 }
 
-# What `wg setconf` and `wg syncconf` get: the config without wg-quick keys, with FwMark for a
+# What `awg setconf` and `awg syncconf` get: the config without wg-quick keys, with FwMark for a
 # client.
 write_stripped() {
   if [ "$MODE" = client ]; then
@@ -122,7 +139,7 @@ write_stripped() {
 
 # Every AllowedIPs entry of every peer, one per line.
 allowed_ips() {
-  wg show "$IFACE" allowed-ips | awk '{ for (field = 2; field <= NF; field++) print $field }' |
+  "$AWG" show "$IFACE" allowed-ips | awk '{ for (field = 2; field <= NF; field++) print $field }' |
     tr ',' '\n' | sed '/^$/d'
 }
 
@@ -162,29 +179,68 @@ add_routes() {
 # Without keepalive an idle tunnel stops re-handshaking and the peer forgets the NAT mapping;
 # both the health check and the watchdog would then call a working tunnel dead.
 ensure_keepalive() {
-  wg show "$IFACE" persistent-keepalive | while read -r peer interval; do
+  "$AWG" show "$IFACE" persistent-keepalive | while read -r peer interval; do
     [ "$interval" = off ] || continue
     log "a peer has no PersistentKeepalive; setting ${KEEPALIVE_SECONDS}s"
-    wg set "$IFACE" peer "$peer" persistent-keepalive "$KEEPALIVE_SECONDS"
+    "$AWG" set "$IFACE" peer "$peer" persistent-keepalive "$KEEPALIVE_SECONDS"
   done
+}
+
+# A tunnel stopped for any reason leaves nothing behind it: the interface goes with the daemon that
+# holds its TUN device, and the socket is removed here in case the daemon was killed before it could.
+# shellcheck disable=SC2329  # called by teardown, which only the TERM/INT trap invokes
+stop_daemon() {
+  if [ -n "$DAEMON_PID" ]; then
+    kill "$DAEMON_PID" 2>/dev/null || true
+    wait "$DAEMON_PID" 2>/dev/null || true
+    DAEMON_PID=""
+  fi
+  ip link del "$IFACE" 2>/dev/null || true
+  rm -f "$SOCKET"
+}
+
+# The daemon runs in the foreground of its own process (WG_PROCESS_FOREGROUND stops it from forking
+# away, which would hide its death from this shell) and holds the TUN device of $IFACE.
+start_daemon() {
+  [ -c /dev/net/tun ] ||
+    die "cannot create $IFACE: /dev/net/tun is missing in the container (compose.yaml gives it as a device)"
+  WG_PROCESS_FOREGROUND=1 "$DAEMON" "$IFACE" &
+  DAEMON_PID=$!
+  polls=0
+  until [ -S "$SOCKET" ] && ip link show "$IFACE" >/dev/null 2>&1; do
+    kill -0 "$DAEMON_PID" 2>/dev/null ||
+      die "cannot create $IFACE: $DAEMON exited at start (needs NET_ADMIN and /dev/net/tun; \`vibedpn doctor\`)"
+    polls=$((polls + 1))
+    [ "$polls" -le $((DAEMON_START_SECONDS * DAEMON_POLLS_PER_SECOND)) ] ||
+      die "$DAEMON made no $IFACE within ${DAEMON_START_SECONDS}s"
+    sleep "$DAEMON_POLL_SECONDS"
+  done
+}
+
+# The default MTU leaves room for the padding AmneziaWG puts in front of every transport packet:
+# S4 bytes more on the wire than plain WireGuard, which the 1420 of WireGuard does not count.
+default_mtu() {
+  padding="$(conf_field S4)"
+  echo $((DEFAULT_MTU - ${padding:-0}))
 }
 
 setup_interface() {
   [ -r "$CONF" ] || die "$CONF is missing or unreadable; run \`vibedpn init\` on this box"
   CONF_DIGEST="$(conf_digest)"
   INTERFACE_DIGEST="$(interface_digest)"
-  # In mode server the interface lives in the host network namespace and outlives a container
-  # that was killed rather than stopped; recreating it is what makes a restart work at all.
-  # On a VibeDPN box wg0 belongs to VibeDPN — see docs/manuals/installation.md.
+  # In mode server the interface lives in the host network namespace. A container killed rather
+  # than stopped takes its daemon down and with it the TUN device, but an interface of an older
+  # (kernel WireGuard) image, or a socket file, can still be there; clearing them is what makes a
+  # restart work at all. On a VibeDPN box wg0 belongs to VibeDPN — see docs/manuals/installation.md.
   if ip link show "$IFACE" >/dev/null 2>&1; then
     log "$IFACE was left over by an earlier run; recreating it"
     ip link del "$IFACE"
   fi
-  ip link add "$IFACE" type wireguard ||
-    die "cannot create $IFACE: the host kernel needs the wireguard module (\`vibedpn doctor\`)"
+  rm -f "$SOCKET"
+  start_daemon
   stripped="$STATE_DIR/$IFACE.conf"
   write_stripped "$stripped"
-  wg setconf "$IFACE" "$stripped" || die "$CONF is not a valid WireGuard configuration"
+  "$AWG" setconf "$IFACE" "$stripped" || die "$CONF is not a valid WireGuard or AmneziaWG configuration"
   rm -f "$stripped"
   addresses="$(conf_values Address | tr ',\n' '  ')"
   [ -n "$addresses" ] || die "$CONF has no Address in its [Interface] section"
@@ -200,7 +256,7 @@ setup_interface() {
   done
   [ "$applied" -gt 0 ] || die "$CONF gives $IFACE no IPv4 address"
   mtu="$(conf_field MTU)"
-  ip link set mtu "${mtu:-$DEFAULT_MTU}" up dev "$IFACE"
+  ip link set mtu "${mtu:-$(default_mtu)}" up dev "$IFACE"
   add_routes
   if [ "$MODE" = client ]; then
     ensure_keepalive
@@ -261,9 +317,10 @@ sync_routes() {
 }
 
 # core re-renders wg0.conf when a peer is added or removed and when config.yaml changes. Peers
-# alone are applied in place: `wg syncconf` changes only what differs and keeps every other
-# session running (wg(8)). A changed [Interface] — address, port, key — needs the interface
-# rebuilt, so the container starts over.
+# alone are applied in place: `awg syncconf` changes only what differs and keeps every other
+# session running (wg(8), which awg(8) follows).
+# A changed [Interface] — address, port, key, obfuscation keys — needs the interface rebuilt,
+# so the container starts over.
 apply_config_change() {
   new_digest="$(conf_digest)"
   if [ "$(interface_digest)" != "$INTERFACE_DIGEST" ]; then
@@ -271,7 +328,7 @@ apply_config_change() {
   fi
   stripped="$STATE_DIR/$IFACE.conf"
   write_stripped "$stripped"
-  wg syncconf "$IFACE" "$stripped" || die "wg syncconf rejected $CONF; rebuilding the tunnel"
+  "$AWG" syncconf "$IFACE" "$stripped" || die "awg syncconf rejected $CONF; rebuilding the tunnel"
   rm -f "$stripped"
   sync_routes
   if [ "$MODE" = client ]; then
@@ -288,7 +345,7 @@ teardown() {
     nft delete table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null || true
     nft delete table "$NFT_FAMILY" "$PROBE_TABLE" 2>/dev/null || true
   fi
-  ip link del "$IFACE" 2>/dev/null || true
+  stop_daemon
   remove_policy_rules
   rm -f "$MODE_FILE"
   log "$IFACE is down"
@@ -334,16 +391,17 @@ interface_is_up() {
   [ -n "$(ip -o link show up dev "$IFACE" 2>/dev/null)" ]
 }
 
-# Nothing daemonizes: WireGuard lives in the kernel. The container stays in the foreground while
-# the interface is up and exits non-zero otherwise, so `restart: unless-stopped` sets the tunnel
-# up again from scratch — a downed interface has lost its routes and cannot just be raised.
+# The container stays in the foreground while the interface is up and exits non-zero otherwise, so
+# `restart: unless-stopped` sets the tunnel up again from scratch — a downed interface has lost its
+# routes and cannot just be raised. A daemon that died takes its TUN device with it, so the same
+# check sees that too.
 watch_interface() {
   started="$(date +%s)"
   while interface_is_up; do
     if [ "$MODE" = client ]; then
       gate_probes
     fi
-    # A client keeps the tunnel honest: wg resolves Endpoint once, so a VPS that moved to a new
+    # A client keeps the tunnel honest: the daemon resolves Endpoint once, so a VPS that moved to a new
     # address is only fixed by starting over — which is what a non-zero exit gets us.
     if [ "$MODE" = client ] && [ $(($(date +%s) - started)) -gt "$WATCHDOG_GRACE_SECONDS" ]; then
       age="$(handshake_age)"
@@ -364,7 +422,7 @@ watch_interface() {
 # Seconds since the newest handshake with any peer; when there was none at all, long enough to
 # count as dead.
 handshake_age() {
-  wg show "$IFACE" latest-handshakes |
+  "$AWG" show "$IFACE" latest-handshakes |
     awk -v now="$(date +%s)" '
       { if ($2 > newest) newest = $2 }
       # The parentheses matter: bare `print a > b` in awk redirects into a file named b.

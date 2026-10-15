@@ -28,7 +28,7 @@ from vibedpn.engine.router import (
 )
 from vibedpn.engine.wg import ServerFiles, add_peer, ensure_server
 
-FACTS = HostFacts(None, wireguard_module=True, ssh_ports=[22, 2222])
+FACTS = HostFacts(None, tun_device=True, ssh_ports=[22, 2222])
 NFT_PATH = "/usr/sbin/nft"
 
 
@@ -72,7 +72,7 @@ def test_ruleset_adds_owner_ports_and_drops_node_set_without_provider() -> None:
 
 
 def test_no_ruleset_for_lan_roles_or_disabled_firewall() -> None:
-    lan = HostFacts(Interface("eth0", IPv4Address("192.168.1.50"), 24), wireguard_module=True)
+    lan = HostFacts(Interface("eth0", IPv4Address("192.168.1.50"), 24), tun_device=True)
     home = build_config(Answers(Role.HOME, password="secret123"), lan)
     assert firewall_ruleset(home) is None
     assert firewall_ruleset(vps(enabled=False)) is None
@@ -111,7 +111,7 @@ def test_apply_firewall_removes_the_table_when_config_has_none(
 
     monkeypatch.setattr(router, "find_nft", lambda: "/usr/sbin/nft")
     monkeypatch.setattr(subprocess, "run", fake_run)
-    lan = HostFacts(Interface("eth0", IPv4Address("192.168.1.50"), 24), wireguard_module=True)
+    lan = HostFacts(Interface("eth0", IPv4Address("192.168.1.50"), 24), tun_device=True)
     home = build_config(Answers(Role.HOME, password="secret123"), lan)
     assert apply_firewall(vps(enabled=False)) is False
     assert apply_firewall(home) is False
@@ -349,7 +349,7 @@ def test_egress_nats_the_tunnel_subnet_whatever_the_firewall() -> None:
 
 
 def test_no_egress_without_a_tunnel() -> None:
-    lan = HostFacts(Interface("eth0", IPv4Address("192.168.1.50"), 24), wireguard_module=True)
+    lan = HostFacts(Interface("eth0", IPv4Address("192.168.1.50"), 24), tun_device=True)
     home = build_config(Answers(Role.HOME, password="secret123"), lan)
     assert egress_ruleset(home) is None
     assert docker_user_rules(home) == []
@@ -480,7 +480,7 @@ def test_apply_egress_refuses_an_unknown_iptables_failure(monkeypatch: pytest.Mo
 
 
 def test_egress_is_removed_with_the_tunnel(monkeypatch: pytest.MonkeyPatch) -> None:
-    lan = HostFacts(Interface("eth0", IPv4Address("192.168.1.50"), 24), wireguard_module=True)
+    lan = HostFacts(Interface("eth0", IPv4Address("192.168.1.50"), 24), tun_device=True)
     home = build_config(Answers(Role.HOME, password="secret123"), lan)
     calls = fake_iptables(
         monkeypatch, {"iptables-nft": SimpleNamespace(returncode=0, stdout=LISTING, stderr="")}

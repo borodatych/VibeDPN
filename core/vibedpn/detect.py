@@ -1,5 +1,5 @@
 """Host facts for ``vibedpn init``: the default-route interface with its IPv4 address and the
-presence of the WireGuard kernel module.
+presence of the TUN device the tunnel containers open.
 
 ``HostProbe`` does the I/O (``ip -j`` and ``/sys``); the parsers are pure and unit-tested on real
 iproute2 output kept in ``tests/fixtures``.
@@ -17,7 +17,7 @@ from ipaddress import IPv4Address, IPv4Interface, IPv4Network
 from pathlib import Path
 
 SYSFS_MODULES = Path("/sys/module")
-WIREGUARD_MODULE = "wireguard"
+TUN_DEVICE = Path("/dev/net/tun")
 SBIN_DIRS = ("/usr/local/sbin", "/usr/sbin", "/sbin")  # Debian keeps sbin off a user's PATH
 SSHD_CONFIG = Path("/etc/ssh/sshd_config")
 SSHD_CONFIG_ROOT = Path("/etc/ssh")  # relative Include paths resolve here (sshd_config(5))
@@ -90,6 +90,17 @@ def find_tool(name: str) -> str | None:
     """Locate an admin binary: sbin is off a non-root Debian PATH, so it is searched too."""
     search = os.pathsep.join([*os.get_exec_path(), *SBIN_DIRS])
     return shutil.which(name, path=search)
+
+
+def tun_device_present(path: Path = TUN_DEVICE) -> bool:
+    """Whether the TUN device node is there: compose.yaml passes it to every container that opens a
+    tunnel (the AmneziaWG daemon makes its interface from it, no kernel module is involved).
+
+    A node that is missing means the ``tun`` driver is not loaded (``modprobe tun``) or the host
+    does not offer one at all (a VPS container without TUN/TAP enabled). Docker would refuse to
+    start the containers on such a host, which is why ``vibedpn doctor`` says so before ``up``.
+    """
+    return path.is_char_device()
 
 
 def find_modprobe() -> str | None:
@@ -262,8 +273,8 @@ class HostProbe:
     def is_wireless(self, name: str) -> bool:
         return is_wireless(name)
 
-    def wireguard_module_present(self) -> bool | None:
-        return module_present(WIREGUARD_MODULE)
+    def tun_device_present(self) -> bool:
+        return tun_device_present()
 
     def ssh_ports(self) -> list[int]:
         """The daemon's own answer when it gives one, else its config files."""

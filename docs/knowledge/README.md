@@ -49,13 +49,17 @@
 
 ## wireguard
 
-- [container.md](wireguard/container.md) — модуль ядра хоста, `/dev/net/tun` только для
-  wireguard-go, `src_valid_mark`, пакеты Alpine (`wg` без wg-quick); что делает entrypoint
-  вместо wg-quick: ключи мимо `wg setconf`, fwmark-маршрутизация при `AllowedIPs 0.0.0.0/0`,
+- [amnezia.md](wireguard/amnezia.md) — AmneziaWG: цель VibeDPN — версия 3.1 (клиенты: AmneziaVPN 5.0.1.5+, приложения
+  Android/Windows 3.1); ключи `[Interface]` и границы значений (`Jc`, `S1`–`S4` ≥ 12 для защиты заголовков, `H1`–`H4`
+  без пересечений, `I1`–`I5`, `HeaderProtectionKey`); сокет демона `/var/run/amneziawg`, формат `awg show dump`,
+  в Alpine 3.24 пакета нет — сборка из исходников по SHA
+- [container.md](wireguard/container.md) — userspace-демон на `/dev/net/tun` вместо модуля ядра, общий каталог
+  сокета `wg-server` ↔ `core`, `src_valid_mark`, пакеты Alpine (`awg` без awg-quick); что делает entrypoint
+  вместо wg-quick: ключи мимо `awg setconf`, fwmark-маршрутизация при `AllowedIPs 0.0.0.0/0`,
   kill-switch в netns контейнера, «упал» = удалён или down; клиент не отвечает на ping ядра, пока
   handshake старше 180 с (`REJECT_AFTER_TIME`); ключи X25519 из `cryptography`
-  с clamping как у `wg genkey` (вектор RFC 7748); пиры на работающем сервере через `wg syncconf`,
-  синхронизация маршрутов, формат `wg show dump`, QR-код через `segno`
+  с clamping как у `wg genkey` (вектор RFC 7748); пиры на работающем сервере через `awg syncconf`,
+  синхронизация маршрутов, формат `awg show dump`, QR-код через `segno`
 - [tunnelAccess.md](wireguard/tunnelAccess.md) — панель ноды и API ядра на адресе туннеля:
   `IP_FREEBIND` для адреса, которого ещё нет, несколько uvicorn и сигналы, NodeUI за TCP-пробросом,
   файрвол «туннельная подсеть только через wg0»
@@ -100,7 +104,7 @@
 - [hostapdControl.md](linux/hostapdControl.md) — управляющий сокет hostapd: `ATTACH`, события `AP-STA-*`, перебор станций, общий каталог сокета двух контейнеров и молчание после перезапуска; `RELOAD_CONFIG` — новый пароль без перезапуска, все станции отключаются
 - [systemdPathUnit.md](linux/systemdPathUnit.md) — `.path` по изменению файла: `PathChanged=` на закрытие после записи, чего документация не обещает и как это обойдено
 - [iproute2Json.md](linux/iproute2Json.md) — поля `ip -j route/addr`, фикстуры для парсеров, проверка
-  модуля wireguard, `is_global` против TEST-NET и CGNAT
+  модуля (и узла `/dev/net/tun`), `is_global` против TEST-NET и CGNAT
 - [doctorProbes.md](linux/doctorProbes.md) — формат `ss -lntup`, модуль через sysfs или `modprobe -n`,
   Docker включает `ip_forward` и одновременно ставит DROP на FORWARD (важно для Stage 4)
 - [nftables.md](linux/nftables.md) — атомарная идемпотентная загрузка таблицы, `nft -c` требует

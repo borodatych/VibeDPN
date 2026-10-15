@@ -1,44 +1,42 @@
 # WireGuard в контейнере (образ `vibedpn/wg`)
 
-## [архитектура] Модуль ядра — хостовый, /dev/net/tun не нужен
+## [архитектура] Userspace-демон на /dev/net/tun, модуль ядра не нужен
 
-**Контекст:** образ `vibedpn/wg` на Alpine для аплинка `vps` и сервера на VPS.
-**Суть:** WireGuard в mainline с Linux 5.6; интерфейс создаётся через netlink
-(`ip link add wg0 type wireguard`) и не трогает `/dev/net/tun` — он нужен только userspace
-`wireguard-go` (`tun_linux.go` открывает `/dev/net/tun`). Контейнеру хватает `NET_ADMIN`;
-`SYS_MODULE` + `/lib/modules` — только если модуль грузить изнутри (мы не грузим: Debian 12/13 и ядра
-Raspberry Pi собирают `CONFIG_WIREGUARD=m`, см. [platform/debianPi.md](../platform/debianPi.md)).
-Sysctl `net.ipv4.conf.all.src_valid_mark=1` нужен, когда маршрутизация идёт по fwmark (так делает
-wg-quick для `AllowedIPs 0.0.0.0/0`): ядро учитывает метку в reverse-path проверке.
+**Контекст:** образ `vibedpn/wg` на Alpine для аплинка `vps`, именованных выходов `wg-<имя>` и сервера на VPS.
+**Суть:** туннель — это AmneziaWG (см. [amnezia.md](amnezia.md)): интерфейс создаёт userspace-демон `amneziawg-go` на
+TUN-устройстве, настраивает его `awg`. Модуль ядра `wireguard` не используется — раньше так и было (`ip link add wg0 type
+wireguard`), но модуль не умеет обфускацию. Отсюда требования к контейнеру: `NET_ADMIN` и устройство `/dev/net/tun`
+(`devices` в `compose.yaml` у `wg-client` и `wg-server`; `wg-<имя>` наследуют его через `extends`). `SYS_MODULE` и `/lib/modules`
+не нужны. На хосте нужен узел `/dev/net/tun` (драйвер `tun`): `vibedpn doctor` проверяет его, строка `tun`.
+Чистый WireGuard-файл (без ключей обфускации) работает как есть: стенд рукопожимается с ванильным `wireguard-go` из Alpine.
+Sysctl `net.ipv4.conf.all.src_valid_mark=1` нужен, когда маршрутизация идёт по fwmark (так делает wg-quick для
+`AllowedIPs 0.0.0.0/0`): ядро учитывает метку в reverse-path проверке. Демон ставит метку на свои пакеты сам (`SO_MARK`).
 `net.ipv4.ip_forward=1` — для режима шлюза; смена сбрасывает per-interface настройки.
-**Пакеты Alpine 3.24:** `wireguard-tools` — метапакет из `wireguard-tools-wg` (только `/usr/bin/wg`,
-зависит лишь от musl) и `wireguard-tools-wg-quick` (тянет `bash`, `iproute2`, `openresolv`);
-`nftables` 1.1.6; `wireguard-go` — в community. Берём `wireguard-tools-wg iproute2 nftables`:
-маршруты и файрвол entrypoint задаёт явно, wg-quick с его собственной таблицей
-`wg-quick-<iface>` в nft не нужен. Alpine 3.24.1 (2026-06-09), поддержка до 2028-06-01.
-**Источники (модуль и пакеты):** https://lists.zx2c4.com/pipermail/wireguard/2020-March/005206.html ,
-https://git.zx2c4.com/wireguard-tools/plain/src/wg-quick/linux.bash ,
-https://raw.githubusercontent.com/WireGuard/wireguard-go/master/tun/tun_linux.go ,
-https://raw.githubusercontent.com/linuxserver/docker-wireguard/master/README.md ,
+**Управляющий сокет:** `/var/run/amneziawg/wg0.sock` внутри контейнера. У `wg-server` (сеть хоста) этот каталог смонтирован с
+хоста `/run/vibedpn/amneziawg` и в `core` (`compose.yaml`): `core` читает живых пиров командой `awg show wg0 dump`, не заходя в
+контейнер. `/run`, а не `./data`: сокет — состояние времени выполнения, в резервную копию ему не место.
+**Пакеты Alpine 3.24:** `amneziawg-go` и `amneziawg-tools` в нём нет, образ собирает их из исходников по SHA коммита в
+многоэтапном `Dockerfile`; `iproute2` и `nftables` 1.1.6 — из пакетов. Alpine 3.24.1 (2026-06-09), поддержка до 2028-06-01.
+**Источники (TUN, Alpine):** https://www.kernel.org/doc/html/latest/networking/tuntap.html ,
 https://raw.githubusercontent.com/torvalds/linux/master/Documentation/networking/ip-sysctl.rst ,
-https://pkgs.alpinelinux.org/package/v3.24/main/x86_64/wireguard-tools ,
-https://pkgs.alpinelinux.org/package/v3.24/main/x86_64/wireguard-tools-wg-quick ,
-https://pkgs.alpinelinux.org/package/v3.24/main/x86_64/nftables , https://alpinelinux.org/releases/ .
+https://pkgs.alpinelinux.org/package/v3.24/main/x86_64/nftables , https://alpinelinux.org/releases/ ,
+https://git.zx2c4.com/wireguard-tools/plain/src/wg-quick/linux.bash (набор ключей, которые придумал wg-quick).
 
 ## [провайдер] Свой entrypoint вместо wg-quick: что нужно повторить руками
 
 **Контекст:** Stage 3, чекбокс 1 — образ `vibedpn/wg`, режимы `server` и `client`.
-**Суть:** `wg setconf` понимает только то, что описано в `wg(8)`: в `[Interface]` — `PrivateKey`,
-`ListenPort`, `FwMark`, в `[Peer]` — `PublicKey`, `PresharedKey`, `AllowedIPs`, `Endpoint`,
+**Суть:** `awg setconf` (как и `wg setconf`) понимает только то, что описано в `wg(8)`: в `[Interface]` — `PrivateKey`,
+`ListenPort`, `FwMark` и ключи AmneziaWG (`Jc`, `Jmin`, `Jmax`, `S1`–`S4`, `H1`–`H4`, `I1`–`I5` и остальные из
+[amnezia.md](amnezia.md)), в `[Peer]` — `PublicKey`, `PresharedKey`, `AllowedIPs`, `Endpoint`,
 `PersistentKeepalive`. Остальные ключи привычного `.conf` (`Address`, `MTU`, `DNS`, `Table`,
 `PreUp/PostUp/PreDown/PostDown`, `SaveConfig`) придумал `wg-quick` — он их вырезает перед
 `setconf` и исполняет сам; наш entrypoint делает то же (список ключей — из `parse_options`
-в `wg-quick/linux.bash`). Ключи регистронезависимы, разделитель — `=` с любыми пробелами и
+в `wg-quick/linux.bash`), а ключи AmneziaWG пропускает нетронутыми: вырезается только перечисленное. Ключи регистронезависимы, разделитель — `=` с любыми пробелами и
 табами, комментарий — от `#` до конца строки: всё это встречается в реальных `.conf`, поэтому
-разбор в тесте проверяется именно такой строкой. Дальше руками: `ip link add wg0 type
-wireguard`, `wg setconf`, `ip address add` на каждый `Address`, `ip link set mtu … up`
-(дефолт 1420), маршрут на каждый `AllowedIPs` (`wg show wg0 allowed-ips` — источник правды
-после `setconf`).
+разбор в тесте проверяется именно такой строкой. Дальше руками: запуск `amneziawg-go wg0` (в переднем плане, `WG_PROCESS_FOREGROUND=1`) и ожидание
+интерфейса с сокетом, `awg setconf`, `ip address add` на каждый `Address`, `ip link set mtu … up`
+(дефолт `1420 − S4`: на проводе транспортный пакет длиннее на `S4` байт), маршрут на каждый `AllowedIPs`
+(`awg show wg0 allowed-ips` — источник правды после `setconf`).
 **`AllowedIPs = 0.0.0.0/0` требует policy routing, а не default route:** обычный `default dev
 wg0` отправил бы в туннель и сами зашифрованные пакеты. Приём wg-quick (`add_default`):
 `wg set wg0 fwmark 51820`, `ip route replace default dev wg0 table 51820`, `ip rule add not
@@ -60,9 +58,9 @@ mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT`). �
 прошёл). В POSIX `sh` сигнал во время `sleep` доходит до обработчика только если спать в фоне
 и ждать через `wait`.
 **Метку ставим конфигом, а не после `setconf`:** kill-switch выпускает наружу только помеченные
-пакеты, поэтому `FwMark = 51820` дописывается в `[Interface]` того, что уходит в `wg setconf`
-(`wg(8)` этот ключ понимает; `wg show wg0 fwmark` → `0xca6c`). Иначе при `AllowedIPs` без
-`0.0.0.0/0` метки не было бы вовсе (`wg show wg0 fwmark` → `off`), и сплит-туннель либо не
+пакеты, поэтому `FwMark = 51820` дописывается в `[Interface]` того, что уходит в `awg setconf`
+(`wg(8)` этот ключ понимает; `awg show wg0 fwmark` → `0xca6c`). Иначе при `AllowedIPs` без
+`0.0.0.0/0` метки не было бы вовсе (`awg show wg0 fwmark` → `off`), и сплит-туннель либо не
 поднимался вовсе, либо жил на случайности. Проверено на прежнем варианте: конфиг без
 `PersistentKeepalive` не давал ни одного handshake — интерфейс up, контейнер считает себя
 здоровым, связи нет; конфиг с keepalive работал только потому, что первый handshake успевал уйти
@@ -72,14 +70,15 @@ mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT`). �
 принимается и для несуществующего устройства, окна без правил не остаётся.
 **Keepalive обязателен для клиента-шлюза:** он за NAT, и без `PersistentKeepalive` простаивающий
 туннель перестаёт пересогласовываться, а пир забывает трансляцию. Пирам без ключа entrypoint
-проставляет 25 с сам (`wg set … persistent-keepalive`) и пишет об этом в лог.
+проставляет 25 с сам (`awg set … persistent-keepalive`) и пишет об этом в лог.
 **Сторож смотрит не только на интерфейс:** `wg` резолвит `Endpoint` один раз, поэтому сменивший
 адрес VPS чинится только пересозданием туннеля. У клиента сторож после минуты отсрочки проверяет
 возраст handshake тем же порогом и выходит ненулевым кодом — рестарт заодно резолвит имя заново.
-**Остаток в netns хоста:** `wg-server` работает с `network_mode: host`, wg0 живёт в netns самой
-VPS и переживает контейнер, убитый SIGKILL или упавший после создания интерфейса. Тогда
-`ip link add` отвечает «File exists», и контейнер уходит в вечный рестарт с сообщением про
-модуль ядра (проверено исполнением). Поэтому перед созданием интерфейс сносится, если остался.
+**Остаток в netns хоста:** `wg-server` работает с `network_mode: host`. С ядерным модулем wg0 жил в netns самой VPS и переживал
+контейнер, убитый SIGKILL: `ip link add` отвечал «File exists» и контейнер уходил в вечный рестарт (проверено исполнением).
+С демоном TUN-интерфейс умирает вместе с процессом, а остаётся файл сокета в смонтированном каталоге и — после обновления с
+прежнего образа — ядерный `wg0`. Поэтому перед запуском демона entrypoint сносит интерфейс `wg0`, если он есть, и удаляет сокет
+(стенд: `tunnel.sh` убивает контейнер, подкладывает `wg0` типа dummy, перезапускает и проверяет, что `wg0` — TUN демона).
 **Сторож следит и за самим конфигом:** entrypoint запоминает sha256 `wg0.conf`, из которого
 собрал интерфейс, и выходит ненулевым кодом, если файл сменился. `depends_on` — механизм Compose и
 соблюдается при старте через `docker compose up`; когда после перезагрузки контейнеры поднимает
@@ -91,7 +90,7 @@ VPS и переживает контейнер, убитый SIGKILL или уп
 **Грабля awk:** `print a > b` — это перенаправление вывода в файл `b`, а не сравнение; тернарник
 в `print` нужно брать в скобки, иначе функция молча отдаёт пустую строку (так сломался расчёт
 возраста handshake, healthcheck стал падать при живом туннеле).
-**Healthcheck:** client — handshake не старше 180 с (`wg show wg0 latest-handshakes`; пир с
+**Healthcheck:** client — handshake не старше 180 с (`awg show wg0 latest-handshakes`; пир с
 `PersistentKeepalive` пересогласуется примерно раз в две минуты), server — достаточно поднятого
 wg0, пиров может не быть.
 **Пробник ядра видит живой путь, а не живой контейнер (решение 32):** ядро проверяет шлюз ping-ом, и
@@ -139,15 +138,15 @@ https://cryptography.io/en/latest/hazmat/primitives/asymmetric/x25519/ ,
 https://man7.org/linux/man-pages/man8/wg.8.html (genkey, pubkey),
 https://docs.kernel.org/admin-guide/ext4.html (`auto_da_alloc`); исполнение 2026-09-12.
 
-## [провайдер] Пиры на работающем сервере: `wg syncconf`, маршруты, `wg show dump`, QR
+## [провайдер] Пиры на работающем сервере: `awg syncconf`, маршруты, `awg show dump`, QR
 
 **Контекст:** Stage 3, чекбокс 3 — `vibedpn peer add|rm|list|export`.
-**Суть:** `wg syncconf` меняет только то, что отличается от файла, и не рвёт текущие сессии (wg(8));
+**Суть:** `awg syncconf` (как `wg syncconf`) меняет только то, что отличается от файла, и не рвёт текущие сессии (wg(8));
 пира, которого в файле больше нет, он с интерфейса снимает. Проверено `tests/wg/tunnel.sh`:
 добавленный и затем удалённый пир появляется и исчезает, у уже подключённого клиента пинг не
 прерывается, контейнер не перезапускается. Entrypoint отличает смену пиров от смены `[Interface]`
-по хешу этой секции: пиры — `syncconf` на месте, интерфейс — перезапуск. **Хеш считается по
-нормализованным строкам** — без комментариев и пустых строк, как секцию читает `wg`. Ядро рендерит
+по хешу этой секции: пиры — `syncconf` на месте, интерфейс (в том числе ключи обфускации) — перезапуск. **Хеш считается по
+нормализованным строкам** — без комментариев и пустых строк, как секцию читает `awg`. Ядро рендерит
 сервер без пиров как одну `[Interface]`, а первый пир приходит с пустой строкой перед `[Peer]`; по
 сырым строкам эта пустая строка попадала в «секцию интерфейса», и сервер перезапускался на первом
 добавленном и последнем удалённом пире. Поймал это smoke с `vibedpn peer add`, а `tunnel.sh` с уже
@@ -157,11 +156,11 @@ https://docs.kernel.org/admin-guide/ext4.html (`auto_da_alloc`); исполне�
 `ip route show` печатает маршрут на хост **без** `/32` (`10.78.0.2 scope link`), а маршрут подсети
 интерфейса помечен `proto kernel` — его не трогаем. `ip rule add` при повторе заводит дубликат,
 поэтому перед добавлением правила снимаются.
-**`wg show wg0 dump`:** поля через табуляцию. Первая строка — сам интерфейс: закрытый ключ,
-открытый ключ, порт, fwmark. Дальше по строке на пира: открытый ключ, PSK или `(none)`, endpoint
+**`awg show wg0 dump`:** поля через табуляцию. Первая строка — сам интерфейс: закрытый ключ,
+открытый ключ, порт, ключи обфускации (с `HeaderProtectionKey`), fwmark (точный перечень — [amnezia.md](amnezia.md)). Дальше по строке на пира: открытый ключ, PSK или `(none)`, endpoint
 или `(none)`, allowed-ips, последний handshake в unix-секундах (0 — не было), rx, tx, keepalive
-или `off`. Ядро живёт в netns хоста, поэтому с `wireguard-tools` в образе видит wg0 сервера; первую
-строку с закрытым ключом разбор отбрасывает сразу.
+или `off`. Ядро читает их через сокет демона `wg-server` из общего каталога (`/run/vibedpn/amneziawg`), а не через
+netns хоста; первую строку с закрытыми ключами разбор отбрасывает сразу.
 **QR-код:** `segno` 1.6.6 (BSD, без зависимостей), `QRCode.terminal(out, border, compact)`;
 файл пира около 240 байт даёт QR версии 10 — с `compact=True` это 33 строки по 65 символов.
 **Реестр и `wg0.conf` меняются одной операцией:** сначала пишется конфиг сервера, затем реестр;
@@ -178,6 +177,6 @@ https://docs.kernel.org/admin-guide/ext4.html (`auto_da_alloc`); исполне�
 числами; её владелец правит в `config.yaml`.
 **Применение:** `core/vibedpn/engine/wg.py` (реестр, `parse_wg_dump`), `images/wg/entrypoint.sh`
 (`apply_config_change`, `sync_routes`), `core/vibedpn/tunnel_view.py`.
-**Источники:** https://man7.org/linux/man-pages/man8/wg.8.html (syncconf, show dump),
-https://segno.readthedocs.io/en/latest/api.html (terminal), https://pypi.org/project/segno/ ;
+**Источники:** https://man7.org/linux/man-pages/man8/wg.8.html (syncconf, show dump; `awg` следует ему, формат первой строки
+`awg show dump` — [amnezia.md](amnezia.md)), https://segno.readthedocs.io/en/latest/api.html (terminal), https://pypi.org/project/segno/ ;
 исполнение 2026-09-12.

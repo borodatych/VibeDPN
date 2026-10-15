@@ -20,7 +20,7 @@ runner = CliRunner()
 
 class FakeProbe:
     interface: Interface | None = Interface("eth0", IPv4Address("192.168.1.50"), 24)
-    wireguard: bool | None = True
+    tun: bool = True
     memory: int | None = 8 * 1024**3
 
     def default_interface(self) -> Interface | None:
@@ -33,8 +33,8 @@ class FakeProbe:
         wifi = Interface("wlan0", IPv4Address("192.168.50.1"), 24)
         return [i for i in (self.interface, wifi) if i is not None]
 
-    def wireguard_module_present(self) -> bool | None:
-        return self.wireguard
+    def tun_device_present(self) -> bool:
+        return self.tun
 
     def ssh_ports(self) -> list[int]:
         return [22]
@@ -46,7 +46,7 @@ class FakeProbe:
 @pytest.fixture(autouse=True)
 def fake_probe(monkeypatch: pytest.MonkeyPatch) -> type[FakeProbe]:
     FakeProbe.interface = Interface("eth0", IPv4Address("192.168.1.50"), 24)
-    FakeProbe.wireguard = True
+    FakeProbe.tun = True
     FakeProbe.memory = 8 * 1024**3
     monkeypatch.setattr(cli, "HostProbe", FakeProbe)
     return FakeProbe
@@ -225,10 +225,8 @@ def test_init_refuses_second_run_without_force_before_asking(tmp_path: Path) -> 
     assert (box / "config.yaml.bak").is_file()
 
 
-def test_init_warns_when_wireguard_cannot_be_checked(
-    tmp_path: Path, fake_probe: type[FakeProbe]
-) -> None:
-    fake_probe.wireguard = None
+def test_init_warns_without_tun_device(tmp_path: Path, fake_probe: type[FakeProbe]) -> None:
+    fake_probe.tun = False
     result = runner.invoke(
         cli.app,
         [
@@ -244,27 +242,7 @@ def test_init_warns_when_wireguard_cannot_be_checked(
         ],
     )
     assert result.exit_code == 0, result.output
-    assert "could not check the wireguard kernel module" in result.output
-
-
-def test_init_warns_without_wireguard_module(tmp_path: Path, fake_probe: type[FakeProbe]) -> None:
-    fake_probe.wireguard = False
-    result = runner.invoke(
-        cli.app,
-        [
-            "init",
-            "--role",
-            "vps",
-            "--endpoint",
-            "203.0.113.7",
-            "--password-file",
-            str(password_file(tmp_path)),
-            "--dir",
-            str(tmp_path / "box"),
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    assert "wireguard kernel module" in result.output
+    assert "/dev/net/tun is missing" in result.output
 
 
 def test_init_fails_without_interface_before_asking_password(

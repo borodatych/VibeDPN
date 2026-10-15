@@ -1,10 +1,28 @@
 #!/bin/sh
-# A real WireGuard tunnel between two vibedpn/wg containers: handshake, traffic through the
-# tunnel, and the client kill switch (nothing leaves except the tunnel, even when it breaks).
+# A real tunnel between two vibedpn/wg containers: handshake, traffic through the tunnel, and the
+# client kill switch (nothing leaves except the tunnel, even when it breaks).
 #
-# Needs a Linux host whose kernel has the wireguard module and a Docker daemon. The image is
-# taken from VIBEDPN_WG_IMAGE (default: the tag the repository builds).
+# The whole scenario runs once per flavor of the config files:
+#   plain  a WireGuard file as a provider hands it out: no obfuscation keys at all
+#   awg2   AmneziaWG 2.0 keys: junk packets, paddings S1-S4, header ranges H1-H4, a signature packet
+#   awg3   AmneziaWG 3.1 keys: header protection, content padding, random trailers, cookies off
+# A tunnel whose obfuscation keys differ from the server's must never handshake (checked in the
+# awg flavors), which is the proof that the keys act on the wire and are not just accepted.
+#
+# Needs a Linux host with /dev/net/tun and a Docker daemon (the daemon makes the interface from the
+# TUN device, no kernel module is involved). The image is taken from VIBEDPN_WG_IMAGE (default: the
+# tag the repository builds). VIBEDPN_WG_FLAVOR runs one flavor instead of all.
 set -eu
+
+FLAVORS="plain awg2 awg3"
+if [ -z "${VIBEDPN_WG_FLAVOR:-}" ]; then
+  for flavor in $FLAVORS; do
+    echo "######## flavor $flavor"
+    VIBEDPN_WG_FLAVOR="$flavor" sh "$0"
+  done
+  exit 0
+fi
+FLAVOR="$VIBEDPN_WG_FLAVOR"
 
 IMAGE="${VIBEDPN_WG_IMAGE:-ghcr.io/borodatych/vibedpn-wg:test}"
 NETWORK=vibedpn-wg-test
@@ -26,7 +44,25 @@ CLIENT_WG=10.78.0.2
 SPLIT_WG=10.78.0.3
 EXTRA_WG=10.78.0.9
 LISTEN_PORT=51820
-WORK_DIR="$(mktemp -d)"
+TUN_DEVICE=/dev/net/tun
+# The control socket of the daemon; compose.yaml shares this directory of wg-server with core.
+SOCKET_DIR=/var/run/amneziawg
+# Peer whose obfuscation keys differ from the server's: it must never handshake (awg flavors).
+MISMATCH_IP=10.99.0.6
+MISMATCH_WG=10.78.0.5
+MISMATCH_SECONDS=20
+# Vanilla WireGuard (wireguard-go of Alpine, not our daemon): the plain flavor has to speak to it.
+VANILLA_IP=10.99.0.7
+VANILLA_WG=10.78.0.7
+VANILLA_CLIENT_IP=10.99.0.8
+VANILLA_CLIENT_WG=10.78.0.8
+VANILLA_IMAGE=alpine:3.24
+VANILLA_TIMEOUT=90
+# What the entrypoint takes off the 1420 of a tunnel that gives no MTU: S4 bytes of padding in
+# front of every transport packet. 0 for a plain file.
+DEFAULT_MTU=1420
+# TMPDIR must be a directory the Docker daemon sees (on macOS with a VM: under the shared home)
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vibedpn-wg.XXXXXX")"
 HANDSHAKE_TIMEOUT=30
 OUTSIDE=8.8.8.8  # never reached: either the kill switch drops it or the tunnel has no exit
 
@@ -35,8 +71,8 @@ log() {
 }
 
 cleanup() {
-  docker rm -f vibedpn-wg-server vibedpn-wg-client vibedpn-wg-split vibedpn-wg-host vibedpn-wg-empty vibedpn-wg-lan vibedpn-wg-router \
-    >/dev/null 2>&1 || true
+  docker rm -f vibedpn-wg-server vibedpn-wg-client vibedpn-wg-split vibedpn-wg-host vibedpn-wg-empty vibedpn-wg-lan \
+    vibedpn-wg-router vibedpn-wg-mismatch vibedpn-wg-vanilla vibedpn-wg-vanilla-client >/dev/null 2>&1 || true
   # The host-namespace part of the test may leave wg0 behind; remove it without needing root.
   docker run --rm --network host --cap-add NET_ADMIN --entrypoint ip "$IMAGE" \
     link del wg0 >/dev/null 2>&1 || true
@@ -45,9 +81,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-wg_tool() {
-  # -i: `wg pubkey` reads the key on stdin.
-  docker run --rm -i --entrypoint wg "$IMAGE" "$@"
+awg_tool() {
+  # -i: `awg pubkey` reads the key on stdin.
+  docker run --rm -i --entrypoint awg "$IMAGE" "$@"
 }
 
 in_client() {
@@ -68,19 +104,76 @@ fails() {
   fi
 }
 
-log "keys"
-server_key="$(wg_tool genkey)"
-client_key="$(wg_tool genkey)"
-split_key="$(wg_tool genkey)"
-server_pub="$(printf '%s' "$server_key" | wg_tool pubkey)"
-client_pub="$(printf '%s' "$client_key" | wg_tool pubkey)"
-split_pub="$(printf '%s' "$split_key" | wg_tool pubkey)"
+log "keys (flavor $FLAVOR)"
+server_key="$(awg_tool genkey)"
+client_key="$(awg_tool genkey)"
+split_key="$(awg_tool genkey)"
+mismatch_key="$(awg_tool genkey)"
+server_pub="$(printf '%s' "$server_key" | awg_tool pubkey)"
+client_pub="$(printf '%s' "$client_key" | awg_tool pubkey)"
+split_pub="$(printf '%s' "$split_key" | awg_tool pubkey)"
+mismatch_pub="$(printf '%s' "$mismatch_key" | awg_tool pubkey)"
+header_key="$(awg_tool genkey)"
+
+# The obfuscation keys of the [Interface] section, the same on both ends. Values are not the ones a
+# box generates: they only have to be far from the defaults, valid for awg and distinct per type
+# (the size of a handshake message is 148 + S1, 92 + S2, 64 + S3, and S1 + 148 must not equal S2 + 92).
+awg_interface_keys() {
+  case "$FLAVOR" in
+    plain) ;;
+    awg2)
+      cat <<KEYS
+Jc = 4
+Jmin = 40
+Jmax = 70
+S1 = 31
+S2 = 45
+S3 = 17
+S4 = 23
+H1 = 100000-200000
+H2 = 300000-400000
+H3 = 500000-600000
+H4 = 700000-800000
+I1 = <b 0xc0000000><r 16><t>
+KEYS
+      ;;
+    awg3)
+      cat <<KEYS
+Jc = 4
+Jmin = 40
+Jmax = 70
+S1 = 32
+S2 = 32
+S3 = 32
+S4 = 32
+H1 = 1
+H2 = 2
+H3 = 3
+H4 = 4
+HeaderProtectionKey = $header_key
+ContentPaddingAddition = 8-24
+RandomTrailers = on
+DisableCookies = on
+KEYS
+      ;;
+    *)
+      echo "unknown flavor $FLAVOR" >&2
+      exit 64
+      ;;
+  esac
+}
+case "$FLAVOR" in
+  plain) S4_PADDING=0 ;;
+  awg2) S4_PADDING=23 ;;
+  awg3) S4_PADDING=32 ;;
+esac
 
 cat >"$WORK_DIR/server.conf" <<EOF
 [Interface]
 Address = $SERVER_WG/24
 ListenPort = $LISTEN_PORT
 PrivateKey = $server_key
+$(awg_interface_keys)
 
 [Peer]
 PublicKey = $client_pub
@@ -89,6 +182,10 @@ AllowedIPs = $CLIENT_WG/32
 [Peer]
 PublicKey = $split_pub
 AllowedIPs = $SPLIT_WG/32
+
+[Peer]
+PublicKey = $mismatch_pub
+AllowedIPs = $MISMATCH_WG/32
 EOF
 
 # A home box that only wants to reach the VPS, not to exit through it: no 0.0.0.0/0, and no
@@ -98,6 +195,7 @@ cat >"$WORK_DIR/split.conf" <<EOF
 [Interface]
 Address = $SPLIT_WG/32
 PrivateKey = $split_key
+$(awg_interface_keys)
 
 [Peer]
 PublicKey = $server_pub
@@ -113,7 +211,8 @@ Address = fd00::2/128
 	Address=$CLIENT_WG/32
 PrivateKey = $client_key
 MTU = 1400
-DNS = 10.78.0.1   # a wg-quick key that wg setconf must never see
+DNS = 10.78.0.1   # a wg-quick key that awg setconf must never see
+$(awg_interface_keys)
 
 [Peer]
 PublicKey = $server_pub
@@ -136,14 +235,14 @@ mkdir -m 700 "$SRV_DIR"
 cp "$WORK_DIR/server.conf" "$SRV_DIR/wg0.conf"
 chmod 600 "$SRV_DIR/wg0.conf"
 docker run -d --name vibedpn-wg-server --network "$NETWORK" --ip "$SERVER_IP" \
-  --restart unless-stopped --cap-add NET_ADMIN --sysctl net.ipv4.ip_forward=1 \
+  --restart unless-stopped --cap-add NET_ADMIN --device "$TUN_DEVICE" --sysctl net.ipv4.ip_forward=1 \
   -v "$SRV_DIR:/etc/wireguard:ro" "$IMAGE" server >/dev/null
 docker run -d --name vibedpn-wg-client --network "$NETWORK" --ip "$CLIENT_IP" \
-  --restart unless-stopped --cap-add NET_ADMIN --sysctl net.ipv4.ip_forward=1 \
+  --restart unless-stopped --cap-add NET_ADMIN --device "$TUN_DEVICE" --sysctl net.ipv4.ip_forward=1 \
   --sysctl net.ipv4.conf.all.src_valid_mark=1 \
   -v "$WORK_DIR/client.conf:/etc/wireguard/wg0.conf:ro" "$IMAGE" client >/dev/null
 docker run -d --name vibedpn-wg-split --network "$NETWORK" --ip "$SPLIT_IP" \
-  --restart unless-stopped --cap-add NET_ADMIN --sysctl net.ipv4.ip_forward=1 \
+  --restart unless-stopped --cap-add NET_ADMIN --device "$TUN_DEVICE" --sysctl net.ipv4.ip_forward=1 \
   --sysctl net.ipv4.conf.all.src_valid_mark=1 \
   -v "$WORK_DIR/split.conf:/etc/wireguard/wg0.conf:ro" "$IMAGE" client >/dev/null
 
@@ -165,7 +264,7 @@ await_health() {
 await_server_peer() {
   elapsed=0
   while [ "$elapsed" -lt "$HANDSHAKE_TIMEOUT" ]; do
-    if docker exec vibedpn-wg-server wg show wg0 peers | grep -qxF "$2"; then
+    if docker exec vibedpn-wg-server awg show wg0 peers | grep -qxF "$2"; then
       found=present
     else
       found=absent
@@ -197,12 +296,12 @@ log "handshake"
 await_health vibedpn-wg-client
 in_client /usr/local/bin/entrypoint.sh health
 docker exec vibedpn-wg-server /usr/local/bin/entrypoint.sh health
-docker exec vibedpn-wg-server wg show wg0 latest-handshakes
+docker exec vibedpn-wg-server awg show wg0 latest-handshakes
 
 log "a split tunnel handshakes too: the kill switch must not strangle its own packets"
 await_health vibedpn-wg-split
 docker exec vibedpn-wg-split ping -c 2 -W 2 "$SERVER_WG"
-docker exec vibedpn-wg-split wg show wg0 persistent-keepalive | grep -q 25
+docker exec vibedpn-wg-split awg show wg0 persistent-keepalive | grep -q 25
 if docker exec vibedpn-wg-split ip route show table "$LISTEN_PORT" | grep -q default; then
   echo "FAIL: a split tunnel must not take over the default route" >&2
   exit 1
@@ -211,6 +310,50 @@ fi
 log "traffic through the tunnel"
 in_client ping -c 2 -W 2 "$SERVER_WG"
 docker exec vibedpn-wg-server ping -c 2 -W 2 "$CLIENT_WG"
+
+log "a tunnel that gives no MTU gets $DEFAULT_MTU less the S4 padding of its transport packets"
+want_mtu=$((DEFAULT_MTU - S4_PADDING))
+docker exec vibedpn-wg-split ip -o link show wg0 | grep -q "mtu $want_mtu " ||
+  { echo "FAIL: the split tunnel has no MTU $want_mtu" >&2; exit 1; }
+docker exec vibedpn-wg-server ip -o link show wg0 | grep -q "mtu $want_mtu " ||
+  { echo "FAIL: the server has no MTU $want_mtu" >&2; exit 1; }
+
+if [ "$FLAVOR" != plain ]; then
+  log "the obfuscation keys are in effect: the server reports them, a peer without them never handshakes"
+  docker exec vibedpn-wg-server awg show wg0 jc | grep -qx 4
+  docker exec vibedpn-wg-server awg show wg0 s4 | grep -qx "$S4_PADDING"
+  cat >"$WORK_DIR/mismatch.conf" <<EOF
+[Interface]
+Address = $MISMATCH_WG/24
+PrivateKey = $mismatch_key
+
+[Peer]
+PublicKey = $server_pub
+Endpoint = $SERVER_IP:$LISTEN_PORT
+AllowedIPs = 10.78.0.0/24
+PersistentKeepalive = 5
+EOF
+  chmod 600 "$WORK_DIR/mismatch.conf"
+  # mode server: no kill switch and no watchdog, so the container lives on without a handshake
+  docker run -d --name vibedpn-wg-mismatch --network "$NETWORK" --ip "$MISMATCH_IP" --cap-add NET_ADMIN \
+    --device "$TUN_DEVICE" -v "$WORK_DIR/mismatch.conf:/etc/wireguard/wg0.conf:ro" "$IMAGE" server >/dev/null
+  elapsed=0
+  until docker exec vibedpn-wg-mismatch awg show wg0 peers | grep -qxF "$server_pub"; do
+    elapsed=$((elapsed + 1))
+    [ "$elapsed" -le "$HANDSHAKE_TIMEOUT" ] || { echo "FAIL: the mismatched peer did not start" >&2; exit 1; }
+    sleep 1
+  done
+  sleep "$MISMATCH_SECONDS"
+  if [ "$(docker inspect -f '{{.State.Running}}' vibedpn-wg-mismatch)" != true ]; then
+    echo "FAIL: the mismatched peer is not running, so its silence proves nothing" >&2
+    exit 1
+  fi
+  docker exec vibedpn-wg-mismatch awg show wg0 latest-handshakes | grep -q "^$server_pub.0$" ||
+    { echo "FAIL: a peer without the obfuscation keys completed a handshake" >&2; exit 1; }
+  docker exec vibedpn-wg-server awg show wg0 latest-handshakes | grep -q "^$mismatch_pub.0$" ||
+    { echo "FAIL: the server answered a peer without the obfuscation keys" >&2; exit 1; }
+  docker rm -f vibedpn-wg-mismatch >/dev/null
+fi
 
 log "the client applied the config: MTU from the file, default route in the tunnel"
 in_client ip -o link show wg0 | grep -q "mtu 1400"
@@ -296,7 +439,7 @@ docker rm -f vibedpn-wg-lan vibedpn-wg-router >/dev/null
 docker network rm "$LAN_NETWORK" >/dev/null
 
 log "a peer added to a running server is applied without a restart"
-extra_pub="$(wg_tool genkey | wg_tool pubkey)"
+extra_pub="$(awg_tool genkey | awg_tool pubkey)"
 server_restarts="$(docker inspect -f '{{.RestartCount}}' vibedpn-wg-server)"
 cp "$SRV_DIR/wg0.conf" "$WORK_DIR/srv-original.conf"
 {
@@ -331,6 +474,7 @@ cat >"$WORK_DIR/empty-interface.conf" <<EOF
 Address = $SERVER_WG/24
 ListenPort = $LISTEN_PORT
 PrivateKey = $server_key
+$(awg_interface_keys)
 EOF
 {
   cat "$WORK_DIR/empty-interface.conf"
@@ -339,11 +483,11 @@ EOF
 cp "$WORK_DIR/empty-interface.conf" "$EMPTY_DIR/wg0.conf"
 chmod 600 "$EMPTY_DIR/wg0.conf"
 docker run -d --name vibedpn-wg-empty --network "$NETWORK" \
-  --restart unless-stopped --cap-add NET_ADMIN \
+  --restart unless-stopped --cap-add NET_ADMIN --device "$TUN_DEVICE" \
   -v "$EMPTY_DIR:/etc/wireguard:ro" "$IMAGE" server >/dev/null
 await_health vibedpn-wg-empty
 empty_peers() {
-  docker exec vibedpn-wg-empty wg show wg0 peers | grep -cxF "$extra_pub" || true
+  docker exec vibedpn-wg-empty awg show wg0 peers | grep -cxF "$extra_pub" || true
 }
 for step in first interface; do
   cp "$WORK_DIR/empty-$step.conf" "$EMPTY_DIR/.wg0.conf.new"
@@ -384,26 +528,34 @@ await_health vibedpn-wg-client
 in_client ping -c 1 -W 2 "$SERVER_WG"
 fails in_client ping -c 1 -W 2 "$GATEWAY"
 
-# The real wg-server runs with network_mode: host, so its interface outlives a container that
-# was killed instead of stopped — exactly what happens on a crash or a docker kill. Like
-# compose.yaml it mounts a directory, so a file that core replaces by rename is visible inside.
-log "a host-namespace server comes back after a crash that left wg0 behind"
+# The real wg-server runs with network_mode: host and shares the directory of its control socket
+# with core. A container killed instead of stopped takes the daemon and its TUN interface with it,
+# but the socket file stays in that directory, and an interface of the previous kernel-module image
+# (a plain `wg0` of another type) can still be in the network namespace of the host. Like
+# compose.yaml it mounts a directory for the config, so a file that core replaces by rename is
+# visible inside.
+log "a host-namespace server comes back after a crash that left a socket and a foreign wg0 behind"
 HOST_DIR="$WORK_DIR/host"
-mkdir -m 700 "$HOST_DIR"
+HOST_SOCKET_DIR="$WORK_DIR/host-socket"
+mkdir -m 700 "$HOST_DIR" "$HOST_SOCKET_DIR"
 sed "s/^ListenPort = .*/ListenPort = $((LISTEN_PORT + 1))/" "$WORK_DIR/server.conf" \
   >"$HOST_DIR/wg0.conf"
 chmod 600 "$HOST_DIR/wg0.conf"
-docker run -d --name vibedpn-wg-host --network host --cap-add NET_ADMIN \
-  -v "$HOST_DIR:/etc/wireguard:ro" "$IMAGE" server >/dev/null
+docker run -d --name vibedpn-wg-host --network host --cap-add NET_ADMIN --device "$TUN_DEVICE" \
+  -v "$HOST_DIR:/etc/wireguard:ro" -v "$HOST_SOCKET_DIR:$SOCKET_DIR" "$IMAGE" server >/dev/null
 await_health vibedpn-wg-host
+# core reads the peers through the socket from its own container, in the host namespace as well
+docker run --rm --network host -v "$HOST_SOCKET_DIR:$SOCKET_DIR" --entrypoint awg "$IMAGE" \
+  show wg0 dump | head -n 1 | grep -q "$(printf '\t')$((LISTEN_PORT + 1))$(printf '\t')" ||
+  { echo "FAIL: another container cannot read the server through the shared socket" >&2; exit 1; }
 docker kill -s KILL vibedpn-wg-host >/dev/null
-if ! docker run --rm --network host --cap-add NET_ADMIN --entrypoint ip "$IMAGE" \
-  link show wg0 >/dev/null 2>&1; then
-  echo "FAIL: wg0 vanished with the killed container, so the test proves nothing" >&2
-  exit 1
-fi
+[ -S "$HOST_SOCKET_DIR/wg0.sock" ] ||
+  { echo "FAIL: no stale socket after the kill, so the test proves nothing" >&2; exit 1; }
+docker run --rm --network host --cap-add NET_ADMIN --entrypoint ip "$IMAGE" link add wg0 type dummy
 docker start vibedpn-wg-host >/dev/null
 await_health vibedpn-wg-host
+docker run --rm --network host --entrypoint ip "$IMAGE" -d link show wg0 | grep -q "tun" ||
+  { echo "FAIL: wg0 is not the TUN interface of the daemon after the restart" >&2; exit 1; }
 
 # After a reboot Docker restarts containers without waiting for core, so the server may start
 # on the previous file; core then replaces it by rename, and the server has to notice.
@@ -416,7 +568,7 @@ mv "$HOST_DIR/.wg0.conf.new" "$HOST_DIR/wg0.conf"
 elapsed=0
 port=""
 while [ "$elapsed" -lt "$HANDSHAKE_TIMEOUT" ]; do
-  port="$(docker exec vibedpn-wg-host wg show wg0 listen-port 2>/dev/null || true)"
+  port="$(docker exec vibedpn-wg-host awg show wg0 listen-port 2>/dev/null || true)"
   [ "$port" = "$NEW_PORT" ] && break
   sleep 2
   elapsed=$((elapsed + 2))
@@ -439,6 +591,60 @@ if [ "$state" != 0 ]; then
   echo "FAIL: the client exited with $state on SIGTERM, expected a clean 0" >&2
   docker logs vibedpn-wg-client >&2
   exit 1
+fi
+
+# AmneziaWG with no obfuscation keys must be WireGuard on the wire. Both ends here are our daemon,
+# so that is checked against a WireGuard that is not ours: wireguard-go from the Alpine packages.
+if [ "$FLAVOR" = plain ]; then
+  log "a plain file handshakes with vanilla WireGuard (wireguard-go), as a provider's server would"
+  vanilla_key="$(awg_tool genkey)"
+  vanilla_pub="$(printf '%s' "$vanilla_key" | awg_tool pubkey)"
+  vc_key="$(awg_tool genkey)"
+  vc_pub="$(printf '%s' "$vc_key" | awg_tool pubkey)"
+  cat >"$WORK_DIR/vanilla.conf" <<EOF
+[Interface]
+PrivateKey = $vanilla_key
+ListenPort = $LISTEN_PORT
+
+[Peer]
+PublicKey = $vc_pub
+AllowedIPs = $VANILLA_CLIENT_WG/32
+EOF
+  cat >"$WORK_DIR/vanilla-client.conf" <<EOF
+[Interface]
+Address = $VANILLA_CLIENT_WG/32
+PrivateKey = $vc_key
+
+[Peer]
+PublicKey = $vanilla_pub
+Endpoint = $VANILLA_IP:$LISTEN_PORT
+AllowedIPs = $VANILLA_WG/32
+PersistentKeepalive = 25
+EOF
+  chmod 600 "$WORK_DIR/vanilla.conf" "$WORK_DIR/vanilla-client.conf"
+  docker run -d --name vibedpn-wg-vanilla --network "$NETWORK" --ip "$VANILLA_IP" --cap-add NET_ADMIN \
+    --device "$TUN_DEVICE" -v "$WORK_DIR/vanilla.conf:/vanilla.conf:ro" "$VANILLA_IMAGE" sh -c "
+      apk add -q --no-cache wireguard-go wireguard-tools-wg iproute2 &&
+      wireguard-go wg0 && wg setconf wg0 /vanilla.conf &&
+      ip address add $VANILLA_WG/24 dev wg0 && ip link set wg0 up && exec sleep 3600" >/dev/null
+  docker run -d --name vibedpn-wg-vanilla-client --network "$NETWORK" --ip "$VANILLA_CLIENT_IP" \
+    --cap-add NET_ADMIN --device "$TUN_DEVICE" --sysctl net.ipv4.ip_forward=1 \
+    --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+    -v "$WORK_DIR/vanilla-client.conf:/etc/wireguard/wg0.conf:ro" "$IMAGE" client >/dev/null
+  elapsed=0
+  until docker exec vibedpn-wg-vanilla-client ping -c 1 -W 2 "$VANILLA_WG" >/dev/null 2>&1; do
+    sleep 2
+    elapsed=$((elapsed + 2))
+    # apk installs the packages before wireguard-go starts, which takes a few seconds
+    if [ "$elapsed" -gt "$VANILLA_TIMEOUT" ]; then
+      echo "FAIL: a plain file does not reach vanilla WireGuard" >&2
+      docker logs --tail 10 vibedpn-wg-vanilla >&2
+      docker logs --tail 10 vibedpn-wg-vanilla-client >&2
+      exit 1
+    fi
+  done
+  await_health vibedpn-wg-vanilla-client
+  docker rm -f vibedpn-wg-vanilla vibedpn-wg-vanilla-client >/dev/null
 fi
 
 log "TUNNEL-OK"

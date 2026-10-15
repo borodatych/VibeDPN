@@ -574,18 +574,23 @@ jobs:
           grep -q "is missing or empty" "$work/refused.log"
 
   tunnel:
-    name: tunnel · wg handshake and kill switch
+    name: tunnel · AmneziaWG handshake, obfuscation keys, plain WireGuard and kill switch
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - name: Load the WireGuard module of the runner kernel
+      # The daemon makes its interface from the TUN device, no kernel module is loaded.
+      - name: The TUN device of the runner
+        run: test -c /dev/net/tun
+      - name: Build the image (the Go daemon and the C tools from the pinned commits)
+        run: docker build -t ghcr.io/borodatych/vibedpn-wg:test images/wg
+      - name: The same plain, AmneziaWG 2.0 and 3.1 config files; a peer without the keys stays out
+        run: VIBEDPN_WG_IMAGE=ghcr.io/borodatych/vibedpn-wg:test tests/wg/tunnel.sh
+      - uses: docker/setup-qemu-action@v4
+      - name: The arm64 image builds, and its daemon and `awg` run (under emulation)
         run: |
-          sudo modprobe wireguard
-          lsmod | grep -q '^wireguard'
-      - name: Two containers, a real tunnel between them and a kill switch that holds
-        run: |
-          docker build -t ghcr.io/borodatych/vibedpn-wg:test images/wg
-          VIBEDPN_WG_IMAGE=ghcr.io/borodatych/vibedpn-wg:test tests/wg/tunnel.sh
+          docker buildx build --platform linux/arm64 --load -t vibedpn-wg:arm64 images/wg
+          docker run --rm --platform linux/arm64 --entrypoint amneziawg-go vibedpn-wg:arm64 --version
+          docker run --rm --platform linux/arm64 --entrypoint awg vibedpn-wg:arm64 --version
 
   e2e:
     name: e2e · box + fake VPS + LAN device — exit address, kill switch, modes, DNS, access server
@@ -595,8 +600,6 @@ jobs:
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           version: ${{ env.UV_VERSION }}
-      - name: Load the WireGuard module of the runner kernel
-        run: sudo modprobe wireguard
       - name: Build the images the box runs
         run: |
           docker build -q -t ghcr.io/borodatych/vibedpn-core:e2e core
@@ -623,8 +626,6 @@ jobs:
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           version: ${{ env.UV_VERSION }}
-      - name: Load the WireGuard module of the runner kernel
-        run: sudo modprobe wireguard
       - name: Build the images the box runs
         run: |
           docker build -q -t ghcr.io/borodatych/vibedpn-core:e2e core
@@ -649,8 +650,6 @@ jobs:
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           version: ${{ env.UV_VERSION }}
-      - name: Load the WireGuard module of the runner kernel
-        run: sudo modprobe wireguard
       - name: Build the images the box runs
         run: |
           docker build -q -t ghcr.io/borodatych/vibedpn-core:e2e core

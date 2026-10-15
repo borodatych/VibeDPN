@@ -1,9 +1,9 @@
 """Parsers of iproute2 JSON (fixtures captured from a Debian trixie container) and the probe."""
 
+import os
 import subprocess
 from ipaddress import IPv4Address, IPv4Network
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -52,20 +52,15 @@ def test_probe_reports_missing_ip(monkeypatch: pytest.MonkeyPatch) -> None:
         HostProbe().default_interface()
 
 
-def test_wireguard_module_detection(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(detect, "SYSFS_MODULES", tmp_path / "absent")
-    monkeypatch.setattr(detect, "find_modprobe", lambda: None)
-    assert HostProbe().wireguard_module_present() is None  # cannot tell without modprobe
-
-    def says_no(*_args: object, **_kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(returncode=1)
-
-    monkeypatch.setattr(detect, "find_modprobe", lambda: "/usr/sbin/modprobe")
-    monkeypatch.setattr(subprocess, "run", says_no)
-    assert HostProbe().wireguard_module_present() is False
-    (tmp_path / "wireguard").mkdir()
-    monkeypatch.setattr(detect, "SYSFS_MODULES", tmp_path)
-    assert HostProbe().wireguard_module_present() is True
+def test_tun_device_detection(tmp_path: Path) -> None:
+    node = tmp_path / "tun"
+    assert detect.tun_device_present(node) is False  # nothing there
+    node.write_text("", encoding="utf-8")
+    assert detect.tun_device_present(node) is False  # a regular file is not a device
+    node.unlink()
+    node.mkdir()
+    assert detect.tun_device_present(node) is False
+    assert detect.tun_device_present(Path(os.devnull)) is True  # a character device, as the node is
 
 
 def test_find_modprobe_looks_in_sbin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

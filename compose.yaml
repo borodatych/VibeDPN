@@ -47,6 +47,9 @@ services:
       # hostapd's control socket: core journals Wi-Fi events and lists clients (engine/wifi.py).
       # /run, not ./data: a socket is runtime state, gone at reboot, and never belongs in a backup.
       - /run/vibedpn/hostapd:/run/vibedpn/hostapd
+      # The control socket of the amneziawg-go in wg-server: the live state of its tunnel
+      # (engine/wg.py).
+      - /run/vibedpn/amneziawg:/run/amneziawg
     healthcheck:
       test:
         - CMD
@@ -296,9 +299,11 @@ services:
       - --tequilapi.address=0.0.0.0
       - daemon
 
-  # WireGuard client = uplink `vps`: a gateway container at 10.77.0.10 (role client). Uses the
-  # host kernel WireGuard module (no /dev/net/tun). A gateway in its own netns: forwarding into wg0
-  # only, MASQUERADE, TCP MSS clamping and the kill switch in nftables (images/wg/entrypoint.sh).
+  # AmneziaWG client = uplink `vps`: a gateway container at 10.77.0.10 (role client). The tunnel is a
+  # userspace daemon (amneziawg-go) on a TUN device: no kernel module, but /dev/net/tun. A gateway in
+  # its own netns: forwarding into wg0 only, MASQUERADE, TCP MSS clamping and the kill switch in
+  # nftables (images/wg/entrypoint.sh). The named exits of compose.wg.yaml extend this service and
+  # inherit the device.
   wg-client:
     image: ghcr.io/borodatych/vibedpn-wg:${VIBEDPN_TAG:-latest}
     environment:
@@ -312,6 +317,8 @@ services:
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     sysctls:
       net.ipv4.ip_forward: 1
       net.ipv4.conf.all.src_valid_mark: 1
@@ -336,7 +343,7 @@ services:
       retries: 3
       start_period: 30s
 
-  # WireGuard server of the VPS (wg0 10.78.0.1/24 by default). Host network: no port mapping,
+  # AmneziaWG server of the VPS (wg0 10.78.0.1/24 by default). Host network: no port mapping,
   # the UDP port is opened by the nftables baseline core applies (Stage 2/3).
   wg-server:
     image: ghcr.io/borodatych/vibedpn-wg:${VIBEDPN_TAG:-latest}
@@ -352,12 +359,17 @@ services:
     network_mode: host
     cap_add:
       - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     depends_on:
       # core renders secrets/wg-server/wg0.conf from config.yaml before it reports healthy.
       core:
         condition: service_healthy
     volumes:
       - ./secrets/wg-server:/etc/wireguard:ro
+      # The control socket of the daemon: core reads the live peers through it (`awg show wg0 dump`).
+      # /run, not ./data: a socket is runtime state, gone at reboot, and never belongs in a backup.
+      - /run/vibedpn/amneziawg:/run/amneziawg
     command:
       - server
     healthcheck:

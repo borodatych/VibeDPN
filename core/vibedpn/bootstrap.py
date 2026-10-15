@@ -126,7 +126,7 @@ class HostFacts:
     """What the wizard detected."""
 
     interface: Interface | None  # the default-route one: the LAN in sidecar, the WAN in gateway
-    wireguard_module: bool | None  # None: could not check (no modprobe on PATH)
+    tun_device: bool  # /dev/net/tun is there: the tunnel containers cannot start without it
     ssh_ports: list[int] = field(default_factory=lambda: [DEFAULT_SSH_PORT])
     memory_bytes: int | None = None  # None: /proc/meminfo could not be read
     interfaces: list[Interface] = field(default_factory=list)  # every one with a global IPv4

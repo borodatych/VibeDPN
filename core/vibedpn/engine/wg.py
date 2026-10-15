@@ -44,7 +44,7 @@ PEER_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 # A home box sends everything through its uplink, and sits behind NAT, so it keeps the mapping.
 CLIENT_ALLOWED_IPS = "0.0.0.0/0"
 CLIENT_KEEPALIVE_SECONDS = 25
-WG = "wg"
+AWG = "awg"  # the tool of AmneziaWG; it reads a plain WireGuard interface the same way
 WG_INTERFACE = "wg0"
 DUMP_PEER_FIELDS = 8  # public key, psk, endpoint, allowed ips, handshake, rx, tx, keepalive
 NO_VALUE = "(none)"
@@ -369,8 +369,9 @@ def peer_config(config: Config, secrets_dir: Path, name: str) -> str:
 
 
 def parse_wg_dump(text: str) -> dict[str, PeerLink]:
-    """``wg show <iface> dump``: tab-separated; the first line is the interface itself — with
-    its private key, which is skipped and never kept — then one line per peer."""
+    """``awg show <iface> dump``: tab-separated; the first line is the interface itself — with its
+    private key, which is skipped and never kept, and the obfuscation parameters, which no caller
+    needs — then one line per peer, the same eight fields as ``wg show`` prints."""
     links: dict[str, PeerLink] = {}
     for line in text.splitlines()[1:]:
         fields = line.split("\t")
@@ -390,16 +391,17 @@ def parse_wg_dump(text: str) -> dict[str, PeerLink]:
 
 
 def read_wg_dump(interface: str = WG_INTERFACE) -> dict[str, PeerLink] | None:
-    """Live state of the server interface; ``None`` when it cannot be read (no ``wg``, no wg0).
+    """Live state of the server interface; ``None`` when it cannot be read (no ``awg``, no wg0).
 
-    core shares the host network namespace with wg-server, so it sees the same interface.
+    The interface is a TUN device of the daemon in wg-server, which listens on a socket in a
+    directory both containers mount (compose.yaml): that socket is what ``awg`` talks to.
     """
-    wg = find_tool(WG)
-    if wg is None:
+    awg = find_tool(AWG)
+    if awg is None:
         return None
     try:
         probe = subprocess.run(
-            [wg, "show", interface, "dump"], check=False, capture_output=True, text=True
+            [awg, "show", interface, "dump"], check=False, capture_output=True, text=True
         )
     except OSError:
         return None

@@ -24,6 +24,7 @@ from vibedpn.config import (
 )
 from vibedpn.detect import Interface
 from vibedpn.doctor import (
+    TUN_PROFILES,
     CheckResult,
     DoctorFacts,
     Listener,
@@ -40,7 +41,7 @@ from vibedpn.doctor import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
-LAN = HostFacts(Interface("eth0", IPv4Address("192.168.1.50"), 24), wireguard_module=True)
+LAN = HostFacts(Interface("eth0", IPv4Address("192.168.1.50"), 24), tun_device=True)
 
 
 def home_config() -> Config:
@@ -58,7 +59,7 @@ def facts(**overrides: object) -> DoctorFacts:
         "config_hint": "",
         "env_current": True,
         "secrets": {"htpasswd": True, "wg-client.conf": False, "nodeui-pass": True},
-        "wireguard": True,
+        "tun": True,
         "nf_tables": True,
         "ip_forward": True,
         "listeners": [],
@@ -152,14 +153,27 @@ def test_docker_unreachable_makes_ports_uncertain_not_failed() -> None:
     assert "services" not in names
 
 
-def test_wireguard_verdict_depends_on_profiles() -> None:
-    assert (
-        by_name(evaluate(facts(wireguard=False)))["wireguard"].verdict is Verdict.WARN
-    )  # home: myst only
-    vps = by_name(evaluate(facts(config=vps_config(), wireguard=False)))["wireguard"]
-    assert vps.verdict is Verdict.FAIL and "tunnels cannot start" in vps.detail
-    unknown = by_name(evaluate(facts(wireguard=None)))["wireguard"]
-    assert unknown.verdict is Verdict.WARN and unknown.hint == "sudo vibedpn doctor"
+def test_tun_verdict_depends_on_profiles() -> None:
+    assert by_name(evaluate(facts()))["tun"].verdict is Verdict.OK
+    # the Mysterium nodes of a home box open tunnels too
+    home = by_name(evaluate(facts(tun=False)))["tun"]
+    assert home.verdict is Verdict.FAIL and "tunnels cannot start" in home.detail
+    assert "modprobe tun" in home.hint and "modules-load.d" in home.hint
+    vps = by_name(evaluate(facts(config=vps_config(), tun=False)))["tun"]
+    assert vps.verdict is Verdict.FAIL
+    base = home_config()
+    dpn = base.upstreams.dpn.model_copy(update={"enabled": False})
+    bare = base.model_copy(
+        update={
+            "upstreams": base.upstreams.model_copy(update={"dpn": dpn}),
+            "provider": base.provider.model_copy(update={"enabled": False}),
+        }
+    )
+    assert not TUN_PROFILES.intersection(bare.compose_profiles())
+    quiet = by_name(evaluate(facts(config=bare, tun=False)))["tun"]
+    assert quiet.verdict is Verdict.WARN and not quiet.hint
+    no_config = by_name(evaluate(facts(config=None, tun=False)))["tun"]
+    assert no_config.verdict is Verdict.WARN and "modprobe tun" in no_config.hint
 
 
 def test_ip_forward_and_nf_tables_verdicts() -> None:

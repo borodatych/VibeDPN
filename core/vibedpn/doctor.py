@@ -50,11 +50,12 @@ from vibedpn.config import (
 from vibedpn.detect import (
     SBIN_DIRS,
     SSHD,
-    WIREGUARD_MODULE,
+    TUN_DEVICE,
     HostProbe,
     is_wireless,
     module_present,
     parse_interface,
+    tun_device_present,
 )
 from vibedpn.engine.access import API_PORT as ACCESS_API_PORT
 from vibedpn.engine.access import METRICS_PORT as ACCESS_METRICS_PORT
@@ -224,7 +225,7 @@ class DoctorFacts:
     config_hint: str
     env_current: bool | None  # None: no .env yet
     secrets: dict[str, bool | None]  # None per file: cannot stat (root-only dir, not root)
-    wireguard: bool | None  # None: could not check
+    tun: bool  # /dev/net/tun is there
     nf_tables: bool | None
     ip_forward: bool | None  # None: unreadable
     listeners: list[Listener] | None  # None: ss unavailable, see listeners_error
@@ -401,10 +402,15 @@ def holder_of(need: PortNeed, listeners: list[Listener]) -> Listener | None:
     return None
 
 
-def wireguard_required(config: Config) -> bool:
-    """Only the WireGuard containers use the host module; myst brings its own tunnel."""
-    profiles = set(config.compose_profiles())
-    return Profile.WG_SERVER in profiles or Profile.WG_CLIENT in profiles
+# Every service that opens a tunnel gets /dev/net/tun as a device in compose.yaml: the AmneziaWG
+# containers (the daemon makes its interface from it) and the Mysterium nodes alike.
+TUN_PROFILES = frozenset(
+    {Profile.WG_SERVER, Profile.WG_CLIENT, Profile.WG_UPLINK, Profile.PROVIDER, Profile.CONSUMER}
+)
+
+
+def tun_required(config: Config) -> bool:
+    return not TUN_PROFILES.isdisjoint(config.compose_profiles())
 
 
 def evaluate(facts: DoctorFacts) -> list[CheckResult]:
@@ -419,7 +425,7 @@ def evaluate(facts: DoctorFacts) -> list[CheckResult]:
         )
         results.append(_env_result(facts.env_current))
         results.append(_secrets_result(config, facts.secrets))
-    results.append(_wireguard_result(config, facts.wireguard))
+    results.append(_tun_result(config, facts.tun))
     results.append(
         _module_result("nf_tables", facts.nf_tables, "the router engine and Docker need it")
     )
@@ -517,21 +523,22 @@ def _module_result(name: str, present: bool | None, why: str) -> CheckResult:
     return CheckResult(name, Verdict.FAIL, f"kernel module missing; {why}")
 
 
-def _wireguard_result(config: Config | None, present: bool | None) -> CheckResult:
-    if present is None or present:
-        return _module_result("wireguard", present, "")
-    if config is not None and wireguard_required(config):
-        return CheckResult(
-            "wireguard",
-            Verdict.FAIL,
-            "kernel module missing; tunnels cannot start",
-            "use a stock Debian 12/13 or Raspberry Pi OS kernel (wireguard is built in)",
-        )
-    return CheckResult(
-        "wireguard",
-        Verdict.WARN,
-        "kernel module missing; this role runs no WireGuard container (myst brings its own tunnel)",
+def _tun_result(config: Config | None, present: bool) -> CheckResult:
+    if present:
+        return CheckResult("tun", Verdict.OK, f"{TUN_DEVICE} is available")
+    hint = (
+        "sudo modprobe tun, and `echo tun | sudo tee /etc/modules-load.d/tun.conf` to keep it "
+        "after a reboot; on a VPS that is a container (LXC, OpenVZ) enable TUN/TAP in the "
+        "provider's panel"
     )
+    missing = f"{TUN_DEVICE} is missing; tunnels cannot start"
+    if config is None:  # no config.yaml yet: what this box will run is not known
+        return CheckResult("tun", Verdict.WARN, missing, hint)
+    if not tun_required(config):
+        return CheckResult(
+            "tun", Verdict.WARN, f"{TUN_DEVICE} is missing; this role opens no tunnel"
+        )
+    return CheckResult("tun", Verdict.FAIL, missing, hint)
 
 
 def _tunnel_result(files: dict[str, FileFact]) -> CheckResult:
@@ -1190,7 +1197,7 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         config_hint=config_hint,
         env_current=env_current,
         secrets=secrets,
-        wireguard=module_present(WIREGUARD_MODULE),
+        tun=tun_device_present(),
         nf_tables=module_present(NFTABLES_MODULE),
         fail2ban=_fail2ban_fact(),
         updates=_updates_fact(),

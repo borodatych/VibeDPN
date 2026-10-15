@@ -450,7 +450,7 @@ def init(
     try:
         facts = HostFacts(
             interface=probe.default_interface(),
-            wireguard_module=probe.wireguard_module_present(),
+            tun_device=probe.tun_device_present(),
             ssh_ports=probe.ssh_ports(),
             memory_bytes=probe.memory_bytes(),
             interfaces=probe.interfaces(),
@@ -479,15 +479,9 @@ def init(
         typer.echo(f"wrote {path}")
     for path in written.retired:
         typer.echo(f"set aside a secret of the previous role: {path}")
-    if facts.wireguard_module is False:
+    if not facts.tun_device:
         typer.secho(
-            "warning: the wireguard kernel module is not available; tunnels will not start",
-            fg=typer.colors.YELLOW,
-            err=True,
-        )
-    elif facts.wireguard_module is None:
-        typer.secho(
-            "warning: could not check the wireguard kernel module (modprobe not found)",
+            "warning: /dev/net/tun is missing; tunnels will not start (modprobe tun)",
             fg=typer.colors.YELLOW,
             err=True,
         )

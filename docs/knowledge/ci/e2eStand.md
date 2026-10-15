@@ -34,7 +34,7 @@ LAN, ни с Docker, ни с CGNAT, и не попадает в `EGRESS_BLOCKED_
 (MASQUERADE `lan → lan`, `DOCKER-USER`). DNS-проверки требуют интернета (DoH-апстрим AdGuard) и
 выключаются `VIBEDPN_E2E_OFFLINE=1`.
 **Раннер:** `ubuntu-24.04` — Docker Server 28.0.4, Compose 2.38.2 (порог продукта Engine ≥ 28 и
-`nat-unprotected` проходит), модуль WireGuard грузится `modprobe`.
+`nat-unprotected` проходит), туннели — userspace AmneziaWG, модуль `wireguard` не грузится; узел `/dev/net/tun` задача `tunnel` проверяет первым шагом (`test -c`), на раннере это не проверялось.
 **Грабля: проверка «DNS не работает» на невалидном имени проходит всегда (2026-09-14, Stage 11).**
 Чтобы обойти кэш AdGuard, стенд спрашивает новое имя nip.io, который отвечает `a-b-c-d.nip.io` адресом `a.b.c.d`.
 Имя с меткой больше 255 (`10-0-1-2703.nip.io`) — NXDOMAIN (исполнением: `getent ahostsv4` на VM пусто, у `10-0-1-27.nip.io` — `10.0.1.27`).

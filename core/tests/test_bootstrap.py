@@ -30,9 +30,9 @@ from vibedpn.bootstrap import (
 from vibedpn.config import Config, Role, UiVariant, load_config, parse_yaml
 from vibedpn.detect import Interface
 
-LAN = HostFacts(Interface("eth0", IPv4Address("192.168.1.50"), 24), wireguard_module=True)
-PUBLIC = HostFacts(Interface("ens3", IPv4Address("185.199.108.1"), 24), wireguard_module=True)
-NOTHING = HostFacts(None, wireguard_module=False)
+LAN = HostFacts(Interface("eth0", IPv4Address("192.168.1.50"), 24), tun_device=True)
+PUBLIC = HostFacts(Interface("ens3", IPv4Address("185.199.108.1"), 24), tun_device=True)
+NOTHING = HostFacts(None, tun_device=False)
 
 
 def test_public_address_only_for_global_ips() -> None:
@@ -41,7 +41,7 @@ def test_public_address_only_for_global_ips() -> None:
     assert public_address(NOTHING) is None
     # Documentation (TEST-NET) and CGNAT ranges are not globally routable either.
     for address in ("203.0.113.7", "100.64.0.1"):
-        facts = HostFacts(Interface("ens3", IPv4Address(address), 24), wireguard_module=True)
+        facts = HostFacts(Interface("ens3", IPv4Address(address), 24), tun_device=True)
         assert public_address(facts) is None
 
 
@@ -373,8 +373,8 @@ def test_the_panel_secrets_are_required_only_with_the_ui() -> None:
 
 
 def test_the_panel_variant_follows_the_memory_unless_given() -> None:
-    small = HostFacts(LAN.interface, wireguard_module=True, memory_bytes=2 * 1024**3)
-    big = HostFacts(LAN.interface, wireguard_module=True, memory_bytes=8 * 1024**3)
+    small = HostFacts(LAN.interface, tun_device=True, memory_bytes=2 * 1024**3)
+    big = HostFacts(LAN.interface, tun_device=True, memory_bytes=8 * 1024**3)
     client = Answers(Role.CLIENT, password="secret123")
     assert ui_variant_for(client, small) is UiVariant.LITE
     assert ui_variant_for(client, big) is UiVariant.FULL

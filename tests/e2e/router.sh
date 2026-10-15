@@ -11,7 +11,7 @@
 # So "through the VPS" and "direct" are two different exit addresses, not a guess from counters.
 # A one-port LAN (the ISP router on the wire of the host's own interface) is not reproduced here.
 #
-# Needs: Linux, Docker Engine >= 28, the wireguard module, sudo, curl, python3 (or a python with the
+# Needs: Linux, Docker Engine >= 28, /dev/net/tun, sudo, curl, python3 (or a python with the
 # CLI installed in VIBEDPN_E2E_PYTHON), images ghcr.io/borodatych/vibedpn-{core,wg}:$VIBEDPN_TAG.
 # VIBEDPN_E2E_OFFLINE=1 skips the DNS checks, the only ones that need the internet (DoH upstream).
 set -eu
@@ -119,12 +119,12 @@ fail() {
     echo "# DOCKER-USER"; sudo iptables-nft -S DOCKER-USER
     echo "# router table"; sudo nft list table inet vibedpn_router
     echo "# containers"; docker ps -a --format '{{.Names}} {{.Status}}'
-    echo "# wg-client"; docker exec vibedpn-wg-client-1 wg show wg0
+    echo "# wg-client"; docker exec vibedpn-wg-client-1 awg show wg0
     echo "# xray gateway"; docker logs --tail 15 vibedpn-xray-1 2>&1 || true
     echo "# xray server of the stand"; docker logs --tail 15 "$XRAY" 2>&1 || true
     echo "# access server"; docker logs --tail 20 vibedpn-access-1 2>&1 || true
     echo "# telegram of the stand"; curl -s --max-time 3 "http://$TG_IP:$TG_PORT/stand/log" || true
-    echo "# fake VPS"; docker exec "$VPS" wg show wg0
+    echo "# fake VPS"; docker exec "$VPS" awg show wg0
     echo "# core"; docker logs --tail 25 vibedpn-core-1
   } >&2 2>&1 || true
   exit 1
@@ -190,11 +190,11 @@ sudo ip netns exec "$NETNS2" ip route add default via "$BOX_LAN_IP"
 isp_rules -A
 
 log "stand: the fake VPS end of the tunnel, with its own way out"
-wg_tool() { docker run --rm -i --entrypoint wg "$WG_IMAGE" "$@"; }
-server_key="$(wg_tool genkey)"
-client_key="$(wg_tool genkey)"
-server_pub="$(printf '%s' "$server_key" | wg_tool pubkey)"
-client_pub="$(printf '%s' "$client_key" | wg_tool pubkey)"
+awg_tool() { docker run --rm -i --entrypoint awg "$WG_IMAGE" "$@"; }
+server_key="$(awg_tool genkey)"
+client_key="$(awg_tool genkey)"
+server_pub="$(printf '%s' "$server_key" | awg_tool pubkey)"
+client_pub="$(printf '%s' "$client_key" | awg_tool pubkey)"
 mkdir -m 700 "$WORK/vps"
 cat >"$WORK/vps/wg0.conf" <<EOF
 [Interface]
@@ -220,7 +220,7 @@ PersistentKeepalive = 25
 EOF
 chmod 600 "$WORK/vps/wg0.conf" "$WORK/peer.conf"
 docker run -d --name "$VPS" --network "$INTERNET" --ip "$VPS_IP" --cap-add NET_ADMIN \
-  --sysctl net.ipv4.ip_forward=1 -p "$VPS_PORT:51820/udp" \
+  --device /dev/net/tun --sysctl net.ipv4.ip_forward=1 -p "$VPS_PORT:51820/udp" \
   -v "$WORK/vps:/etc/wireguard:ro" "$WG_IMAGE" server >/dev/null
 i=0
 until docker exec "$VPS" /usr/local/bin/entrypoint.sh health >/dev/null 2>&1; do
@@ -618,10 +618,10 @@ echo "a hand edit of routing.mode applied by up without a restart of core"
 log "named exit wg-$EXIT_NAME: a ready WireGuard file becomes an uplink of its own"
 # The second provider of the stand, with its own way out: through it the echo service reports
 # $EXIT_IP, through the VPS $VPS_IP — so the path is an address, not a counter.
-exit_server_key="$(wg_tool genkey)"
-exit_client_key="$(wg_tool genkey)"
-exit_server_pub="$(printf '%s' "$exit_server_key" | wg_tool pubkey)"
-exit_client_pub="$(printf '%s' "$exit_client_key" | wg_tool pubkey)"
+exit_server_key="$(awg_tool genkey)"
+exit_client_key="$(awg_tool genkey)"
+exit_server_pub="$(printf '%s' "$exit_server_key" | awg_tool pubkey)"
+exit_client_pub="$(printf '%s' "$exit_client_key" | awg_tool pubkey)"
 mkdir -m 700 "$WORK/exit"
 cat >"$WORK/exit/wg0.conf" <<EOF
 [Interface]
@@ -646,7 +646,7 @@ PersistentKeepalive = 25
 EOF
 chmod 600 "$WORK/exit/wg0.conf" "$WORK/exit-peer.conf"
 docker run -d --name "$EXIT" --network "$INTERNET" --ip "$EXIT_IP" --cap-add NET_ADMIN \
-  --sysctl net.ipv4.ip_forward=1 -p "$EXIT_PORT:51820/udp" \
+  --device /dev/net/tun --sysctl net.ipv4.ip_forward=1 -p "$EXIT_PORT:51820/udp" \
   -v "$WORK/exit:/etc/wireguard:ro" "$WG_IMAGE" server >/dev/null
 i=0
 until docker exec "$EXIT" /usr/local/bin/entrypoint.sh health >/dev/null 2>&1; do
@@ -755,8 +755,9 @@ fi
 log "routing.fallback: the VPS dies behind a running gateway, and the chain still takes over"
 # Only the far end is gone: the gateway container keeps running and would answer a plain ping.
 # It stops answering the probe of core once its last handshake is older than 180 s (images/wg),
-# so this wait is long by design. `docker pause` would not kill the VPS: it freezes processes, and
-# WireGuard lives in the kernel and goes on answering; the VPS drops everything it gets instead.
+# so this wait is long by design. `docker pause` would freeze the VPS daemon, which is a dead
+# process and not what happens to a VPS that is unreachable: its daemon lives on, so the VPS drops
+# everything it gets instead.
 printf 'table inet e2e_dead {\n  chain input {\n    type filter hook input priority -300; policy drop;\n  }\n}\n' |
   docker exec -i "$VPS" nft -f -
 i=0

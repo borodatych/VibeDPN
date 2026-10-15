@@ -10,7 +10,9 @@
 AdGuard, который привязан к адресу коробки в LAN; конфликт — слушатель на любом адресе (dnsmasq
 от NetworkManager) или на том же LAN-адресе. Модуль ядра: доступный, но не загруженный модуль в
 `/sys/module` не виден (на ВМ colima `wireguard` — sysfs нет, `modprobe -n -q` → 0), поэтому проверка
-— sysfs **или** `modprobe -n -q`; `nf_tables` у хоста с Docker всегда загружен. `ip_forward`:
+— sysfs **или** `modprobe -n -q`; `nf_tables` у хоста с Docker всегда загружен. Туннели (AmneziaWG в
+контейнере) модуля `wireguard` не используют: их строка `tun` смотрит узел `/dev/net/tun` —
+символьное устройство, без него Docker не стартует контейнер с `devices: /dev/net/tun`. `ip_forward`:
 Docker при старте сам включает `net.ipv4.ip_forward` и `net.ipv6.conf.all.forwarding`, **но
 одновременно ставит политику DROP на пересылку** — «will prevent your Docker host from acting as
 a router»; снимается опцией `ip-forward-no-drop` в `daemon.json`, а с nftables-бэкендом Docker

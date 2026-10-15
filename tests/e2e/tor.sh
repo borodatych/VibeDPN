@@ -11,7 +11,7 @@
 # echo service therefore came through an uplink; the address it reports is compared with the
 # host's own public address, which is what the fake VPS leaves with.
 #
-# Needs: Linux, Docker Engine >= 28, the wireguard module, sudo, curl, python3, the internet, images
+# Needs: Linux, Docker Engine >= 28, /dev/net/tun, sudo, curl, python3, the internet, images
 # ghcr.io/borodatych/vibedpn-{core,wg,tor}:$VIBEDPN_TAG.
 set -eu
 
@@ -132,11 +132,11 @@ if in_device curl -s --max-time 5 "https://$ECHO_HOST" >/dev/null 2>&1; then
 fi
 
 log "stand: the fake VPS the client role needs"
-wg_tool() { docker run --rm -i --entrypoint wg "$WG_IMAGE" "$@"; }
-server_key="$(wg_tool genkey)"
-client_key="$(wg_tool genkey)"
-server_pub="$(printf '%s' "$server_key" | wg_tool pubkey)"
-client_pub="$(printf '%s' "$client_key" | wg_tool pubkey)"
+awg_tool() { docker run --rm -i --entrypoint awg "$WG_IMAGE" "$@"; }
+server_key="$(awg_tool genkey)"
+client_key="$(awg_tool genkey)"
+server_pub="$(printf '%s' "$server_key" | awg_tool pubkey)"
+client_pub="$(printf '%s' "$client_key" | awg_tool pubkey)"
 mkdir -m 700 "$WORK/vps"
 cat >"$WORK/vps/wg0.conf" <<EOF
 [Interface]
@@ -161,7 +161,7 @@ PersistentKeepalive = 25
 EOF
 chmod 600 "$WORK/vps/wg0.conf" "$WORK/peer.conf"
 docker run -d --name "$VPS" --network "$INTERNET" --ip "$VPS_IP" --cap-add NET_ADMIN \
-  --sysctl net.ipv4.ip_forward=1 -p "$VPS_PORT:51820/udp" \
+  --device /dev/net/tun --sysctl net.ipv4.ip_forward=1 -p "$VPS_PORT:51820/udp" \
   -v "$WORK/vps:/etc/wireguard:ro" "$WG_IMAGE" server >/dev/null
 
 # --- the box ------------------------------------------------------------------------------------

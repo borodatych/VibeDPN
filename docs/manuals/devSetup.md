@@ -57,6 +57,19 @@
 
 ## E2E-стенд
 
+`tests/wg/tunnel.sh` проверяет образ `images/wg` без коробки: два контейнера и настоящий туннель между ними (рукопожатие,
+трафик, kill-switch клиента, шлюз для LAN с зажатием MSS, пиры на лету, сервер в сети хоста после краха). Сценарий идёт трижды —
+на файлах `plain` (как у поставщика WireGuard), `awg2` и `awg3` (ключи AmneziaWG 2.0 и 3.1); в `awg`-вариантах пир без ключей
+обфускации не должен рукопожаться, а `plain` проверяется ещё и против ванильного `wireguard-go`. Нужен Linux-хост (на macOS —
+colima) с `/dev/net/tun`; на macOS `TMPDIR` укажите внутри смонтированного тома, иначе файлы конфигов в контейнере окажутся каталогами:
+
+```bash
+docker build -t vibedpn-wg:dev images/wg
+TMPDIR=/Volumes/Storage/Caches/vibedpn/tmp VIBEDPN_WG_IMAGE=vibedpn-wg:dev tests/wg/tunnel.sh
+```
+
+`VIBEDPN_WG_FLAVOR=plain|awg2|awg3` гоняет один вариант. В CI — задача `tunnel`.
+
 `tests/e2e/router.sh` поднимает на одном Linux-хосте коробку роли `client` из образов репозитория,
 fake-VPS и два устройства LAN — и проверяет продукт целиком, включая политики устройств одновременно
 (у одного устройства своя политика, у другого — режим, и kill-switch одного аплинка не трогает
@@ -82,7 +95,7 @@ docker build -t ghcr.io/borodatych/vibedpn-core:e2e core && docker build -t ghcr
 colima ssh -- sh -c 'cd /Volumes/Storage/Projects/VibeCode/VibeDPN && VIBEDPN_TAG=e2e sh tests/e2e/router.sh'
 ```
 
-Стенд требует sudo, модуль WireGuard и Docker Engine ≥ 28, ставит CLI в свой venv (или берёт
+Стенд требует sudo, `/dev/net/tun` и Docker Engine ≥ 28, ставит CLI в свой venv (или берёт
 `VIBEDPN_E2E_PYTHON`) и при любом исходе убирает за собой контейнеры, сети, netns `e2e-lanhost`,
 мост `lan0` и свои правила в `DOCKER-USER`. В CI его гоняет задача `e2e`.
 
