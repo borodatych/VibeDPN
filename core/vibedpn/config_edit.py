@@ -22,6 +22,7 @@ from ruamel.yaml.error import YAMLError
 from vibedpn.atomic import write_like
 from vibedpn.config import (
     DEFAULT_TOR_BRIDGES,
+    AwgConfig,
     Config,
     DevicePolicy,
     DomainList,
@@ -252,6 +253,22 @@ def set_access(
         for key, value in (("address", address), ("port", port), ("target", target)):
             if value is not None:
                 section[key] = value
+
+    return _edit(path, mutate)
+
+
+def set_awg(path: Path, awg: AwgConfig | None) -> tuple[Config, bool]:
+    """Turn the AmneziaWG obfuscation of the tunnel server on with these parameters, or off
+    (``None``). The header protection key is a secret and never enters config.yaml."""
+
+    def mutate(data: CommentedMap) -> None:
+        server = data.get("wg_server")
+        if not isinstance(server, CommentedMap):
+            raise ConfigEditError(f"{path} has no wg_server section: only role vps runs the tunnel")
+        if awg is None:
+            server.pop("awg", None)
+        else:
+            server["awg"] = awg.model_dump(mode="json")
 
     return _edit(path, mutate)
 

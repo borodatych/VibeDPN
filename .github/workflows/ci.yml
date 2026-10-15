@@ -89,16 +89,16 @@ jobs:
             bash /src/install.sh
             test "$(git -C /opt/vibedpn rev-parse HEAD)" = "$(git -C /tmp/repo rev-parse HEAD)"
             echo "ci-panels-pw" > /tmp/pw
-            vibedpn init --role vps --endpoint 203.0.113.7 --password-file /tmp/pw
+            vibedpn init --role vps --provider --endpoint 203.0.113.7 --password-file /tmp/pw
             test -f /opt/vibedpn/config.yaml
             test -f /opt/vibedpn/.env
             test -f /opt/vibedpn/secrets/htpasswd
             test -f /opt/vibedpn/data/myst-provider/nodeui-pass
             before=$(sha256sum /opt/vibedpn/config.yaml)
-            if vibedpn init --role vps --endpoint 203.0.113.7 --password-file /tmp/pw; then echo "init must refuse without --force" >&2; exit 1; fi
+            if vibedpn init --role vps --provider --endpoint 203.0.113.7 --password-file /tmp/pw; then echo "init must refuse without --force" >&2; exit 1; fi
             test "$before" = "$(sha256sum /opt/vibedpn/config.yaml)"
             test ! -e /opt/vibedpn/config.yaml.bak
-            vibedpn init --role vps --endpoint 203.0.113.7 --password-file /tmp/pw --force
+            vibedpn init --role vps --provider --endpoint 203.0.113.7 --password-file /tmp/pw --force
             test -f /opt/vibedpn/config.yaml.bak
             if vibedpn doctor > /tmp/doctor.txt; then echo "doctor must fail with a stubbed docker" >&2; exit 1; fi
             cat /tmp/doctor.txt
@@ -666,6 +666,30 @@ jobs:
           VIBEDPN_E2E_PYTHON: /tmp/e2e-venv/bin/python
         run: tests/e2e/home.sh
 
+  e2e-vps:
+    name: e2e · bare VPS — AmneziaWG server, a phone through the tunnel, keys on the wire, VLESS/REALITY person
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Build the images the box runs
+        run: |
+          docker build -q -t ghcr.io/borodatych/vibedpn-core:e2e core
+          docker build -q -t ghcr.io/borodatych/vibedpn-wg:e2e images/wg
+          docker build -q -t ghcr.io/borodatych/vibedpn-xray:e2e images/xray
+      - name: The CLI in a venv
+        run: |
+          uv venv /tmp/e2e-venv --python 3.12
+          uv pip install --python /tmp/e2e-venv/bin/python --require-hashes -r core/requirements.txt
+          uv pip install --python /tmp/e2e-venv/bin/python --no-deps ./core
+      - name: Run the stand
+        env:
+          VIBEDPN_TAG: e2e
+          VIBEDPN_E2E_PYTHON: /tmp/e2e-venv/bin/python
+        run: tests/e2e/vps.sh
+
   e2e-gateway:
     name: e2e · gateway mode — the device gets its address over DHCP and leaves through the box NAT
     runs-on: ubuntu-24.04
@@ -713,7 +737,7 @@ jobs:
 
   images:
     name: image · ${{ matrix.image.name }}
-    needs: [python, shell, compose, install, firewall, router, ui, ui-image, adguard, tunnel, e2e, e2e-home, e2e-gateway, e2e-wifi]
+    needs: [python, shell, compose, install, firewall, router, ui, ui-image, adguard, tunnel, e2e, e2e-home, e2e-vps, e2e-gateway, e2e-wifi]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

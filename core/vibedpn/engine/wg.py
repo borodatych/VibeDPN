@@ -27,7 +27,14 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from vibedpn.atomic import FILE_MODE, write_private
-from vibedpn.config import Config, WgServerConfig
+from vibedpn.config import (
+    AWG_DEFAULT_HEADERS,
+    AWG_HANDSHAKE_BYTES,
+    AWG_MAX_WIRE_BYTES,
+    AwgConfig,
+    Config,
+    WgServerConfig,
+)
 from vibedpn.detect import find_tool
 from vibedpn.templating import template_environment
 
@@ -35,6 +42,9 @@ KEY_BYTES = 32
 SERVER_DIR = "wg-server"  # under secrets/; compose.yaml mounts it into wg-server as /etc/wireguard
 SERVER_KEY_FILE = "server.key"
 SERVER_CONF_FILE = "wg0.conf"  # the name the wg image entrypoint reads
+# The 32-byte key that protects the AmneziaWG headers: both ends must hold it, so it is a secret
+# of the server next to the server key and travels only inside the peer files.
+HEADER_KEY_FILE = "header-protection.key"
 PEERS_FILE = "peers.json"
 SERVER_TEMPLATE = "wg-server.conf.j2"
 CLIENT_TEMPLATE = "wg-client.conf.j2"
@@ -49,6 +59,13 @@ WG_INTERFACE = "wg0"
 DUMP_PEER_FIELDS = 8  # public key, psk, endpoint, allowed ips, handshake, rx, tx, keepalive
 NO_VALUE = "(none)"
 RESERVED_ADDRESSES = 3  # the network, the broadcast and the server address
+# What `awg enable` and `init` pick (amnezia.md, "параметры"): the documentation recommends 4-12
+# junk packets; their sizes stay well below the MTU. Every data packet grows by S4 bytes, so the
+# paddings stay small, and each message type gets a size of its own on the wire.
+AWG_JUNK_COUNT = (4, 12)
+AWG_JUNK_MIN_SIZE = (40, 100)
+AWG_JUNK_SPREAD = (50, 400)
+AWG_PADDING = (15, 64)
 
 # FastAPI runs synchronous handlers in a thread pool: two requests must not interleave the
 # read-modify-write of the registry.
@@ -170,23 +187,69 @@ def server_address(config: Config) -> IPv4Interface:
     return IPv4Interface(f"{server.address}/{server.subnet.prefixlen}")
 
 
-def render_server_conf(config: Config, private_key: str, peers: Sequence[Peer] = ()) -> str:
-    template = template_environment().get_template(SERVER_TEMPLATE)
-    return template.render(
-        address=server_address(config),
-        listen_port=_server_config(config).listen_port,
-        private_key=private_key,
-        peers=peers,
+def _pick(bounds: tuple[int, int]) -> int:
+    return secrets.choice(range(bounds[0], bounds[1] + 1))
+
+
+def generate_awg() -> AwgConfig:
+    """Random obfuscation parameters inside the bounds of amnezia.md, every handshake message of
+    its own size on the wire (Init 148+S1, Response 92+S2, Cookie 64+S3) so a receiver cannot
+    mistake one for another by length. Header protection keeps the standard message types."""
+    junk_min = _pick(AWG_JUNK_MIN_SIZE)
+    junk_max = min(junk_min + _pick(AWG_JUNK_SPREAD), AWG_MAX_WIRE_BYTES)
+    while True:
+        s1, s2, s3, s4 = (_pick(AWG_PADDING) for _ in range(4))
+        sizes = {
+            base + padding for base, padding in zip(AWG_HANDSHAKE_BYTES, (s1, s2, s3), strict=True)
+        }
+        if len(sizes) == len(AWG_HANDSHAKE_BYTES):
+            break
+    h1, h2, h3, h4 = AWG_DEFAULT_HEADERS
+    return AwgConfig(
+        jc=_pick(AWG_JUNK_COUNT),
+        jmin=junk_min,
+        jmax=junk_max,
+        s1=s1,
+        s2=s2,
+        s3=s3,
+        s4=s4,
+        h1=h1,
+        h2=h2,
+        h3=h3,
+        h4=h4,
     )
 
 
-def render_client_conf(config: Config, server_public_key: str, peer: Peer) -> str:
-    """The file a home box installs with ``vibedpn init --role client --peer-config``."""
+def render_server_conf(
+    config: Config,
+    private_key: str,
+    peers: Sequence[Peer] = (),
+    header_key: str | None = None,
+) -> str:
+    server = _server_config(config)
+    template = template_environment().get_template(SERVER_TEMPLATE)
+    return template.render(
+        address=server_address(config),
+        listen_port=server.listen_port,
+        private_key=private_key,
+        peers=peers,
+        awg=server.awg,
+        header_key=header_key,
+    )
+
+
+def render_client_conf(
+    config: Config, server_public_key: str, peer: Peer, header_key: str | None = None
+) -> str:
+    """The file a home box installs with ``vibedpn init --role client --peer-config``, or a phone
+    or laptop imports into its AmneziaWG app."""
     server = _server_config(config)
     template = template_environment().get_template(CLIENT_TEMPLATE)
     return template.render(
         peer=peer,
         server_public_key=server_public_key,
+        awg=server.awg,
+        header_key=header_key,
         endpoint=f"{server.endpoint}:{server.listen_port}",
         allowed_ips=str(server.subnet) if peer.tunnel_only else CLIENT_ALLOWED_IPS,
         keepalive=CLIENT_KEEPALIVE_SECONDS,
@@ -224,6 +287,38 @@ def load_or_create_server_key(directory: Path) -> tuple[str, bool]:
     key = generate_private_key()
     write_private(path, key + "\n")
     return key, True
+
+
+def load_header_key(directory: Path) -> str:
+    """The persisted header protection key, read only: a peer file made without it never
+    handshakes with the running server."""
+    path = directory / HEADER_KEY_FILE
+    try:
+        key = path.read_text(encoding="utf-8").strip()
+        decode_key(key)
+    except (OSError, UnicodeDecodeError, WgError) as exc:
+        raise WgError(
+            f"{path} is missing or not a key ({exc.__class__.__name__}); core creates it at start"
+            " (vibedpn restart)"
+        ) from None
+    return key
+
+
+def sync_header_key(config: Config, directory: Path) -> str | None:
+    """The header protection key of a server with obfuscation, created on first use; ``None``
+    without it, and then a key left from an earlier obfuscation is removed so that enabling it
+    again starts a new one. It is generated like a WireGuard key, clamped: the redaction of
+    secrets in logs recognises exactly that shape of a base64 key (engine/logs.py)."""
+    path = directory / HEADER_KEY_FILE
+    if _server_config(config).awg is None:
+        path.unlink(missing_ok=True)
+        return None
+    if path.exists():
+        path.chmod(FILE_MODE)
+        return load_header_key(directory)
+    key = generate_private_key()
+    write_private(path, key + "\n")
+    return key
 
 
 def load_peers(directory: Path) -> list[Peer]:
@@ -364,8 +459,10 @@ def remove_peer(config: Config, secrets_dir: Path, name: str) -> Peer:
 
 def peer_config(config: Config, secrets_dir: Path, name: str) -> str:
     peer = find_peer(config, secrets_dir, name)
-    key = load_server_key(secrets_dir / SERVER_DIR)
-    return render_client_conf(config, public_key(key), peer)
+    directory = secrets_dir / SERVER_DIR
+    key = load_server_key(directory)
+    header_key = load_header_key(directory) if _server_config(config).awg is not None else None
+    return render_client_conf(config, public_key(key), peer, header_key)
 
 
 def parse_wg_dump(text: str) -> dict[str, PeerLink]:
@@ -438,7 +535,8 @@ def _commit(config: Config, directory: Path, peers: Sequence[Peer]) -> ServerFil
         key, _ = load_or_create_server_key(directory)
         placed, renumbered = fit_to_subnet(config, peers)
         previous = conf.read_text(encoding="utf-8") if conf.is_file() else None
-        write_private(conf, render_server_conf(config, key, placed))
+        header_key = sync_header_key(config, directory)
+        write_private(conf, render_server_conf(config, key, placed, header_key))
         try:
             registry = PeerRegistry(peers=placed)
             write_private(directory / PEERS_FILE, registry.model_dump_json(indent=2) + "\n")

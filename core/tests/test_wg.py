@@ -18,14 +18,17 @@ from vibedpn.bootstrap import read_peer_config
 from vibedpn.config import Config, parse_yaml
 from vibedpn.engine import wg
 from vibedpn.engine.wg import (
+    HEADER_KEY_FILE,
     SERVER_CONF_FILE,
     SERVER_DIR,
     SERVER_KEY_FILE,
     Peer,
     WgError,
+    add_peer,
     clamp,
     decode_key,
     ensure_server,
+    generate_awg,
     generate_private_key,
     public_key,
     render_server_conf,
@@ -552,3 +555,95 @@ def test_registries_written_before_tunnel_only_still_load(tmp_path: Path) -> Non
         '{"version": 1, "peers": [' + __import__("json").dumps(old) + "]}", encoding="utf-8"
     )
     assert wg.list_peers(vps(), tmp_path)[0].tunnel_only is False
+
+
+# --- AmneziaWG: parameters, the header protection key, the files ---------------------------------
+
+AWG = {"jc": 8, "jmin": 50, "jmax": 120, "s1": 20, "s2": 30, "s3": 40, "s4": 50}
+
+
+def obfuscated(**wg_server: object) -> Config:
+    return vps(awg=AWG, **wg_server)
+
+
+def test_generated_parameters_stay_inside_the_bounds_and_sizes_differ() -> None:
+    for _ in range(200):
+        awg = generate_awg()  # AwgConfig validates on construction: bounds and overlap
+        assert 4 <= awg.jc <= 12 and awg.jmin <= awg.jmax <= 1280
+        sizes = {148 + awg.s1, 92 + awg.s2, 64 + awg.s3}
+        assert len(sizes) == 3
+        assert (awg.h1, awg.h2, awg.h3, awg.h4) == ("1", "2", "3", "4")
+    assert len({generate_awg().model_dump_json() for _ in range(20)}) > 1
+
+
+def test_server_conf_carries_the_parameters_and_the_key() -> None:
+    key = generate_private_key()
+    text = render_server_conf(obfuscated(), RFC_PRIVATE, header_key=key)
+    for line in ("Jc = 8", "Jmin = 50", "Jmax = 120", "S1 = 20", "S4 = 50", "H1 = 1", "H4 = 4"):
+        assert f"\n{line}\n" in text
+    assert f"\nHeaderProtectionKey = {key}\n" in text
+    assert text.index("PrivateKey") < text.index("Jc = 8") < text.index("HeaderProtectionKey")
+
+
+def test_plain_server_conf_is_what_it_was_before_awg() -> None:
+    text = render_server_conf(vps(), RFC_PRIVATE)
+    assert not any(word in text for word in ("Jc", "S1", "H1", "HeaderProtectionKey"))
+
+
+def test_first_start_makes_the_header_key_private_and_keeps_it(tmp_path: Path) -> None:
+    ensure_server(obfuscated(), tmp_path)
+    key_file = tmp_path / SERVER_DIR / HEADER_KEY_FILE
+    key = key_file.read_text(encoding="utf-8").strip()
+    assert mode(key_file) == 0o600 and len(decode_key(key)) == 32
+    conf = (tmp_path / SERVER_DIR / SERVER_CONF_FILE).read_text(encoding="utf-8")
+    assert f"HeaderProtectionKey = {key}\n" in conf
+    ensure_server(obfuscated(), tmp_path)
+    assert key_file.read_text(encoding="utf-8").strip() == key
+
+
+def test_the_header_key_is_never_in_config_yaml_shape() -> None:
+    assert "header" not in obfuscated().model_dump_json().lower()
+
+
+def test_without_awg_the_old_header_key_goes_so_that_a_new_start_makes_a_new_one(
+    tmp_path: Path,
+) -> None:
+    ensure_server(obfuscated(), tmp_path)
+    key_file = tmp_path / SERVER_DIR / HEADER_KEY_FILE
+    first = key_file.read_text(encoding="utf-8")
+    ensure_server(vps(), tmp_path)
+    assert not key_file.exists()
+    conf = (tmp_path / SERVER_DIR / SERVER_CONF_FILE).read_text(encoding="utf-8")
+    assert "HeaderProtectionKey" not in conf
+    ensure_server(obfuscated(), tmp_path)
+    assert key_file.read_text(encoding="utf-8") != first
+
+
+def test_peer_file_has_the_same_parameters_and_key_as_the_server(tmp_path: Path) -> None:
+    config = obfuscated()
+    ensure_server(config, tmp_path)
+    add_peer(config, tmp_path, "phone")
+    client = wg.peer_config(config, tmp_path, "phone")
+    server = (tmp_path / SERVER_DIR / SERVER_CONF_FILE).read_text(encoding="utf-8")
+    for name in ("Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4"):
+        line = next(item for item in server.splitlines() if item.startswith(f"{name} = "))
+        assert f"\n{line}\n" in client
+    key = (tmp_path / SERVER_DIR / HEADER_KEY_FILE).read_text(encoding="utf-8").strip()
+    assert f"HeaderProtectionKey = {key}\n" in client
+    assert "AllowedIPs = 0.0.0.0/0" in client  # a phone sends everything through the VPS
+
+
+def test_a_peer_file_of_a_plain_tunnel_has_no_obfuscation(tmp_path: Path) -> None:
+    ensure_server(vps(), tmp_path)
+    add_peer(vps(), tmp_path, "dacha")
+    client = wg.peer_config(vps(), tmp_path, "dacha")
+    assert "HeaderProtectionKey" not in client and "Jc" not in client
+
+
+def test_a_missing_header_key_is_an_error_not_a_new_key(tmp_path: Path) -> None:
+    config = obfuscated()
+    ensure_server(config, tmp_path)
+    add_peer(config, tmp_path, "phone")
+    (tmp_path / SERVER_DIR / HEADER_KEY_FILE).unlink()
+    with pytest.raises(WgError, match=r"header-protection\.key"):
+        wg.peer_config(config, tmp_path, "phone")

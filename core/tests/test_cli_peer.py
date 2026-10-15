@@ -13,7 +13,7 @@ from vibedpn.api import client as core_api
 from vibedpn.api.client import CoreUnreachableError, PeerRequestError
 from vibedpn.api.models import PeerFile, PeerView
 from vibedpn.bootstrap import render_config
-from vibedpn.config import Config
+from vibedpn.config import Config, load_config
 
 from .conftest import home_config, vps_config
 
@@ -183,3 +183,43 @@ def test_add_passes_tunnel_only(vps_box: Path, monkeypatch: pytest.MonkeyPatch) 
     )
     assert result.exit_code == 0, result.output
     assert flags == [True]
+
+
+def test_awg_enable_writes_parameters_and_says_peers_need_their_files_again(
+    vps_box: Path,
+) -> None:
+    assert load_config(vps_box / "config.yaml").wg_server.awg is None  # type: ignore[union-attr]
+    result = runner.invoke(cli.app, ["awg", "enable", "--dir", str(vps_box)])
+    assert result.exit_code == 0, result.output
+    config = load_config(vps_box / "config.yaml")
+    assert config.wg_server is not None and config.wg_server.awg is not None
+    assert "vibedpn peer export <name>" in result.output
+    text = (vps_box / "config.yaml").read_text(encoding="utf-8")
+    assert "HeaderProtectionKey" not in text and "provider:" in text  # the rest is untouched
+    again = runner.invoke(cli.app, ["awg", "enable", "--dir", str(vps_box)])
+    assert again.exit_code == 0 and "already on" in again.output
+    assert load_config(vps_box / "config.yaml") == config  # nothing renewed behind the owner
+
+
+def test_awg_disable_returns_to_plain_wireguard(vps_box: Path) -> None:
+    runner.invoke(cli.app, ["awg", "enable", "--dir", str(vps_box)])
+    result = runner.invoke(cli.app, ["awg", "disable", "--dir", str(vps_box)])
+    assert result.exit_code == 0, result.output
+    config = load_config(vps_box / "config.yaml")
+    assert config.wg_server is not None and config.wg_server.awg is None
+    again = runner.invoke(cli.app, ["awg", "disable", "--dir", str(vps_box)])
+    assert again.exit_code == 0 and "already off" in again.output
+
+
+def test_awg_belongs_to_the_vps_role(tmp_path: Path) -> None:
+    home = box(tmp_path, home_config())
+    result = runner.invoke(cli.app, ["awg", "enable", "--dir", str(home)])
+    assert result.exit_code == 1 and "tunnel peers live on the VPS" in result.output
+
+
+def test_peer_add_tells_a_phone_where_the_file_goes(
+    vps_box: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(core_api, "add_peer", lambda *_a, **_k: PEER)
+    result = runner.invoke(cli.app, ["peer", "add", "phone", "--dir", str(vps_box)])
+    assert "AmneziaWG app" in result.output and "bareVps.md" in result.output

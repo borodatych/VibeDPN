@@ -21,6 +21,8 @@ from vibedpn.config import (
 )
 from vibedpn.engine.router import Egress
 
+from .conftest import vps_config
+
 
 def errors_of(data: dict[str, Any]) -> str:
     with pytest.raises(ValidationError) as excinfo:
@@ -129,10 +131,13 @@ def test_firewall_only_on_vps(home: dict[str, Any], vps: dict[str, Any]) -> None
     assert Config.model_validate(home).firewall.enabled  # defaults exist, just not settable
 
 
-def test_vps_requires_wg_server_and_provider() -> None:
-    message = errors_of({"version": 1, "role": "vps"})
-    assert "wg_server: required" in message
-    assert "provider.enabled: must be true" in message
+def test_vps_requires_wg_server_but_not_a_node() -> None:
+    assert "wg_server: required" in errors_of({"version": 1, "role": "vps"})
+    bare = Config.model_validate(
+        {"version": 1, "role": "vps", "wg_server": {"endpoint": "vps.example.com"}}
+    )
+    assert not bare.provider.enabled
+    assert bare.compose_profiles() == [Profile.WG_SERVER]
 
 
 def test_client_requires_vps_uplink(client: dict[str, Any]) -> None:
@@ -531,3 +536,56 @@ def test_every_role_may_run_the_telegram_bot(
     for raw in (home, vps, client):
         config = Config.model_validate({**raw, "telegram": section})
         assert config.telegram.enabled and config.telegram.report.hour == 10
+
+
+# --- AmneziaWG obfuscation of the tunnel server -------------------------------------------------
+
+AWG = {"jc": 8, "jmin": 50, "jmax": 120, "s1": 20, "s2": 30, "s3": 40, "s4": 50}
+
+
+def with_awg(**changes: object) -> dict[str, Any]:
+    raw = vps_config()
+    raw["wg_server"] = {**raw["wg_server"], "awg": {**AWG, **changes}}
+    return raw
+
+
+def test_a_tunnel_without_awg_is_plain_wireguard_and_old_files_load(vps: dict[str, Any]) -> None:
+    config = Config.model_validate(vps)
+    assert config.wg_server is not None and config.wg_server.awg is None
+
+
+def test_awg_parameters_default_to_the_standard_message_types() -> None:
+    config = Config.model_validate(with_awg())
+    assert config.wg_server is not None and config.wg_server.awg is not None
+    awg = config.wg_server.awg
+    assert (awg.h1, awg.h2, awg.h3, awg.h4) == ("1", "2", "3", "4")
+
+
+def test_awg_headers_take_numbers_and_ranges_from_yaml() -> None:
+    config = Config.model_validate(with_awg(h1=5, h2="100-200", h3="300", h4="400-500"))
+    assert config.wg_server is not None and config.wg_server.awg is not None
+    assert config.wg_server.awg.header_ranges() == [(5, 5), (100, 200), (300, 300), (400, 500)]
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"s1": 11}, "s1"),  # below the 12 bytes the header protection nonce needs
+        ({"s4": 1133}, "s4"),  # Init 148 + 1133 would not fit one 1280-byte datagram
+        ({"jc": 65536}, "jc"),
+        ({"jmin": 200, "jmax": 100}, "jmin must not exceed jmax"),
+        ({"jmax": 1281}, "jmax"),
+        ({"h1": "abc"}, "not a message type"),
+        ({"h2": "20-10"}, "not a range"),
+        ({"h3": "4294967296"}, "not a range"),
+        ({"h1": "1-3", "h2": "3-5"}, "must not overlap"),
+        ({"h1": 7, "h2": 7}, "must not overlap"),
+    ],
+)
+def test_awg_rejects_what_the_daemon_would(changes: dict[str, object], message: str) -> None:
+    assert message in errors_of(with_awg(**changes))
+
+
+def test_awg_is_a_vps_tunnel_thing_only(home: dict[str, Any]) -> None:
+    home["wg_server"] = {"endpoint": "vps.example.com", "awg": AWG}
+    assert "wg_server: only role 'vps'" in errors_of(home)

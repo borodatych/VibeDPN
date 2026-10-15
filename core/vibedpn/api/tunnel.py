@@ -236,14 +236,16 @@ class Listeners:
 
 
 def open_listeners(config: Config) -> Listeners:
-    """The loopback API always; on role vps also the tunnel API and the NodeUI relay."""
+    """The loopback API always; on role vps also the tunnel API, and the NodeUI relay when the box
+    runs a node."""
     listeners = Listeners(listen_socket(LOOPBACK, config.api.port, freebind=False))
     if config.wg_server is None:
         return listeners
     address = str(server_address(config).ip)
     try:
         listeners.tunnel_api = listen_socket(address, config.api.port, freebind=True)
-        listeners.nodeui = listen_socket(address, NODEUI_PORT, freebind=True)
+        if config.provider.enabled:
+            listeners.nodeui = listen_socket(address, NODEUI_PORT, freebind=True)
     except BaseException:
         listeners.close()
         raise
@@ -317,7 +319,7 @@ def run_servers(
     except OSError as exc:
         sys.stderr.write(
             f"vibedpn-core: cannot start: cannot listen on port {config.api.port}"
-            f" or {NODEUI_PORT}: {exc.strerror}\n"
+            f"{f' or {NODEUI_PORT}' if config.provider.enabled else ''}: {exc.strerror}\n"
         )
         raise SystemExit(os.EX_UNAVAILABLE) from None
     try:

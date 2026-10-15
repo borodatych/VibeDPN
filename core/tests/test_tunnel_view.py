@@ -96,3 +96,18 @@ def test_a_peer_not_on_the_interface_yet_is_pending() -> None:
 def test_unavailable_only_when_the_interface_cannot_be_read() -> None:
     lines = render_peers([view("dacha", applied=None)], NOW)
     assert lines[-1].startswith("live state unavailable")
+
+
+def test_the_qr_of_a_full_obfuscated_peer_file_fits_a_narrow_terminal() -> None:
+    key = "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk="
+    text = (
+        '# VibeDPN tunnel peer "phone": a comment that stays out of the code\n'
+        f"[Interface]\nPrivateKey = {key}\nAddress = 10.78.0.2/32\n"
+        "Jc = 11\nJmin = 41\nJmax = 139\nS1 = 57\nS2 = 45\nS3 = 40\nS4 = 41\n"
+        f"H1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\nHeaderProtectionKey = {key}\n\n"
+        f"[Peer]\nPublicKey = {key}\nEndpoint = 203.0.113.7:51820\n"
+        "AllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n"
+    )
+    code = qr_code(text)
+    assert max(len(row) for row in code.splitlines()) <= 80
+    assert qr_code(text) == qr_code(text.split("\n", 1)[1])  # a comment is not encoded

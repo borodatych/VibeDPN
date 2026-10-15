@@ -240,11 +240,28 @@ provider:
   traversal: [{{ config.provider.traversal | map(attribute="value") | join(", ") }}]
 {% if config.wg_server %}
 
-# Сервер приватного туннеля (роль vps): домашние коробки набирают endpoint:listen_port.
+# Сервер приватного туннеля (роль vps): домашние коробки, телефоны и ноутбуки набирают endpoint:listen_port.
+# awg — маскировка AmneziaWG 3.1: параметры одни на сервер и все файлы пиров (после смены файлы выдаются заново).
+#   Без блока туннель — обычный WireGuard, который ТСПУ узнаёт по сигнатуре; включение — `vibedpn awg enable`.
+#   Ключ защиты заголовков — секрет, он лежит в secrets/wg-server/header-protection.key, не здесь.
 wg_server:
   endpoint: {{ config.wg_server.endpoint }}
   subnet: {{ config.wg_server.subnet }}
   listen_port: {{ config.wg_server.listen_port }}
+{% if config.wg_server.awg %}
+  awg:
+    jc: {{ config.wg_server.awg.jc }}
+    jmin: {{ config.wg_server.awg.jmin }}
+    jmax: {{ config.wg_server.awg.jmax }}
+    s1: {{ config.wg_server.awg.s1 }}
+    s2: {{ config.wg_server.awg.s2 }}
+    s3: {{ config.wg_server.awg.s3 }}
+    s4: {{ config.wg_server.awg.s4 }}
+    h1: "{{ config.wg_server.awg.h1 }}"
+    h2: "{{ config.wg_server.awg.h2 }}"
+    h3: "{{ config.wg_server.awg.h3 }}"
+    h4: "{{ config.wg_server.awg.h4 }}"
+{% endif %}
 {% endif %}
 
 # Сервер доступа: VLESS/REALITY для своих людей, ссылка на человека — `vibedpn access add <имя>`

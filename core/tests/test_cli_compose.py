@@ -57,7 +57,9 @@ def box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Recorder
     monkeypatch.setattr(cli, "stream", recorder.stream)
     monkeypatch.setattr(cli, "preflight", lambda: None)
     (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
-    config = build_config(Answers(Role.VPS, endpoint="vps.example.com"), HostFacts(None, True))
+    config = build_config(
+        Answers(Role.VPS, endpoint="vps.example.com", provider=True), HostFacts(None, True)
+    )
     (tmp_path / "config.yaml").write_text(render_config(config), encoding="utf-8")
     (tmp_path / "secrets").mkdir()
     (tmp_path / "secrets" / "htpasswd").write_text("admin:x\n", encoding="utf-8")

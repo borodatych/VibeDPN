@@ -311,6 +311,16 @@
 - [ ] **Второй DPN-бэкенд Sentinel** — разведка сделана (2026-09-25): клиент `sentinel-dvpncli` с официальным образом в `ghcr.io` (WireGuard, V2Ray, Xray, Hysteria2, AmneziaWG), сессия у узла оплачивается за ГБ или час в P2P — медиана 40 P2P ≈ $0.003 за ГБ по 1 733 активным узлам. С коробки: REST цепочки доступен (`lcd.sentinel.co` отдаёт 307, `sentinel-api.polkachu.com` — 200), TLS до API 123 из 150 случайных узлов, типы ответивших — `wireguard` 61, `v2ray` 54. Туннель не проверен: нужен кошелёк с P2P у владельца. Встраивание — по образцу `dpn`, узлы `v2ray` в приоритете (рукопожатие WireGuard к Proton на этой линии не проходит). Разбор — `knowledge/sentinel/recon.md`
 - [ ] **Продажа доступа чужим на `start0`** — после появления настоящей VPS, по замыслу и решениям владельца от 18.09 в «Предложениях»
 
+## Stage 14 — Голый VPS + AmneziaWG (2026-10-15)
+
+Решение владельца 15.10.2026: «голый VPS, AmneziaWG сразу» — VPS для человека в России без коробки и без ноды Mysterium.
+Снимает решение 25.09 «VPS — после того, как закроем коробку» (решение 41).
+
+- [x] **AmneziaWG 3.1 вместо WireGuard ядра во всех туннелях** — ✅ (2026-10-15, `next`, 2ecc12e) образ `vibedpn-wg` собирает `amneziawg-go` и `awg` из исходников по коммитам, туннель в userspace на `/dev/net/tun`; обычный WireGuard-файл работает как раньше; doctor и init проверяют `/dev/net/tun` вместо модуля; `tunnel.sh` — plain, awg2, awg3. Разбор — `knowledge/wireguard/amnezia.md`
+- [x] **Роль `vps` без ноды, маскировка AWG в конфиге, доступ при init** — ✅ (2026-10-15, `next`) `init --role vps` по умолчанию без ноды, флаги `--provider/--no-provider` и `--access`; блок `wg_server.awg` генерируется при init, `HeaderProtectionKey` — в `secrets/`; `vibedpn awg enable|disable`; без ноды нет порта 4449 и пароля панели; стенд `tests/e2e/vps.sh` (офлайн и онлайн в colima) и job `e2e-vps`; мануал `manuals/bareVps.md`
+- [ ] **Живой прогон на VPS брата** — установка по `bareVps.md`, телефон из России: AWG и REALITY через мобильного и домашнего провайдера; файл 3.1 в приложениях Amnezia (QR и импорт)
+- [ ] **CI на GitHub зелёный** — `/dev/net/tun` на раннере, job `e2e-vps` и `tunnel` ни разу не гонялись на Actions
+
 ## Предложения (не выполнять без команды оператора)
 
 Подбор CDN к сайту с помощью ИИ принят владельцем 23.09.2026 и перенесён в Stage 13.

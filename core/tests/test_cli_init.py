@@ -5,7 +5,7 @@ from pathlib import Path
 
 import bcrypt
 import pytest
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from vibedpn import cli
 from vibedpn.api import client as core_api
@@ -66,6 +66,7 @@ def test_init_vps_non_interactive(tmp_path: Path) -> None:
             "init",
             "--role",
             "vps",
+            "--provider",
             "--endpoint",
             "203.0.113.7",
             "--password-file",
@@ -79,6 +80,55 @@ def test_init_vps_non_interactive(tmp_path: Path) -> None:
     assert "Next step: vibedpn up" in result.output
     assert (box / "secrets" / "htpasswd").is_file()
     assert (box / "data" / "myst-provider" / "nodeui-pass").is_file()
+
+
+def bare_vps(tmp_path: Path, *extra: str) -> tuple[Path, Result]:
+    box = tmp_path / "box"
+    result = runner.invoke(
+        cli.app,
+        ["init", "--role", "vps", "--endpoint", "203.0.113.7", *extra, "--dir", str(box)],
+    )
+    return box, result
+
+
+def test_init_bare_vps_asks_for_nothing_and_runs_no_node(tmp_path: Path) -> None:
+    box, result = bare_vps(tmp_path)
+    assert result.exit_code == 0, result.output
+    config = load_config(box / "config.yaml")
+    assert not config.provider.enabled and not config.access.enabled
+    assert config.wg_server is not None and config.wg_server.awg is not None
+    assert "COMPOSE_PROFILES=wg-server\n" in (box / ".env").read_text(encoding="utf-8")
+    # no panel, no node, no AdGuard: no password and nothing of it on disk
+    assert not (box / "secrets" / "htpasswd").exists()
+    assert not (box / "data" / "myst-provider").exists()
+    assert "no Mysterium node" in result.output and "vibedpn peer add <name>" in result.output
+
+
+def test_init_bare_vps_with_access_enables_the_access_server(tmp_path: Path) -> None:
+    box, result = bare_vps(tmp_path, "--no-provider", "--access")
+    assert result.exit_code == 0, result.output
+    config = load_config(box / "config.yaml")
+    assert config.access.enabled and config.access_address() == "203.0.113.7"
+    assert "COMPOSE_PROFILES=wg-server,access\n" in (box / ".env").read_text(encoding="utf-8")
+    assert "vibedpn access add <name>" in result.output
+
+
+def test_init_bare_vps_has_no_use_for_a_password_file(tmp_path: Path) -> None:
+    box, result = bare_vps(tmp_path, "--password-file", str(password_file(tmp_path)))
+    assert result.exit_code == 1 and "--provider" in result.output
+    assert not box.exists()
+
+
+def test_init_provider_and_access_belong_to_the_vps_role(tmp_path: Path) -> None:
+    for flag, message in (
+        ("--provider", "--provider/--no-provider is only used with --role vps"),
+        ("--access", "--access is only used with --role vps"),
+    ):
+        result = runner.invoke(
+            cli.app, ["init", "--role", "home", flag, "--dir", str(tmp_path / "b")]
+        )
+        assert result.exit_code == 1 and message in result.output
+    assert not (tmp_path / "b").exists()
 
 
 def test_init_client_with_flags(tmp_path: Path) -> None:
@@ -150,7 +200,7 @@ def test_init_rejects_bad_endpoint_flag_readably(tmp_path: Path) -> None:
 def test_init_reasks_a_bad_endpoint_interactively(tmp_path: Path) -> None:
     result = runner.invoke(
         cli.app,
-        ["init", "--role", "vps", "--dir", str(tmp_path)],
+        ["init", "--role", "vps", "--provider", "--dir", str(tmp_path)],
         input="secret123\nsecret123\n2001:db8::1\nvps.example.com\n",
     )
     assert result.exit_code == 0, result.output
@@ -193,7 +243,7 @@ def test_init_expands_tilde_in_peer_prompt(tmp_path: Path, monkeypatch: pytest.M
 def test_init_asks_endpoint_behind_nat(tmp_path: Path) -> None:
     result = runner.invoke(
         cli.app,
-        ["init", "--role", "vps", "--dir", str(tmp_path)],
+        ["init", "--role", "vps", "--provider", "--dir", str(tmp_path)],
         input="secret123\nsecret123\nvps.example.com\n",
     )
     assert result.exit_code == 0, result.output
@@ -208,6 +258,7 @@ def test_init_refuses_second_run_without_force_before_asking(tmp_path: Path) -> 
         "init",
         "--role",
         "vps",
+        "--provider",
         "--endpoint",
         "203.0.113.7",
         "--password-file",
@@ -233,6 +284,7 @@ def test_init_warns_without_tun_device(tmp_path: Path, fake_probe: type[FakeProb
             "init",
             "--role",
             "vps",
+            "--provider",
             "--endpoint",
             "203.0.113.7",
             "--password-file",

@@ -21,6 +21,7 @@ from pydantic import ValidationError
 
 from vibedpn.atomic import write_like
 from vibedpn.config import (
+    AccessConfig,
     Config,
     DhcpConfig,
     DpnUplink,
@@ -43,6 +44,7 @@ from vibedpn.config import (
 )
 from vibedpn.detect import DEFAULT_SSH_PORT, Interface
 from vibedpn.engine.hostapd import PASSPHRASE_FILE as WIFI_PASSPHRASE_FILE
+from vibedpn.engine.wg import generate_awg
 from vibedpn.templating import template_environment
 
 DEFAULT_BOX_DIR = Path("/opt/vibedpn")  # install.sh has the same default; keep them equal
@@ -119,6 +121,10 @@ class Answers:
     # gateway mode: the LAN side, another interface than the default-route one (the WAN)
     lan_interface: str | None = None
     wifi: WifiConfig | None = None  # the access point on that LAN interface
+    # role vps: whether the VPS also runs a Mysterium node; a bare VPS (the default) runs none
+    provider: bool = False
+    # role vps: the access server (VLESS/REALITY) is on from the first start
+    access: bool = False
 
 
 @dataclass(frozen=True)
@@ -142,7 +148,7 @@ class Written:
 
 def required_secrets(config: Config) -> list[str]:
     """Secret files a box of this configuration cannot run without."""
-    needed = [HTPASSWD_FILE]
+    needed = [HTPASSWD_FILE] if needs_panel_password(config) else []
     if config.role is Role.CLIENT:
         needed.append(WG_CLIENT_CONF)
     if config.provider.enabled:
@@ -153,6 +159,13 @@ def required_secrets(config: Config) -> list[str]:
     if config.upstreams.xray.enabled:
         needed.append(XRAY_LINK_FILE)
     return needed
+
+
+def needs_panel_password(config: Config) -> bool:
+    """Whether anything on the box checks the panel password: the panel itself, the node's
+    NodeUI or AdGuard Home. A bare VPS runs none of them and has no password to ask for."""
+    profiles = config.compose_profiles()
+    return config.provider.enabled or Profile.UI in profiles or Profile.DNS in profiles
 
 
 def generated_secrets(config: Config) -> tuple[str, ...]:
@@ -249,8 +262,10 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
         return _validated(
             version=1,
             role=Role.VPS,
-            provider=ProviderConfig(enabled=True),
-            wg_server=WgServerConfig(endpoint=endpoint),
+            provider=ProviderConfig(enabled=answers.provider),
+            # Obfuscated from the first day: a plain handshake is what the censor looks for
+            wg_server=WgServerConfig(endpoint=endpoint, awg=generate_awg()),
+            access=AccessConfig(enabled=answers.access),
             firewall=FirewallConfig(ssh_ports=facts.ssh_ports),
         )
     if facts.interface is None:

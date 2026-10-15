@@ -39,7 +39,9 @@ def make_box(tmp_path: Path) -> Path:
     box = tmp_path / "box"
     box.mkdir()
     (box / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
-    config = build_config(Answers(Role.VPS, endpoint="vps.example.com"), HostFacts(None, True))
+    config = build_config(
+        Answers(Role.VPS, endpoint="vps.example.com", provider=True), HostFacts(None, True)
+    )
     (box / "config.yaml").write_text(render_config(config), encoding="utf-8")
     return box
 

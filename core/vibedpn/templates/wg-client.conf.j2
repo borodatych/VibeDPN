@@ -4,6 +4,20 @@
 [Interface]
 PrivateKey = {{ peer.private_key }}
 Address = {{ peer.address }}/32
+{% if awg %}
+Jc = {{ awg.jc }}
+Jmin = {{ awg.jmin }}
+Jmax = {{ awg.jmax }}
+S1 = {{ awg.s1 }}
+S2 = {{ awg.s2 }}
+S3 = {{ awg.s3 }}
+S4 = {{ awg.s4 }}
+H1 = {{ awg.h1 }}
+H2 = {{ awg.h2 }}
+H3 = {{ awg.h3 }}
+H4 = {{ awg.h4 }}
+HeaderProtectionKey = {{ header_key }}
+{% endif %}
 
 [Peer]
 PublicKey = {{ server_public_key }}

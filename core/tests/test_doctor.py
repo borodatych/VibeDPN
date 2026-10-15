@@ -49,7 +49,7 @@ def home_config() -> Config:
 
 
 def vps_config() -> Config:
-    return build_config(Answers(Role.VPS, endpoint="vps.example.com"), LAN)
+    return build_config(Answers(Role.VPS, endpoint="vps.example.com", provider=True), LAN)
 
 
 def facts(**overrides: object) -> DoctorFacts:
@@ -434,7 +434,9 @@ def test_core_must_listen_on_the_tunnel_address() -> None:
     ]
     ok = verdict(core)
     assert ok.verdict is Verdict.OK
-    assert ok.detail == "node panel 10.78.0.1:4449 and core API 10.78.0.1:4480 for home boxes"
+    assert ok.detail == (
+        "node panel 10.78.0.1:4449 and core API 10.78.0.1:4480 for the peers of the tunnel"
+    )
     anonymous = verdict(
         [Listener("tcp", "10.78.0.1", 4449, ""), Listener("tcp", "10.78.0.1", 4480, "")]
     )
@@ -883,3 +885,30 @@ def test_exit_dpn_without_a_session_is_not_called_a_leak() -> None:
     # A tunnel that works while the node calls itself disconnected is still a working tunnel.
     early = verdict(doctor.ExitFact("dpn", "198.51.100.20"), "NotConnected")
     assert early.verdict is Verdict.OK
+
+
+def bare_vps_config() -> Config:
+    return build_config(Answers(Role.VPS, endpoint="vps.example.com"), LAN)
+
+
+def test_a_bare_vps_needs_no_node_ports_and_no_password() -> None:
+    needs = {(n.service, n.label) for n in port_needs(bare_vps_config())}
+    assert ("wg-server", "udp/51820") in needs
+    assert not any(service == "myst-provider" for service, _ in needs)
+    secrets = by_name(
+        evaluate(facts(config=bare_vps_config(), secrets={"htpasswd": False, "nodeui-pass": False}))
+    )["secrets"]
+    assert secrets.verdict is Verdict.OK
+
+
+def test_a_bare_vps_core_listens_on_the_tunnel_api_only() -> None:
+    def verdict(listeners: list[Listener]) -> doctor.CheckResult:
+        return by_name(evaluate(facts(config=bare_vps_config(), listeners=listeners)))[
+            "tunnel access"
+        ]
+
+    api = Listener("tcp", "10.78.0.1", 4480, "vibedpn-core")
+    ok = verdict([api])  # no NodeUI relay without a node: its absence is not a failure
+    assert ok.verdict is Verdict.OK
+    assert ok.detail == "core API 10.78.0.1:4480 for the peers of the tunnel"
+    assert verdict([]).detail == "nothing listens on 10.78.0.1:4480"

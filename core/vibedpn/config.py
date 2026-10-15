@@ -14,6 +14,7 @@ import json
 import re
 from enum import StrEnum
 from ipaddress import IPv4Address, IPv4Network
+from itertools import pairwise
 from pathlib import Path
 from typing import Annotated, Literal, Self
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -107,6 +108,19 @@ DHCP_POOL_FIRST_OFFSET = 100
 DHCP_POOL_LAST_MARGIN = 5
 MIN_DHCP_SUBNET_PREFIX = 28
 LEASE_PATTERN = re.compile(r"^(\d+[mhdw]?|infinite)$")
+# AmneziaWG 3.1 obfuscation (docs/knowledge/wireguard/amnezia.md): the bounds the daemon and the
+# apps enforce, and the standard WireGuard message types H1..H4 default to.
+AWG_UINT16_MAX = 65535
+AWG_UINT32_MAX = 2**32 - 1
+# Below this a header protection nonce does not fit the padding (HeaderCipherNonceSize).
+AWG_MIN_PADDING = 12
+# A datagram above the IPv6 minimum MTU is fragmented in transit, which a censor reads as a mark.
+AWG_MAX_WIRE_BYTES = 1280
+AWG_HANDSHAKE_BYTES = (148, 92, 64)  # Init, Response, Cookie before their S1..S3 padding
+# The biggest handshake message (the Init) plus its padding must fit in one datagram.
+AWG_MAX_PADDING = AWG_MAX_WIRE_BYTES - max(AWG_HANDSHAKE_BYTES)
+AWG_DEFAULT_HEADERS = ("1", "2", "3", "4")  # standard WireGuard types: own headers off
+AWG_HEADER_PATTERN = re.compile(r"^(\d{1,10})(?:-(\d{1,10}))?$")
 
 Port = Annotated[int, Field(ge=PORT_MIN, le=PORT_MAX)]
 InterfaceName = Annotated[str, Field(pattern=INTERFACE_PATTERN.pattern)]
@@ -779,12 +793,71 @@ class ProviderConfig(StrictModel):
         return value
 
 
+def parse_awg_header(text: str) -> tuple[int, int]:
+    """``(low, high)`` of a message type id: ``7`` is ``(7, 7)``, ``10-20`` is ``(10, 20)``."""
+    found = AWG_HEADER_PATTERN.fullmatch(text)
+    if found is None:
+        raise ValueError(f"{text!r} is not a message type: a number or a range a-b")
+    low = int(found.group(1))
+    high = int(found.group(2) or low)
+    if not low <= high <= AWG_UINT32_MAX:
+        raise ValueError(f"{text!r} is not a range inside 0..{AWG_UINT32_MAX}")
+    return low, high
+
+
+class AwgConfig(StrictModel):
+    """AmneziaWG 3.1 obfuscation of the tunnel server, the parameters both ends must share.
+
+    Absent from ``wg_server`` the tunnel is plain WireGuard. The header protection key is a secret
+    and lives in ``secrets/wg-server/``, not here. Bounds and meaning of every field:
+    docs/knowledge/wireguard/amnezia.md.
+    """
+
+    # junk packets before a handshake, and the size range of each
+    jc: int = Field(ge=0, le=AWG_UINT16_MAX)
+    jmin: int = Field(ge=0, le=AWG_MAX_WIRE_BYTES)
+    jmax: int = Field(ge=0, le=AWG_MAX_WIRE_BYTES)
+    # random prefix lengths of the Init, Response, Cookie and Data messages
+    s1: int = Field(ge=AWG_MIN_PADDING, le=AWG_MAX_PADDING)
+    s2: int = Field(ge=AWG_MIN_PADDING, le=AWG_MAX_PADDING)
+    s3: int = Field(ge=AWG_MIN_PADDING, le=AWG_MAX_PADDING)
+    s4: int = Field(ge=AWG_MIN_PADDING, le=AWG_MAX_PADDING)
+    # message type ids: a number or a range "a-b"; with header protection 1..4 is what the
+    # documentation advises
+    h1: str = AWG_DEFAULT_HEADERS[0]
+    h2: str = AWG_DEFAULT_HEADERS[1]
+    h3: str = AWG_DEFAULT_HEADERS[2]
+    h4: str = AWG_DEFAULT_HEADERS[3]
+
+    @field_validator("h1", "h2", "h3", "h4", mode="before")
+    @classmethod
+    def check_header(cls, value: object) -> str:
+        text = str(value).strip()
+        parse_awg_header(text)
+        return text
+
+    @model_validator(mode="after")
+    def check_consistency(self) -> Self:
+        if self.jmin > self.jmax:
+            raise ValueError("wg_server.awg.jmin must not exceed jmax")
+        ranges = sorted(self.header_ranges())
+        for (_, previous_high), (low, _) in pairwise(ranges):
+            if low <= previous_high:
+                raise ValueError("wg_server.awg.h1..h4 must not overlap")
+        return self
+
+    def header_ranges(self) -> list[tuple[int, int]]:
+        """``(low, high)`` of h1..h4 in order."""
+        return [parse_awg_header(text) for text in (self.h1, self.h2, self.h3, self.h4)]
+
+
 class WgServerConfig(StrictModel):
     """WireGuard server of a VPS box; home boxes dial ``endpoint:listen_port``."""
 
     endpoint: str
     subnet: IPv4Network = IPv4Network("10.78.0.0/24")
     listen_port: Port = 51820
+    awg: AwgConfig | None = None
 
     @field_validator("endpoint")
     @classmethod
@@ -1085,8 +1158,6 @@ class Config(StrictModel):
         errors: list[str] = []
         if self.wg_server is None:
             errors.append("wg_server: required for role 'vps'")
-        if not self.provider.enabled:
-            errors.append("provider.enabled: must be true for role 'vps'")
         return errors
 
     def _lan_box_errors(self) -> list[str]:
@@ -1175,7 +1246,8 @@ class Config(StrictModel):
     def compose_profiles(self) -> list[Profile]:
         """Compose profiles this box needs, in the canonical order of ``Profile``."""
         if self.role is Role.VPS:
-            profiles = [Profile.PROVIDER, Profile.WG_SERVER]
+            profiles = [Profile.PROVIDER] if self.provider.enabled else []
+            profiles.append(Profile.WG_SERVER)
             if self.ui.enabled:
                 profiles.append(Profile.UI)
             if self.access.enabled:
@@ -1279,7 +1351,10 @@ class Config(StrictModel):
                 "ui": {"enabled": self.ui.enabled, "host_name": self.ui.host_name},
             },
             DIGEST_WG_SERVER: (
-                self.wg_server.model_dump(mode="json") if self.wg_server is not None else None
+                # without the obfuscation parameters the value is what it was before they existed
+                self.wg_server.model_dump(mode="json", exclude_none=True)
+                if self.wg_server is not None
+                else None
             ),
             # What the server itself reads: its port and cover site, and on a LAN box the
             # AdGuard it resolves through. A server that is off reads nothing, and turning it on

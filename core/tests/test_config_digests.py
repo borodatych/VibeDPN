@@ -31,6 +31,7 @@ from vibedpn.config import (
     RoutingMode,
     Traversal,
     UiVariant,
+    config_digest,
     parse_yaml,
     recreated_services,
 )
@@ -363,3 +364,26 @@ def test_new_bridges_recreate_tor_and_nothing_else() -> None:
     after = with_value(before, "upstreams.tor.bridges", ["obfs4 192.0.2.9:443 X"])
     old, new = before.config_digests(), after.config_digests()
     assert {name for name in old if old[name] != new[name]} == {DIGEST_TOR}
+
+
+def test_obfuscation_parameters_recreate_the_tunnel_server_and_core() -> None:
+    plain = vps_config()
+    obfuscated = vps_config()
+    obfuscated["wg_server"] = {
+        **plain["wg_server"],
+        "awg": {"jc": 8, "jmin": 50, "jmax": 120, "s1": 20, "s2": 30, "s3": 40, "s4": 50},
+    }
+    renewed = vps_config()
+    renewed["wg_server"] = {**obfuscated["wg_server"], "awg": {**obfuscated["wg_server"]["awg"]}}
+    renewed["wg_server"]["awg"]["jc"] = 9
+    assert changed(plain, obfuscated) == {DIGEST_CORE, DIGEST_WG_SERVER}
+    assert changed(obfuscated, renewed) == {DIGEST_CORE, DIGEST_WG_SERVER}
+
+
+def test_a_config_without_obfuscation_keeps_the_fingerprints_it_had() -> None:
+    """The field is absent from the dump when unset, so an update does not recreate the tunnel
+    server of a box that never asked for it."""
+    digests = Config.model_validate(vps_config()).config_digests()
+    assert digests[DIGEST_WG_SERVER] == config_digest(
+        {"endpoint": "vps.example.com", "subnet": "10.78.0.0/24", "listen_port": 51820}
+    )

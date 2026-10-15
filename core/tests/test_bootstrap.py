@@ -179,7 +179,7 @@ def test_write_box_writes_config_env_and_secrets(tmp_path: Path) -> None:
 def test_write_box_writes_the_node_password_for_provider_roles(tmp_path: Path) -> None:
     for answers in (
         Answers(Role.HOME, password="secret123"),
-        Answers(Role.VPS, password="secret123", endpoint="vps.example.com"),
+        Answers(Role.VPS, password="secret123", endpoint="vps.example.com", provider=True),
     ):
         box = tmp_path / answers.role.value
         written = write_box(box, build_config(answers, LAN), answers, force=False)
@@ -241,6 +241,7 @@ def test_force_with_a_new_role_sets_old_secrets_aside(tmp_path: Path) -> None:
     write_box(box, build_config(client, LAN), client, force=False)
     vps = Answers(Role.VPS, endpoint="vps.example.com")
     written = write_box(box, build_config(vps, LAN), vps, force=True)
+    # a bare VPS has no panel and no node: the password of the previous role goes aside too
     assert sorted(p.name for p in written.retired) == [
         "adguard-core-password.bak",
         "htpasswd.bak",
@@ -251,7 +252,7 @@ def test_force_with_a_new_role_sets_old_secrets_aside(tmp_path: Path) -> None:
     assert not (box / "secrets" / "wg-client.conf").exists()
     assert stat.S_IMODE((box / "secrets" / "wg-client.conf.bak").stat().st_mode) == 0o600
     # A node password left behind by a provider role is set aside the same way.
-    node = Answers(Role.VPS, password="secret123", endpoint="vps.example.com")
+    node = Answers(Role.VPS, password="secret123", endpoint="vps.example.com", provider=True)
     write_box(box, build_config(node, LAN), node, force=True)
     back = write_box(box, build_config(client, LAN), client, force=True)
     assert [p.name for p in back.retired] == ["nodeui-pass.bak"]
@@ -385,3 +386,35 @@ def test_the_panel_variant_follows_the_memory_unless_given() -> None:
         build_config(Answers(Role.HOME, password="secret123"), small).ui.variant is UiVariant.LITE
     )
     assert build_config(client, small).ui.variant is UiVariant.LITE
+
+
+def test_a_vps_is_bare_unless_it_is_asked_for_a_node() -> None:
+    bare = build_config(Answers(Role.VPS, endpoint="vps.example.com"), LAN)
+    assert not bare.provider.enabled and not bare.access.enabled
+    assert required_secrets(bare) == []  # nothing on it checks a password
+    noded = build_config(Answers(Role.VPS, endpoint="vps.example.com", provider=True), LAN)
+    assert noded.provider.enabled
+    assert required_secrets(noded) == ["htpasswd", "nodeui-pass"]
+
+
+def test_a_new_vps_gets_random_obfuscation_that_survives_the_template() -> None:
+    first = build_config(Answers(Role.VPS, endpoint="vps.example.com"), LAN)
+    second = build_config(Answers(Role.VPS, endpoint="vps.example.com"), LAN)
+    assert first.wg_server is not None and second.wg_server is not None
+    assert first.wg_server.awg is not None and first.wg_server.awg != second.wg_server.awg
+    text = render_config(first)
+    assert "HeaderProtectionKey" not in text  # the key is a secret, never a line of config.yaml
+    assert Config.model_validate(parse_yaml(text)) == first
+
+
+def test_access_at_init_names_the_endpoint_of_the_vps() -> None:
+    config = build_config(Answers(Role.VPS, endpoint="vps.example.com", access=True), LAN)
+    assert config.access.enabled and config.access_address() == "vps.example.com"
+    assert "access" in [profile.value for profile in config.compose_profiles()]
+
+
+def test_a_bare_vps_writes_no_password_files(tmp_path: Path) -> None:
+    answers = Answers(Role.VPS, endpoint="vps.example.com")
+    written = write_box(tmp_path, build_config(answers, LAN), answers, force=False)
+    assert [p.name for p in written.files] == ["config.yaml", ".env"]
+    assert not (tmp_path / "secrets" / "htpasswd").exists()

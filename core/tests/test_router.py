@@ -33,7 +33,7 @@ NFT_PATH = "/usr/sbin/nft"
 
 
 def vps(**firewall: object) -> Config:
-    config = build_config(Answers(Role.VPS, endpoint="vps.example.com"), FACTS)
+    config = build_config(Answers(Role.VPS, endpoint="vps.example.com", provider=True), FACTS)
     if firewall:
         return config.model_copy(update={"firewall": FirewallConfig(**firewall)})  # type: ignore[arg-type]
     return config
@@ -489,3 +489,17 @@ def test_egress_is_removed_with_the_tunnel(monkeypatch: pytest.MonkeyPatch) -> N
     assert len([argv for argv in calls if "-D" in argv]) == 2
     fake_iptables(monkeypatch, {})  # no iptables at all: the table still goes, nothing raises
     assert apply_tunnel_egress(home) is Egress.NONE
+
+
+def bare_vps() -> Config:
+    return build_config(Answers(Role.VPS, endpoint="vps.example.com", access=True), FACTS)
+
+
+def test_a_bare_vps_opens_no_node_ports_inside_the_tunnel_or_outside() -> None:
+    text = firewall_ruleset(bare_vps())
+    assert text is not None
+    assert "myst_udp" not in text and "mysterium node" not in text
+    assert 'iifname "wg0" tcp dport { 4480 } accept' in text  # the API of core, not the node panel
+    assert "4449" not in text
+    assert "udp dport 51820 accept" in text
+    assert 'tcp dport 443 accept comment "access server"' in text

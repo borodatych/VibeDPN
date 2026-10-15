@@ -7,7 +7,7 @@
 | Роль | Где стоит | Что запущено | Кому |
 |---|---|---|---|
 | `home` | дома, одна коробка | provider + consumer + router + dns + ui | «хочу всё в одной коробке» |
-| `vps` | VPS | provider + wg-server + api (headless) | нода отдельно, дома клиент |
+| `vps` | VPS | wg-server + api (headless); provider — по желанию (`--provider`) | голый VPS для своих устройств и людей; или нода отдельно, дома клиент |
 | `client` | дома | consumer + wg-client + router + dns + ui | вторая половина связки с `vps` |
 
 ## Профили и контейнеры
@@ -15,7 +15,7 @@
 | Профиль | Контейнер | Сеть | Роли |
 |---|---|---|---|
 | всегда | `core` (FastAPI + router-engine + CLI-бэкенд) | host, `NET_ADMIN` | все |
-| `provider` | `myst-provider` | bridge, published UDP-диапазоны | `home`, `vps` |
+| `provider` | `myst-provider` | bridge, published UDP-диапазоны | `home`, `vps` (только с `provider.enabled`) |
 | `consumer` | `myst-consumer` (аплинк `dpn`) | `vibedpn-upstreams` 10.77.0.20 | `home`, `client` |
 | `wg-server` | `wg-server` | host, 51820/udp | `vps` |
 | `wg-client` | `wg-client` (аплинк `vps`) | `vibedpn-upstreams` 10.77.0.10 | `client` |
@@ -27,8 +27,9 @@
 
 ## Связка `vps` + `client`
 
-У VPS два аплинка наружу: публичная myst-нода (зарабатывает) и приватный WireGuard-сервер для
-своих домашних коробок (бесплатный быстрый туннель). Один VPS обслуживает несколько домашних
+У VPS до двух аплинков наружу: публичная myst-нода (зарабатывает; по желанию, `init --provider`) и
+приватный сервер AmneziaWG для своих домашних коробок, телефонов и ноутбуков. Голый VPS без ноды
+— [manuals/bareVps.md](manuals/bareVps.md). Один VPS обслуживает несколько домашних
 клиентов: `vibedpn peer add <name>` на VPS выдаёт `<name>.conf`, дома —
 `vibedpn init --role client --peer-config <name>.conf` кладёт его в `secrets/wg-client.conf`,
 откуда его читает контейнер `wg-client`. Через этот же туннель VPS отдаёт домой

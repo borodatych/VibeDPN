@@ -35,7 +35,7 @@ table inet vibedpn {
     udp dport @myst_udp accept comment "mysterium node"
 {% endif %}
 {% if tunnel_subnet %}
-    iifname "{{ wg_interface }}" tcp dport { {{ tunnel_tcp_ports | join(", ") }} } accept comment "node panel and core API for home boxes"
+    iifname "{{ wg_interface }}" tcp dport { {{ tunnel_tcp_ports | join(", ") }} } accept comment "core API and the panels, for peers inside the tunnel"
 {% endif %}
 {% if allow_tcp %}
     tcp dport { {{ allow_tcp | join(", ") }} } accept comment "owner"

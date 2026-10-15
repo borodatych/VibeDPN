@@ -58,6 +58,8 @@ REALITY_KEY = "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc"
         ("proxy socks5://user:hunter2@10.0.0.1:1080", "proxy socks5://***@10.0.0.1:1080"),
         ("user 0b9c3f7e-1d2a-4c5b-8e6f-7a8b9c0d1e2f added", "user *** added"),
         (f"peer {WG_KEY} handshake", "peer *** handshake"),
+        (f"HeaderProtectionKey = {WG_KEY}", "HeaderProtectionKey = ***"),
+        (f"{WG_KEY}\t{WG_KEY}\t51820\t8\t50", "***\t***\t51820\t8\t50"),  # `awg show wg0 dump`
         (f"privateKey: {REALITY_KEY}", "privateKey: ***"),
         ("wpa_passphrase=secret words here", "wpa_passphrase=*** words here"),
     ],

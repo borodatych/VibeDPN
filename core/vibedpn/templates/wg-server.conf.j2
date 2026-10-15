@@ -4,6 +4,21 @@
 Address = {{ address }}
 ListenPort = {{ listen_port }}
 PrivateKey = {{ private_key }}
+{% if awg %}
+# AmneziaWG obfuscation: the same values, and the key, are in every peer file.
+Jc = {{ awg.jc }}
+Jmin = {{ awg.jmin }}
+Jmax = {{ awg.jmax }}
+S1 = {{ awg.s1 }}
+S2 = {{ awg.s2 }}
+S3 = {{ awg.s3 }}
+S4 = {{ awg.s4 }}
+H1 = {{ awg.h1 }}
+H2 = {{ awg.h2 }}
+H3 = {{ awg.h3 }}
+H4 = {{ awg.h4 }}
+HeaderProtectionKey = {{ header_key }}
+{% endif %}
 {% for peer in peers %}
 
 [Peer]

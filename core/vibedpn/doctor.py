@@ -568,14 +568,16 @@ def _tunnel_result(files: dict[str, FileFact]) -> CheckResult:
 
 
 def _tunnel_access_result(config: Config, facts: DoctorFacts) -> CheckResult | None:
-    """Core itself listens on the tunnel address: the node panel and the API for home boxes."""
+    """Core itself listens on the tunnel address: the API for the peers, and the node panel when
+    the box runs a node."""
     if config.wg_server is None:
         return None
     address = str(server_address(config).ip)
     if facts.listeners is None:
         return CheckResult("tunnel access", Verdict.WARN, f"cannot check: {facts.listeners_error}")
     problems: list[str] = []
-    for port in (NODEUI_PORT, config.api.port):
+    ports = (NODEUI_PORT, config.api.port) if config.provider.enabled else (config.api.port,)
+    for port in ports:
         holder = next(
             (
                 item
@@ -595,11 +597,11 @@ def _tunnel_access_result(config: Config, facts: DoctorFacts) -> CheckResult | N
             "; ".join(problems),
             "vibedpn restart, then vibedpn logs core",
         )
+    node_panel = f"node panel {address}:{NODEUI_PORT} and " if config.provider.enabled else ""
     return CheckResult(
         "tunnel access",
         Verdict.OK,
-        f"node panel {address}:{NODEUI_PORT} and core API {address}:{config.api.port}"
-        " for home boxes",
+        f"{node_panel}core API {address}:{config.api.port} for the peers of the tunnel",
     )
 
 

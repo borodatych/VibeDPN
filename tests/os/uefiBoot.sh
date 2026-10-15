@@ -147,7 +147,7 @@ grep -q "Role" "$WORK/login.log" || {
 }
 log "$ARCH: vibedpn init and doctor on the image"
 # a single-NIC VM is a vps; the endpoint is a documentation address, nothing is started
-vm "printf 'vibedpn-test-password-1\n' >/tmp/pw && sudo -n vibedpn init --role vps --endpoint 203.0.113.10 --password-file /tmp/pw" ||
+vm "printf 'vibedpn-test-password-1\n' >/tmp/pw && sudo -n vibedpn init --role vps --provider --endpoint 203.0.113.10 --password-file /tmp/pw" ||
   fail "vibedpn init failed in the image"
 vm "sudo -n vibedpn doctor" >"$WORK/doctor.log" 2>&1 || true
 if ! grep -q -E "[0-9]+ ok, [0-9]+ warn, [0-9]+ fail" "$WORK/doctor.log" || grep -q Traceback "$WORK/doctor.log"; then

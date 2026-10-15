@@ -62,3 +62,14 @@ def test_config_example_is_the_rendered_template() -> None:
 def test_spec_examples_render_and_round_trip(block: str) -> None:
     config = Config.model_validate(parse_yaml(block))
     assert Config.model_validate(parse_yaml(render_config(config))) == config
+
+
+def test_spec_has_a_bare_vps_example_with_obfuscation() -> None:
+    bare = [
+        config
+        for config in (Config.model_validate(parse_yaml(block)) for block in spec_examples())
+        if config.role.value == "vps" and not config.provider.enabled
+    ]
+    assert len(bare) == 1
+    assert bare[0].wg_server is not None and bare[0].wg_server.awg is not None
+    assert bare[0].compose_profiles() == [Profile.WG_SERVER, Profile.ACCESS]

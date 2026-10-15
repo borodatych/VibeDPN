@@ -74,7 +74,7 @@ docker compose version
 
 ## Настроить: `sudo vibedpn init`
 
-Мастер спрашивает только то, что нельзя определить: роль, пароль панелей (от 8 символов, не
+Мастер спрашивает только то, что нельзя определить: роль, пароль панелей (кроме голого VPS без ноды: ему проверять пароль нечему) (от 8 символов, не
 длиннее 72 байт в UTF-8 — предел bcrypt, кириллица занимает 2 байта на букву; он же пароль
 веб-интерфейса VibeDPN и панели ноды NodeUI — логин там `myst`), для `client` — путь к peer-файлу
 с VPS. Флаг чужой роли (`--peer-config`
@@ -86,7 +86,8 @@ docker compose version
 Всё задаваемо флагами — для автоматизации и повторяемости:
 
 ```bash
-sudo vibedpn init --role vps --endpoint vps.example.com --password-file ~/panels.pw
+sudo vibedpn init --role vps --endpoint vps.example.com
+sudo vibedpn init --role vps --provider --endpoint vps.example.com --password-file ~/panels.pw
 sudo vibedpn init --role client --peer-config ~/home.conf --password-file ~/panels.pw
 ```
 
@@ -215,6 +216,9 @@ DNS, сервер туннеля, файрвол), оставляют в `.env` 
 `vibedpn doctor` сверяет образы с кодом: строка `images` предупреждает, если образ собран из другого коммита, чем checkout.
 
 ## Роль `vps`: нода Mysterium
+
+Нода — по желанию: `init --role vps` без `--provider` ставит голый VPS (туннель AmneziaWG и, с `--access`,
+сервер доступа), без ноды, панели и пароля — [bareVps.md](bareVps.md). Всё ниже — для `--provider`.
 
 После `vibedpn up` контейнер `myst-provider` стартует с `service --agreed-terms-and-conditions`
 и актуальными флагами (`--udp.ports`, `--traversal`), данные ноды — в `data/myst-provider/`.

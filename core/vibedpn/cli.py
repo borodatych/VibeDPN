@@ -106,6 +106,7 @@ from vibedpn.config_edit import (
     WgUplinkNotFoundError,
     remove_wg_uplink,
     set_access,
+    set_awg,
     set_ddns,
     set_routing,
     set_tor_bridges,
@@ -202,6 +203,7 @@ from vibedpn.engine.update import (
     write_revision,
     write_update_result,
 )
+from vibedpn.engine.wg import generate_awg
 from vibedpn.engine.xray import XrayError, parse_share_link
 from vibedpn.event_view import client_line, event_line
 from vibedpn.tunnel_view import (
@@ -314,10 +316,27 @@ def _check_flags_for_role(
     endpoint: str | None,
     password_file: Path | None,
     lan_interface: str | None = None,
+    provider: bool | None = None,
+    access: bool = False,
 ) -> None:
     """A flag of another role is a mistake, not something to ignore silently."""
     if lan_interface is not None and role is Role.VPS:
         raise _fail("--lan-interface is only used with --role home or client")
+    if provider is not None and role is not Role.VPS:
+        raise _fail(
+            "--provider/--no-provider is only used with --role vps"
+            " (a home box always runs the node, a client box never does)"
+        )
+    if access and role is not Role.VPS:
+        raise _fail(
+            "--access is only used with --role vps; on a box at home, after init:"
+            " vibedpn access enable --address <name that follows the box>"
+        )
+    if role is Role.VPS and not provider and password_file is not None:
+        raise _fail(
+            "--password-file: a VPS without a node (--no-provider, the default) runs no panel,"
+            " so nothing checks a password; add --provider for the node"
+        )
     if peer_config is not None and role is not Role.CLIENT:
         raise _fail("--peer-config is only used with --role client")
     if endpoint is not None and role is not Role.VPS:
@@ -336,18 +355,32 @@ def _collect_answers(
     password_file: Path | None,
     facts: HostFacts,
     lan_interface: str | None = None,
+    provider: bool | None = None,
+    access: bool = False,
 ) -> Answers:
     """Ask only what cannot be detected or was not passed as a flag; fail early on known facts."""
     role = role or _ask_role()
-    _check_flags_for_role(role, peer_config, endpoint, password_file, lan_interface)
+    _check_flags_for_role(
+        role, peer_config, endpoint, password_file, lan_interface, provider, access
+    )
     if role is not Role.VPS and facts.interface is None:
         raise _fail("no interface with a default route was found; connect the box to the LAN first")
-    password = _read_password_file(password_file) if password_file else _ask_password()
+    # The password belongs to the panel, to NodeUI and to AdGuard: a bare VPS has none of them
+    password: str | None = None
+    if role is not Role.VPS or provider:
+        password = _read_password_file(password_file) if password_file else _ask_password()
     if role is Role.CLIENT and peer_config is None:
         peer_config = _ask_peer_config()
     if role is Role.VPS and endpoint is None and public_address(facts) is None:
         endpoint = _ask_endpoint()
-    return Answers(role=role, password=password, peer_config=peer_config, endpoint=endpoint)
+    return Answers(
+        role=role,
+        password=password,
+        peer_config=peer_config,
+        endpoint=endpoint,
+        provider=bool(provider),
+        access=access,
+    )
 
 
 def _echo_network(config: Config) -> None:
@@ -364,6 +397,16 @@ def _echo_network(config: Config) -> None:
             f"Wi-Fi {network.wifi.ssid!r}: the passphrase is in secrets/wifi-passphrase"
             " (`sudo vibedpn wifi show`)"
         )
+
+
+def _echo_bare_vps(config: Config) -> None:
+    """What a VPS without a node is for and what to do after `up`."""
+    if config.role is not Role.VPS or config.provider.enabled:
+        return
+    typer.echo("This VPS runs no Mysterium node: an AmneziaWG server for your own devices")
+    typer.echo("After `vibedpn up`: vibedpn peer add <name> (one file and QR code per device)")
+    if config.access.enabled:
+        typer.echo("Access server on: vibedpn access add <name> prints a link for a VLESS app")
 
 
 def _wifi_answer(
@@ -400,6 +443,22 @@ def init(
         str | None,
         typer.Option(help="Public host or IPv4 of this VPS (role vps); detected when possible."),
     ] = None,
+    provider: Annotated[
+        bool | None,
+        typer.Option(
+            "--provider/--no-provider",
+            help="Role vps: also run a Mysterium node here (asks for the panel password)."
+            " Without it (the default) the VPS is a bare AmneziaWG server.",
+        ),
+    ] = None,
+    access: Annotated[
+        bool,
+        typer.Option(
+            "--access",
+            help="Role vps: turn the access server (VLESS/REALITY) on at once; its links name"
+            " the endpoint. `vibedpn access add <name>` makes a link.",
+        ),
+    ] = False,
     ui_variant: Annotated[
         UiVariant | None,
         typer.Option(help="Panel variant: full, or lite for a Raspberry Pi; else by host memory."),
@@ -465,7 +524,9 @@ def init(
             typer.echo(f"Also {other.name}: {other.address}/{other.prefixlen} (--lan-interface)")
     wifi = _wifi_answer(wifi_ssid, wifi_country, lan_interface, probe)
     answers = replace(
-        _collect_answers(role, peer_config, endpoint, password_file, facts, lan_interface),
+        _collect_answers(
+            role, peer_config, endpoint, password_file, facts, lan_interface, provider, access
+        ),
         ui_variant=ui_variant,
         lan_interface=lan_interface,
         wifi=wifi,
@@ -488,6 +549,7 @@ def init(
     _echo_network(config)
     if config.network is not None and config.ui.enabled:
         typer.echo(f"Panel variant {config.ui.variant.value} (ui.variant in config.yaml)")
+    _echo_bare_vps(config)
     typer.echo(f"Role {answers.role.value} configured. Next step: vibedpn up")
 
 
@@ -2083,7 +2145,11 @@ def _deliver(peer: PeerFile, out: Path | None, *, force: bool) -> None:
     if out is None:
         typer.echo(peer.config, nl=False)
         typer.echo(qr_code(peer.config), nl=False)
-        typer.echo("Save the text above as FILE on the home box (mode 600), then run:")
+        typer.echo(
+            "A phone or laptop: scan the code, or import the text above as a file, in the"
+            " AmneziaWG app (docs/manuals/bareVps.md)"
+        )
+        typer.echo("A home box: save the text above as FILE (mode 600), then run:")
         target = "FILE"
     else:
         # The file holds the box's private key: never write it through a link that points
@@ -2097,7 +2163,8 @@ def _deliver(peer: PeerFile, out: Path | None, *, force: bool) -> None:
         except OSError as exc:
             raise _fail(f"cannot write {out}: {exc.strerror}") from None
         typer.echo(
-            f"wrote {out} (peer {peer.name}, {peer.address}); copy it to the home box, then:"
+            f"wrote {out} (peer {peer.name}, {peer.address}); import it into the AmneziaWG app of"
+            " a phone or laptop, or copy it to a home box and run:"
         )
         target = str(out)
     typer.echo(f"  sudo vibedpn init --role client --peer-config {target}")
@@ -2118,7 +2185,8 @@ def peer_add(
     ] = False,
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
-    """Register a home box: a key pair and a tunnel address, applied to the running server."""
+    """Register a peer (a home box, a phone, a laptop): a key pair and a tunnel address, applied to
+    the running server."""
     config = _vps_box(box_dir)
     peer = _core_call(lambda: core_api.add_peer(config.api.port, name, tunnel_only=tunnel_only))
     _deliver(peer, out, force=force)
@@ -2131,7 +2199,7 @@ def peer_export(
     force: Force = False,
     box_dir: BoxDir = DEFAULT_BOX_DIR,
 ) -> None:
-    """Print a peer's WireGuard file again with its QR code, or write it with --out."""
+    """Print a peer's tunnel file again with its QR code, or write it with --out."""
     config = _vps_box(box_dir)
     peer = _core_call(lambda: core_api.export_peer(config.api.port, name))
     _deliver(peer, out, force=force)
@@ -2174,6 +2242,52 @@ def peer_rm(
         raise typer.Exit(EXIT_USER_ERROR)
     _core_call(lambda: core_api.remove_peer(config.api.port, name))
     typer.echo(f"removed peer {name}")
+
+
+awg_app = typer.Typer(
+    help="AmneziaWG obfuscation of the tunnel server: a handshake the censor does not recognise.",
+    no_args_is_help=True,
+)
+app.add_typer(awg_app, name="awg")
+
+
+def _awg_next_steps() -> None:
+    typer.echo(
+        "`vibedpn up` applies it; the tunnel files change, so every peer needs its file again:"
+        " vibedpn peer export <name> (the old files stop working)"
+    )
+
+
+@awg_app.command("enable")
+def awg_enable(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Turn the obfuscation on with fresh random parameters; nothing changes if it is on."""
+    config = _vps_box(box_dir)
+    assert config.wg_server is not None  # _vps_box checked it
+    if config.wg_server.awg is not None:
+        typer.echo("AmneziaWG obfuscation is already on; `vibedpn awg disable` first to renew it")
+        return
+    try:
+        set_awg(box_dir / CONFIG_FILE, generate_awg())
+    except ConfigEditError as exc:
+        raise _fail(str(exc)) from None
+    typer.echo("AmneziaWG obfuscation enabled in config.yaml; the header key is made at start")
+    _awg_next_steps()
+
+
+@awg_app.command("disable")
+def awg_disable(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Turn the obfuscation off: the tunnel is plain WireGuard again, and its key is dropped."""
+    config = _vps_box(box_dir)
+    assert config.wg_server is not None  # _vps_box checked it
+    if config.wg_server.awg is None:
+        typer.echo("AmneziaWG obfuscation is already off")
+        return
+    try:
+        set_awg(box_dir / CONFIG_FILE, None)
+    except ConfigEditError as exc:
+        raise _fail(str(exc)) from None
+    typer.echo("AmneziaWG obfuscation disabled in config.yaml")
+    _awg_next_steps()
 
 
 access_app = typer.Typer(

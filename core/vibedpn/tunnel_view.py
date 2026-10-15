@@ -65,9 +65,15 @@ def render_peers(peers: Sequence[PeerView], now: float) -> list[str]:
 
 
 def qr_code(text: str) -> str:
-    """The peer file as a terminal QR code in Unicode half blocks, for a WireGuard app to scan."""
+    """The peer file as a terminal QR code in Unicode half blocks, for an AmneziaWG or WireGuard
+    app to scan. The comment lines of the file stay out of the code: with the obfuscation keys it
+    is already ~450 bytes, and every byte widens the picture, which a narrow terminal then wraps
+    into something no camera reads."""
+    payload = "".join(
+        line for line in text.splitlines(keepends=True) if not line.lstrip().startswith("#")
+    )
     buffer = io.StringIO()
-    segno.make(text, micro=False).terminal(out=buffer, compact=True)
+    segno.make(payload, micro=False).terminal(out=buffer, compact=True)
     return buffer.getvalue()
 
 

@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from vibedpn.api import background
+from vibedpn.api import background, tunnel
 from vibedpn.api.app import create_app
 from vibedpn.api.background import BackgroundLoop
 from vibedpn.api.tunnel import (
@@ -27,7 +27,7 @@ from vibedpn.api.tunnel import (
     serve,
 )
 from vibedpn.config import Config
-from vibedpn.engine.myst import ProviderStats, SessionTotals
+from vibedpn.engine.myst import NODEUI_PORT, ProviderStats, SessionTotals
 
 from .conftest import home_config, vps_config
 
@@ -373,3 +373,22 @@ def test_a_taken_port_is_one_line_at_start(capsys: pytest.CaptureFixture[str]) -
         taken.close()
     assert exit_info.value.code == os.EX_UNAVAILABLE
     assert f"vibedpn-core: cannot start: cannot listen on port {port}" in capsys.readouterr().err
+
+
+def test_core_of_a_vps_without_a_node_relays_no_node_panel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[int] = []
+
+    def fake_listen(address: str, port: int, *, freebind: bool) -> object:
+        opened.append(port)
+        return type("Sock", (), {"close": lambda self: None})()
+
+    monkeypatch.setattr(tunnel, "listen_socket", fake_listen)
+    raw = vps_config()
+    raw["provider"] = {"enabled": False}
+    bare = tunnel.open_listeners(Config.model_validate(raw))
+    assert opened == [4480, 4480] and bare.nodeui is None  # loopback API and tunnel API
+    opened.clear()
+    noded = tunnel.open_listeners(Config.model_validate(vps_config()))
+    assert opened == [4480, 4480, NODEUI_PORT] and noded.nodeui is not None
