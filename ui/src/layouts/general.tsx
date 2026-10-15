@@ -39,6 +39,7 @@ const pageLinks = (t: T): Record<PageName, NavItem> => ({
   uplinks: { label: t('nav.uplinks'), to: routes.uplinks() },
   peers: { label: t('nav.peers'), to: routes.peers() },
   access: { label: t('nav.access'), to: routes.access() },
+  torrents: { label: t('nav.torrents'), to: routes.torrents() },
   notifications: { label: t('nav.notifications'), to: routes.notifications() },
   journal: { label: t('nav.journal'), to: routes.journal() },
   backup: { label: t('nav.backup'), to: routes.backup() },
@@ -49,9 +50,9 @@ type PageName = ReturnType<typeof pagesOfRole>[number]
 type NavLinks = { main: NavItem[]; more: NavItem[] }
 
 /** The pages of the header: in sight, and in the menu «Ещё» with the password of the panel when signed in */
-const navLinks = (t: T, role: string | null | undefined, signedIn: boolean): NavLinks => {
+const navLinks = (t: T, role: string | null | undefined, signedIn: boolean, torrents: boolean): NavLinks => {
   const links = pageLinks(t)
-  const { main, more } = navOfRole(role)
+  const { main, more } = navOfRole(role, torrents)
   return {
     main: main.map((page) => links[page]),
     more: [
@@ -64,8 +65,8 @@ const navLinks = (t: T, role: string | null | undefined, signedIn: boolean): Nav
 /** The role comes from core, and asking it needs a session */
 const SignedInNav = ({ children }: { children: (links: NavLinks) => React.ReactNode }) => {
   const t = useT()
-  const role = boxRoleQuery.useQuery().data?.role
-  return <>{children(navLinks(t, role, true))}</>
+  const box = boxRoleQuery.useQuery().data
+  return <>{children(navLinks(t, box?.role, true, box?.torrents ?? false))}</>
 }
 
 /** Signed out, no pages at all: each of them leads back to the sign-in, and the form is all there is to do */

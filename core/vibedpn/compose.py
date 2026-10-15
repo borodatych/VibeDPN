@@ -11,7 +11,7 @@ import json
 import os
 import re
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -199,14 +199,15 @@ def settled_digests(current: dict[str, str | None], previous: dict[str, str]) ->
     }
 
 
-def refresh_env(box_dir: Path, config: Config) -> Path:
+def refresh_env(box_dir: Path, config: Config, *, without: Collection[Profile] = ()) -> Path:
     """Re-derive ``.env`` from ``config.yaml`` so hand edits to the config take effect, together
-    with the fingerprints of the files the gateways read at start."""
+    with the fingerprints of the files the gateways read at start. ``without``: profiles that stay
+    off this time although the configuration names them (the torrent client with no disk)."""
     env_path = box_dir / ENV_FILE
     preserved = preserved_env(env_path, checkout_image_tag(box_dir))
     files = settled_digests(file_digests(box_dir, config), read_env(env_path))
     try:
-        write_file(env_path, render_env(config, preserved, files), PUBLIC_FILE_MODE)
+        write_file(env_path, render_env(config, preserved, files, without), PUBLIC_FILE_MODE)
         give_to_invoker(env_path)
     except OSError as exc:
         raise ComposeError(f"cannot write {env_path}: {exc.strerror}; run with sudo?") from exc

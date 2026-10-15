@@ -35,6 +35,8 @@ from vibedpn.engine.wifi import Station
 from .conftest import home_config, vps_config
 from .test_apply import PROVIDER_FILE as PROTON_FILE
 from .test_telegram_bot import Box as BotBox
+from .torrents_fake import PASSWORD as TRANSMISSION_PASSWORD
+from .torrents_fake import FakeTransmission
 
 # A share link of a made-up server: the masking exit is on, so the panel offers it as a channel
 XRAY_LINK = (
@@ -152,6 +154,8 @@ def main() -> None:
                 "wifi": {"ssid": "Home", "country": "de"},
             },
             "access": {"enabled": True, "address": "home.example.org"},
+            # the torrent client on, talking to a fake Transmission: the page «Torrents» has a list
+            "torrents": {"enabled": True},
             "routing": {
                 "mode": "full",
                 "default_upstream": "tor",
@@ -172,6 +176,7 @@ def main() -> None:
     )
     (secrets / "wg-proton.conf").write_text(PROTON_FILE, encoding="utf-8")
     (secrets / XRAY_LINK_FILE).write_text(XRAY_LINK, encoding="utf-8")
+    (secrets / "transmission-rpc-pass").write_text(TRANSMISSION_PASSWORD, encoding="utf-8")
     (secrets / WIFI_PASSPHRASE_FILE).write_text("stand-wifi-passphrase\n", encoding="utf-8")
     backups = box / BACKUPS_DIR
     backups.mkdir(exist_ok=True)
@@ -200,6 +205,7 @@ def main() -> None:
         access_owner=None,
         hostapd_dir=box / "hostapd",
         backups_dir=backups,
+        torrents_transport=FakeTransmission().transport(),
         # the host's `ip` and the access point's socket are not on a developer's machine
         interfaces_source=lambda: (ETH0, [ETH0, WLAN0]),
         wifi_stations=lambda _interface: STATIONS,

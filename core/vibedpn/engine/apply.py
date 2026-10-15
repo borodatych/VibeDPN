@@ -105,8 +105,21 @@ LOGS = HostTask(
     no_answer="the host did not read the log: journalctl -u vibedpn-logs-request,"
     " or sudo vibedpn logs",
 )
+# A look at the disks of the host asked in the panel (engine/storage.py): the devices go next to the
+# result, where core reads them to offer the download disk
+STORAGE_SCAN = HostTask(
+    request="storage-scan-request",
+    result="storage-scan-result.json",
+    unit="vibedpn-storage-scan-request",
+    path_description="VibeDPN: a look at the disks asked in the panel",
+    service_description="VibeDPN: vibedpn torrents storage scan asked in the panel",
+    command="torrents storage scan --requested",
+    timeout=2 * 60.0,
+    no_answer="the host did not look at the disks: journalctl -u vibedpn-storage-scan-request,"
+    " or sudo vibedpn torrents storage list",
+)
 # The tasks whose result is an ApplyResult; the update has its own (engine/update.py)
-TASKS = (APPLY, BACKUP, RESTORE, DOCTOR, LOGS)
+TASKS = (APPLY, BACKUP, RESTORE, DOCTOR, LOGS, STORAGE_SCAN)
 # The check the box makes of itself every day, without leaving it, so the panel shows a fresh report
 DOCTOR_TIMER_UNIT = "vibedpn-doctor"
 # A night hour off the weekly update (Sunday 04:00 and up to an hour), and a missed run is caught

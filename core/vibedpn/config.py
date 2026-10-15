@@ -56,6 +56,7 @@ DIGEST_ADGUARD = "VIBEDPN_DIGEST_ADGUARD"
 DIGEST_WG_SERVER = "VIBEDPN_DIGEST_WG_SERVER"
 DIGEST_ACCESS = "VIBEDPN_DIGEST_ACCESS"
 DIGEST_TOR = "VIBEDPN_DIGEST_TOR"
+DIGEST_TRANSMISSION = "VIBEDPN_DIGEST_TRANSMISSION"
 DIGEST_SERVICES = {
     DIGEST_CORE: "core",
     DIGEST_HOSTAPD: "hostapd",
@@ -64,6 +65,7 @@ DIGEST_SERVICES = {
     DIGEST_WG_SERVER: "wg-server",
     DIGEST_ACCESS: "access",
     DIGEST_TOR: "tor",
+    DIGEST_TRANSMISSION: "transmission",
 }
 DIGEST_LENGTH = 16
 
@@ -93,6 +95,24 @@ DEFAULT_ACCESS_PORT = 443
 # The site REALITY borrows its handshake from. Not every TLS 1.3 site works: www.microsoft.com
 # never completes one, dl.google.com always does (knowledge xray/realityServer.md).
 DEFAULT_ACCESS_TARGET = "dl.google.com"
+# Torrent client (docs/manuals/torrents.md). The disk chosen by `torrents.storage` is mounted here,
+# at a fixed place, so that the unit, the Compose bind and the validator name one path.
+TORRENTS_USB_MOUNTPOINT = "/srv/vibedpn/usb"
+DEFAULT_TORRENTS_DIR = "/srv/vibedpn/downloads"
+# Under the mounted disk: the folder the downloads go to when the owner picks a disk
+TORRENTS_USB_DIR = f"{TORRENTS_USB_MOUNTPOINT}/downloads"
+DEFAULT_TORRENTS_PEER_PORT = 51413
+DEFAULT_TORRENTS_MIN_FREE_GIB = 5
+TORRENTS_EGRESS_DIRECT = "direct"
+# ext4 keeps Unix permissions, the other two are the filesystems of disks bought in a shop
+TORRENTS_FILESYSTEMS = ("ext4", "exfat", "ntfs")
+# The UUID of a filesystem as blkid prints it: 8-4-4-4-12 (ext4), XXXX-XXXX (exfat), 16 hex (ntfs)
+FS_UUID_PATTERN = re.compile(
+    r"^(?:[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}|[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+    r"|[0-9a-fA-F]{16})$"
+)
+# An absolute path Compose can take as a bind source without interpolating or splitting it
+TORRENTS_DIR_PATTERN = re.compile(r"^/[A-Za-z0-9_./-]+$")
 LAST_PREFIX_WITH_BROADCAST = 30  # /31 and /32 have no reserved network/broadcast addresses
 # The Telegram bot: an exit or the access point silent this long is worth a message. The uplink
 # watcher probes every 5 s, so a shorter threshold would report every flap.
@@ -148,6 +168,7 @@ class Profile(StrEnum):
     DNS = "dns"
     UI = "ui"
     ACCESS = "access"  # the access server: VLESS/REALITY for the owner's people (decision 30)
+    TORRENTS = "torrents"  # Transmission on the LAN box roles (docs/manuals/torrents.md)
 
 
 class NetworkMode(StrEnum):
@@ -1042,10 +1063,94 @@ class TelegramConfig(StrictModel):
         return value
 
 
+class TorrentsStorage(StrictModel):
+    """The disk the downloads live on, by the UUID of its filesystem (``blkid``); ``None``: the
+    folder ``torrents.download_dir`` of the system disk. The host mounts it at a fixed place."""
+
+    uuid: str | None = None
+    # The filesystem the unit mounts it as: the host cannot ask a disk that is unplugged
+    fstype: str | None = None
+
+    @field_validator("uuid")
+    @classmethod
+    def check_uuid(cls, value: str | None) -> str | None:
+        if value is not None and not FS_UUID_PATTERN.fullmatch(value):
+            raise ValueError(
+                f"{value!r} is not a filesystem UUID (see `vibedpn torrents storage list`)"
+            )
+        return value
+
+    @field_validator("fstype")
+    @classmethod
+    def check_fstype(cls, value: str | None) -> str | None:
+        if value is not None and value not in TORRENTS_FILESYSTEMS:
+            raise ValueError(f"{value!r} is not one of {', '.join(TORRENTS_FILESYSTEMS)}")
+        return value
+
+    @model_validator(mode="after")
+    def check_pair(self) -> Self:
+        if (self.uuid is None) != (self.fstype is None):
+            raise ValueError("uuid and fstype are set together (`vibedpn torrents storage use`)")
+        return self
+
+
+class TorrentsConfig(StrictModel):
+    """The torrent client Transmission on a box with a LAN (docs/manuals/torrents.md).
+
+    Its web interface is not exposed: the panel talks to it through core, and its RPC listens on
+    127.0.0.1. ``egress`` is where its traffic leaves, whatever ``routing.mode`` says about the LAN:
+    ``direct`` or an uplink key (``vps``, ``dpn``, ``tor``, ``xray``, ``wg-<name>``).
+    """
+
+    enabled: bool = False
+    download_dir: str = DEFAULT_TORRENTS_DIR
+    # kB/s, as Transmission counts them; None: no limit
+    speed_limit_down: int | None = Field(default=None, ge=1)
+    speed_limit_up: int | None = Field(default=None, ge=1)
+    peer_port: Port = DEFAULT_TORRENTS_PEER_PORT
+    egress: str = TORRENTS_EGRESS_DIRECT
+    # `doctor` fails below this much free space in download_dir
+    min_free_gib: int = Field(default=DEFAULT_TORRENTS_MIN_FREE_GIB, ge=0)
+    storage: TorrentsStorage = Field(default_factory=TorrentsStorage)
+
+    @field_validator("download_dir")
+    @classmethod
+    def check_download_dir(cls, value: str) -> str:
+        if not TORRENTS_DIR_PATTERN.fullmatch(value) or any(
+            part in ("", ".", "..") for part in value.rstrip("/").split("/")[1:]
+        ):
+            raise ValueError(
+                f"{value!r} is not an absolute path (letters, digits and _ . - /, no '..')"
+            )
+        return value.rstrip("/") or "/"
+
+    @field_validator("egress")
+    @classmethod
+    def check_egress(cls, value: str) -> str:
+        return value if value == TORRENTS_EGRESS_DIRECT else uplink_key(value, "torrents.egress")
+
+    @model_validator(mode="after")
+    def check_storage_dir(self) -> Self:
+        inside = self.download_dir == TORRENTS_USB_MOUNTPOINT or self.download_dir.startswith(
+            f"{TORRENTS_USB_MOUNTPOINT}/"
+        )
+        if self.storage.uuid is not None and not inside:
+            raise ValueError(
+                f"torrents.download_dir: {self.download_dir} is not on the disk"
+                f" torrents.storage names; it must be under {TORRENTS_USB_MOUNTPOINT}"
+            )
+        if self.storage.uuid is None and inside:
+            raise ValueError(
+                f"torrents.download_dir: {TORRENTS_USB_MOUNTPOINT} is the place of the disk of"
+                " torrents.storage.uuid, which is not set"
+            )
+        return self
+
+
 # Sections that describe a LAN-side box and make no sense on a headless VPS.
 # Sections a VPS has no use for. `ui` is not among them since Stage 11: a VPS may run the panel
 # too, but only through the tunnel and only when the owner says so (see `_vps_panel_default`).
-LAN_SECTIONS = ("network", "routing", "devices", "upstreams", "dns")
+LAN_SECTIONS = ("network", "routing", "devices", "upstreams", "dns", "torrents")
 # Sections that only a VPS has (LAN roles get the router engine in Stage 4).
 VPS_SECTIONS = ("firewall",)
 
@@ -1082,6 +1187,7 @@ class Config(StrictModel):
     ddns: DdnsConfig = Field(default_factory=DdnsConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     backup: BackupConfig = Field(default_factory=BackupConfig)
+    torrents: TorrentsConfig = Field(default_factory=TorrentsConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -1139,6 +1245,14 @@ class Config(StrictModel):
             errors.append(
                 "access.address: required for the access server of a box at home — the name"
                 " its people dial, one that follows the box (ddns)"
+            )
+        if self.torrents.enabled and not (
+            self.torrents.egress == TORRENTS_EGRESS_DIRECT
+            or self.upstreams.is_key_enabled(self.torrents.egress)
+        ):
+            errors.append(
+                f"torrents.egress: '{self.torrents.egress}' is not an enabled uplink"
+                " (direct, or an uplink of upstreams)"
             )
         if self.role is Role.HOME and self.upstreams.vps.enabled:
             errors.append(
@@ -1268,6 +1382,7 @@ class Config(StrictModel):
             Profile.DNS: self.dns.enabled,
             Profile.UI: self.ui.enabled,
             Profile.ACCESS: self.access.enabled,
+            Profile.TORRENTS: self.torrents.enabled,
         }
         return [profile for profile in Profile if wanted.get(profile, False)]
 
@@ -1316,6 +1431,8 @@ class Config(StrictModel):
             env["VIBEDPN_MYST_UDP_FROM"] = str(start)
             env["VIBEDPN_MYST_UDP_TO"] = str(end)
             env["VIBEDPN_MYST_TRAVERSAL"] = ",".join(t.value for t in self.provider.traversal)
+        if self.torrents.enabled:
+            env["VIBEDPN_TORRENTS_DIR"] = self.torrents.download_dir
         env.update(self.config_digests())
         return env
 
@@ -1391,11 +1508,30 @@ class Config(StrictModel):
             "provider": {"enabled": self.provider.enabled, "udp_ports": self.provider.udp_ports},
             "ui_port": self.ui.port,
             "api": self.api.model_dump(mode="json"),
+            # the router steers the client's traffic by its uid at core's start (engine/router.py),
+            # and the API shows the disk it started with. Not here: the limits (the API sets them
+            # live), the peer port (the client's own), min_free_gib (only `doctor` on the host)
+            "torrents": self.torrents.model_dump(
+                mode="json",
+                exclude={"speed_limit_down", "speed_limit_up", "peer_port", "min_free_gib"},
+            ),
         }
         digests = {name: config_digest(payload) for name, payload in rendered.items()}
         # the bridges tor reads at start; the host writes them, core does not read them
         digests[DIGEST_TOR] = config_digest(
             self.upstreams.tor.bridges if self.upstreams.tor.enabled else None
+        )
+        # What the client reads at start of the settings.json the host renders
+        # (engine/transmission.py). Not here: the limits, which are live; the host stops the
+        # client around a file that differs
+        digests[DIGEST_TRANSMISSION] = config_digest(
+            {
+                "peer_port": self.torrents.peer_port,
+                "download_dir": self.torrents.download_dir,
+                "storage": self.torrents.storage.model_dump(mode="json"),
+            }
+            if self.torrents.enabled
+            else None
         )
         digests[DIGEST_CORE] = config_digest(core)
         return digests
@@ -1411,6 +1547,7 @@ class Config(StrictModel):
             "wg-server": Profile.WG_SERVER,
             "access": Profile.ACCESS,
             "tor": Profile.TOR,
+            "transmission": Profile.TORRENTS,
         }
         return {"core"} | {
             service for service, profile in by_profile.items() if profile in profiles

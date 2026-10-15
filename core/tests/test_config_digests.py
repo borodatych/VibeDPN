@@ -183,6 +183,14 @@ REACH = {
     "access.target": CORE,
     "ddns": CORE,
     "telegram": CORE,
+    "torrents.enabled": CORE,
+    "torrents.download_dir": CORE,
+    "torrents.speed_limit_down": LIVE,  # session_set through the API; the host renders it too
+    "torrents.speed_limit_up": LIVE,
+    "torrents.peer_port": ENV,
+    "torrents.egress": CORE,
+    "torrents.min_free_gib": NOBODY,  # only `vibedpn doctor` on the host reads it
+    "torrents.storage": CORE,
     "backup": NOBODY,  # the host prunes the archives; no service reads it
 }
 
@@ -267,6 +275,7 @@ def rich_home() -> Config:
     data["devices"] = [{"name": "tv", "mac": "aa:bb:cc:dd:ee:01", "policy": "bypass"}]
     data["access"] = {"enabled": True, "address": "home.example.org"}
     data["ddns"] = {"enabled": True}
+    data["torrents"] = {"enabled": True, "egress": "tor"}
     return Config.model_validate(data)
 
 
@@ -335,6 +344,13 @@ CHANGES: dict[str, tuple[Box, str, object]] = {
     "access.target": (rich_home, "access.target", "www.apple.com"),
     "ddns": (rich_home, "ddns.enabled", False),
     "telegram": (rich_home, "telegram.alert_after_seconds", 120),
+    "torrents.enabled": (rich_home, "torrents.enabled", False),
+    "torrents.download_dir": (rich_home, "torrents.download_dir", "/srv/other"),
+    "torrents.speed_limit_down": (rich_home, "torrents.speed_limit_down", 500),
+    "torrents.speed_limit_up": (rich_home, "torrents.speed_limit_up", 100),
+    "torrents.peer_port": (rich_home, "torrents.peer_port", 51999),
+    "torrents.egress": (rich_home, "torrents.egress", "dpn"),
+    "torrents.storage": (rich_home, "torrents.storage.uuid", "1234-ABCD"),
 }
 
 

@@ -57,6 +57,7 @@ from vibedpn.bootstrap import (
     checkout_image_tag,
     ensure_country_secrets,
     ensure_replaceable,
+    ensure_torrents_secrets,
     public_address,
     read_env,
     read_peer_config,
@@ -88,11 +89,14 @@ from vibedpn.compose import (
     stream,
 )
 from vibedpn.config import (
+    DEFAULT_TORRENTS_DIR,
+    TORRENTS_USB_DIR,
     WG_UPLINK_NAME,
     Config,
     DevicePolicy,
     DomainVia,
     NetworkMode,
+    Profile,
     Role,
     RoutingMode,
     UiVariant,
@@ -111,6 +115,9 @@ from vibedpn.config_edit import (
     set_routing,
     set_tor_bridges,
     set_tor_uplink,
+    set_torrents,
+    set_torrents_egress,
+    set_torrents_storage,
     set_wg_uplink,
     set_xray_uplink,
 )
@@ -135,6 +142,7 @@ from vibedpn.engine.apply import (
     DOCTOR_TIMER_UNIT,
     LOGS,
     RESTORE,
+    STORAGE_SCAN,
     TASKS,
     ApplyError,
     ApplyResult,
@@ -188,6 +196,19 @@ from vibedpn.engine.logs import (
 )
 from vibedpn.engine.logs import report_text as logs_report_text
 from vibedpn.engine.myst import MystError, TequilaClient, render_stats
+from vibedpn.engine.storage import (
+    DEVICES_FILE,
+    BlockDevice,
+    StorageError,
+    devices_report,
+    list_devices,
+)
+from vibedpn.engine.torrents import (
+    TorrentsHostError,
+    backup_exclusions,
+    known_device,
+    prepare,
+)
 from vibedpn.engine.update import (
     COMMIT_TAG_LENGTH,
     SEARCH_DEPTH,
@@ -318,8 +339,11 @@ def _check_flags_for_role(
     lan_interface: str | None = None,
     provider: bool | None = None,
     access: bool = False,
+    torrents: bool = False,
 ) -> None:
     """A flag of another role is a mistake, not something to ignore silently."""
+    if torrents and role is Role.VPS:
+        raise _fail("--torrents is only used with --role home or client: a VPS runs no torrents")
     if lan_interface is not None and role is Role.VPS:
         raise _fail("--lan-interface is only used with --role home or client")
     if provider is not None and role is not Role.VPS:
@@ -357,11 +381,12 @@ def _collect_answers(
     lan_interface: str | None = None,
     provider: bool | None = None,
     access: bool = False,
+    torrents: bool = False,
 ) -> Answers:
     """Ask only what cannot be detected or was not passed as a flag; fail early on known facts."""
     role = role or _ask_role()
     _check_flags_for_role(
-        role, peer_config, endpoint, password_file, lan_interface, provider, access
+        role, peer_config, endpoint, password_file, lan_interface, provider, access, torrents
     )
     if role is not Role.VPS and facts.interface is None:
         raise _fail("no interface with a default route was found; connect the box to the LAN first")
@@ -380,6 +405,7 @@ def _collect_answers(
         endpoint=endpoint,
         provider=bool(provider),
         access=access,
+        torrents=torrents,
     )
 
 
@@ -459,6 +485,14 @@ def init(
             " the endpoint. `vibedpn access add <name>` makes a link.",
         ),
     ] = False,
+    torrents: Annotated[
+        bool,
+        typer.Option(
+            "--torrents",
+            help="Roles home and client: turn the torrent client Transmission on at once"
+            " (docs/manuals/torrents.md); its downloads leave directly until torrents.egress.",
+        ),
+    ] = False,
     ui_variant: Annotated[
         UiVariant | None,
         typer.Option(help="Panel variant: full, or lite for a Raspberry Pi; else by host memory."),
@@ -525,7 +559,15 @@ def init(
     wifi = _wifi_answer(wifi_ssid, wifi_country, lan_interface, probe)
     answers = replace(
         _collect_answers(
-            role, peer_config, endpoint, password_file, facts, lan_interface, provider, access
+            role,
+            peer_config,
+            endpoint,
+            password_file,
+            facts,
+            lan_interface,
+            provider,
+            access,
+            torrents,
         ),
         ui_variant=ui_variant,
         lan_interface=lan_interface,
@@ -561,6 +603,8 @@ def _prepare(box_dir: Path, *, refresh: bool) -> Config:
         if refresh:
             for created in ensure_country_secrets(box_dir, config):
                 typer.echo(f"created {created} for the consumer of a new exit country")
+            for created in ensure_torrents_secrets(box_dir, config):
+                typer.echo(f"created {created} for the torrent client")
             check_secrets(box_dir, config)
             refresh_countries(box_dir, config)
             refresh_wg_uplinks(box_dir, config)
@@ -568,11 +612,35 @@ def _prepare(box_dir: Path, *, refresh: bool) -> Config:
             refresh_xray_config(box_dir, config)
             if adopt_node_password(box_dir, box_dir / BOX_DATA_DIR) is not None:
                 typer.echo("NodeUI takes the new panel password: the node is recreated")
+            held = _prepare_torrents(box_dir, config)
             # last: .env carries the fingerprints of the files rendered above
-            refresh_env(box_dir, config)
+            refresh_env(box_dir, config, without=held)
     except ComposeError as exc:
         raise _fail(str(exc)) from None
     return config
+
+
+def _prepare_torrents(box_dir: Path, config: Config) -> list[Profile]:
+    """What the torrent client needs before it starts (engine/torrents.py); the profiles that stay
+    off this time because their disk is not there."""
+    try:
+        prepared = prepare(
+            box_dir,
+            config,
+            systemctl=find_tool("systemctl"),
+            run=run,
+            devices=list_devices,
+            stop_client=lambda: _compose(box_dir, "stop", "transmission", all_profiles=True),
+            unit_dir=SYSTEMD_DIR,
+        )
+    except TorrentsHostError as exc:
+        raise _fail(str(exc)) from None
+    for note in prepared.notes:
+        typer.secho(note, fg=typer.colors.YELLOW if prepared.skip else None)
+    if config.torrents.enabled:
+        with contextlib.suppress(StorageError):
+            _keep_devices(box_dir, list_devices())  # what the panel offers as disks
+    return [Profile.TORRENTS] if prepared.skip else []
 
 
 def _compose(box_dir: Path, *args: str, all_profiles: bool = False) -> None:
@@ -721,7 +789,7 @@ def _make_backup(box_dir: Path, out: Path | None) -> tuple[Path, list[str], list
     if running:
         _compose(box_dir, "stop")
     try:
-        names = create_archive(box_dir, target)
+        names = create_archive(box_dir, target, backup_exclusions(box_dir, config))
     except BackupError as exc:
         raise _fail(str(exc)) from None
     finally:
@@ -1654,6 +1722,205 @@ def tor_bridges_reset(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
     """Go back to the built-in Snowflake bridges of Tor Browser; `vibedpn up` applies them."""
     _set_tor_bridges(box_dir, None)
     typer.echo("uplink tor: built-in Snowflake bridges; `vibedpn up`")
+
+
+torrents_app = typer.Typer(
+    help="The torrent client Transmission on a LAN box (docs/manuals/torrents.md).",
+    no_args_is_help=True,
+)
+app.add_typer(torrents_app, name="torrents")
+torrents_storage_app = typer.Typer(
+    help="The disk the downloads live on, picked by the UUID of its filesystem.",
+    no_args_is_help=True,
+)
+torrents_app.add_typer(torrents_storage_app, name="storage")
+
+
+def _torrents_box(box_dir: Path) -> Config:
+    """A box that can run the client: one with a LAN."""
+    config = _lan_box(box_dir)
+    return config
+
+
+def _edit_torrents(change: Callable[[], tuple[Config, bool]]) -> Config:
+    try:
+        return change()[0]
+    except ConfigEditError as exc:
+        raise _fail(str(exc)) from None
+
+
+@torrents_app.command("enable")
+def torrents_enable(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Turn the torrent client on; `vibedpn up` starts it. Its traffic leaves directly until
+    `vibedpn torrents egress`."""
+    _torrents_box(box_dir)
+    config = _edit_torrents(lambda: set_torrents(box_dir / CONFIG_FILE, True))
+    try:
+        for created in ensure_torrents_secrets(box_dir, config):
+            typer.echo(f"created {created}")
+    except OSError as exc:
+        raise _fail(f"cannot write the RPC password: {exc.strerror}; run with sudo?") from None
+    typer.echo("torrent client enabled; `vibedpn up` starts it (it listens on 127.0.0.1 only)")
+    typer.echo("the panel manages the torrents; downloads go to " + config.torrents.download_dir)
+
+
+@torrents_app.command("disable")
+def torrents_disable(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Turn the torrent client off; `vibedpn up` stops it. Downloaded files and the state of the
+    client stay where they are."""
+    _torrents_box(box_dir)
+    _edit_torrents(lambda: set_torrents(box_dir / CONFIG_FILE, False))
+    typer.echo("torrent client disabled; `vibedpn up` stops it, the downloads stay")
+
+
+@torrents_app.command("egress")
+def torrents_egress(
+    channel: Annotated[
+        str,
+        typer.Argument(help="direct, vps, dpn, tor, xray or wg-<name>: where its traffic leaves."),
+    ],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Where the torrent traffic leaves, whatever routing.mode says about the LAN; `vibedpn up`
+    applies it. A silent exit holds the client: it never falls back to another path."""
+    _torrents_box(box_dir)
+    _edit_torrents(lambda: set_torrents_egress(box_dir / CONFIG_FILE, channel))
+    typer.echo(f"torrents leave through {channel}; `vibedpn up` applies it")
+
+
+@torrents_app.command("show")
+def torrents_show(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Whether the client is on, where it downloads and where its traffic leaves."""
+    config = _torrents_box(box_dir)
+    torrents = config.torrents
+    typer.echo(f"torrents  {'enabled' if torrents.enabled else 'disabled'}")
+    typer.echo(f"  downloads  {torrents.download_dir}")
+    typer.echo(f"  egress     {torrents.egress}")
+    down, up = torrents.speed_limit_down, torrents.speed_limit_up
+    typer.echo(
+        f"  limits     down {down or 'none'} kB/s, up {up or 'none'} kB/s;"
+        f" peer port {torrents.peer_port}"
+    )
+    typer.echo(f"  min free   {torrents.min_free_gib} GiB")
+    uuid = torrents.storage.uuid
+    if uuid is None:
+        typer.echo("  disk       the system disk")
+        return
+    try:
+        mounted = any(
+            item.uuid.lower() == uuid.lower() and item.mounted_here for item in list_devices()
+        )
+    except StorageError as exc:
+        typer.echo(f"  disk       {uuid} ({torrents.storage.fstype}); not checked: {exc}")
+        return
+    state = "mounted" if mounted else "NOT mounted"
+    typer.echo(f"  disk       {uuid} ({torrents.storage.fstype}), {state}")
+
+
+def _device_line(item: BlockDevice, current: str | None) -> str:
+    status = "in use" if current and item.uuid.lower() == current.lower() else ""
+    if not item.supported:
+        status = "system disk" if item.system else f"{item.fstype} is not supported"
+    elif item.mounted_here:
+        status = "mounted here" + (", in use" if status else "")
+    label = item.label or "-"
+    return (
+        f"{item.uuid:<38} {label:<16} {item.fstype:<6} {item.size / 1024**3:>8.1f} GiB"
+        f"  {item.device}  {status}".rstrip()
+    )
+
+
+def _devices() -> list[BlockDevice]:
+    try:
+        return list_devices()
+    except StorageError as exc:
+        raise _fail(str(exc)) from None
+
+
+def _keep_devices(box_dir: Path, devices: list[BlockDevice]) -> None:
+    """Leave the list where core shows it; the box directory may be read-only for this user."""
+    path = box_dir / BOX_DATA_DIR / DEVICES_FILE
+    try:
+        write_private(path, devices_report(devices, time.time()))
+    except OSError as exc:
+        typer.secho(
+            f"the panel will not see the disks: {exc.strerror or exc}", fg=typer.colors.YELLOW
+        )
+
+
+@torrents_storage_app.command("list")
+def torrents_storage_list(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """The disks with a filesystem: UUID, label, filesystem, size, and whether one can be used."""
+    config = _torrents_box(box_dir)
+    devices = _devices()
+    if not devices:
+        typer.echo("no disk with a filesystem found")
+    for item in devices:
+        typer.echo(_device_line(item, config.torrents.storage.uuid))
+    typer.echo("ext4, exfat and ntfs can be used: vibedpn torrents storage use <UUID>")
+
+
+@torrents_storage_app.command("scan")
+def torrents_storage_scan(
+    requested: Annotated[
+        bool,
+        typer.Option(
+            "--requested",
+            help="Only when the panel asked for it (the systemd unit"
+            " vibedpn-storage-scan-request).",
+        ),
+    ] = False,
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Look at the disks and leave the list for the panel."""
+    if requested:
+
+        def look() -> str:
+            devices = _devices()
+            _keep_devices(box_dir, devices)
+            return f"{len(devices)} disks"
+
+        _run_requested(box_dir, STORAGE_SCAN, look)
+        return
+    devices = _devices()
+    _keep_devices(box_dir, devices)
+    typer.echo(f"{len(devices)} disks")
+
+
+@torrents_storage_app.command("use")
+def torrents_storage_use(
+    uuid: Annotated[str, typer.Argument(help="The UUID from `vibedpn torrents storage list`.")],
+    box_dir: BoxDir = DEFAULT_BOX_DIR,
+) -> None:
+    """Put the downloads on this disk: `vibedpn up` mounts it at /srv/vibedpn/usb and the client
+    works in /srv/vibedpn/usb/downloads. A disk not connected stops the client, not the box."""
+    _torrents_box(box_dir)
+    try:
+        device = known_device(_devices(), uuid)
+    except TorrentsHostError as exc:
+        raise _fail(str(exc)) from None
+    _edit_torrents(
+        lambda: set_torrents_storage(
+            box_dir / CONFIG_FILE,
+            uuid=device.uuid,
+            fstype=device.fstype,
+            download_dir=TORRENTS_USB_DIR,
+        )
+    )
+    typer.echo(f"downloads go to the disk {device.uuid} ({device.fstype}); `vibedpn up` mounts it")
+
+
+@torrents_storage_app.command("clear")
+def torrents_storage_clear(box_dir: BoxDir = DEFAULT_BOX_DIR) -> None:
+    """Downloads back on the system disk, in the default folder; `vibedpn up` unmounts the disk.
+    What is on the disk stays there."""
+    _torrents_box(box_dir)
+    _edit_torrents(
+        lambda: set_torrents_storage(
+            box_dir / CONFIG_FILE, uuid=None, fstype=None, download_dir=DEFAULT_TORRENTS_DIR
+        )
+    )
+    typer.echo(f"downloads go to {DEFAULT_TORRENTS_DIR}; `vibedpn up` applies it")
 
 
 dpn_app = typer.Typer(

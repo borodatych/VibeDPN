@@ -12,7 +12,7 @@ import re
 import secrets as secrets_module
 import shutil
 import subprocess
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -32,6 +32,7 @@ from vibedpn.config import (
     ProviderConfig,
     Role,
     RoutingConfig,
+    TorrentsConfig,
     UiConfig,
     UiVariant,
     Upstream,
@@ -44,6 +45,7 @@ from vibedpn.config import (
 )
 from vibedpn.detect import DEFAULT_SSH_PORT, Interface
 from vibedpn.engine.hostapd import PASSPHRASE_FILE as WIFI_PASSPHRASE_FILE
+from vibedpn.engine.transmission import RPC_PASS_FILE as TRANSMISSION_RPC_PASS_FILE
 from vibedpn.engine.wg import generate_awg
 from vibedpn.templating import template_environment
 
@@ -88,7 +90,11 @@ CONSUMER_SECRETS = (MYST_CONSUMER_PASSPHRASE_FILE,)
 COUNTRY_PASSPHRASE_TEMPLATE = "myst-consumer-{country}-passphrase"
 # The Wi-Fi passphrase of gateway mode: generated like the others, shown by `vibedpn wifi show`.
 WIFI_SECRETS = (WIFI_PASSPHRASE_FILE,)
-GENERATED_SECRETS = UI_SECRETS + ADGUARD_SECRETS + CONSUMER_SECRETS + WIFI_SECRETS
+# The password core and the client's own image use for its RPC (engine/transmission.py)
+TORRENTS_SECRETS = (TRANSMISSION_RPC_PASS_FILE,)
+GENERATED_SECRETS = (
+    UI_SECRETS + ADGUARD_SECRETS + CONSUMER_SECRETS + WIFI_SECRETS + TORRENTS_SECRETS
+)
 GENERATED_SECRET_BYTES = 32
 KNOWN_SECRETS = (HTPASSWD_FILE, WG_CLIENT_CONF, *GENERATED_SECRETS)
 DATA_DIR = "data"
@@ -125,6 +131,8 @@ class Answers:
     provider: bool = False
     # role vps: the access server (VLESS/REALITY) is on from the first start
     access: bool = False
+    # roles home and client: the torrent client is on from the first start
+    torrents: bool = False
 
 
 @dataclass(frozen=True)
@@ -177,6 +185,7 @@ def generated_secrets(config: Config) -> tuple[str, ...]:
         + (ADGUARD_SECRETS if Profile.DNS in profiles else ())
         + (CONSUMER_SECRETS if Profile.CONSUMER in profiles else ())
         + (WIFI_SECRETS if Profile.WIFI in profiles else ())
+        + (TORRENTS_SECRETS if Profile.TORRENTS in profiles else ())
     )
 
 
@@ -284,6 +293,7 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
             routing=RoutingConfig(default_upstream=Upstream.DPN.value),
             upstreams=UpstreamsConfig(dpn=DpnUplink(enabled=True)),
             provider=ProviderConfig(enabled=True),
+            torrents=TorrentsConfig(enabled=answers.torrents),
         )
     return _validated(
         version=1,
@@ -292,6 +302,7 @@ def build_config(answers: Answers, facts: HostFacts) -> Config:
         ui=UiConfig(variant=ui_variant_for(answers, facts)),
         routing=RoutingConfig(default_upstream=Upstream.VPS.value),
         upstreams=UpstreamsConfig(vps=VpsUplink(enabled=True)),
+        torrents=TorrentsConfig(enabled=answers.torrents),
     )
 
 
@@ -412,10 +423,19 @@ def read_env(env_path: Path) -> dict[str, str]:
 
 
 def render_env(
-    config: Config, preserved: dict[str, str], files: Mapping[str, str] | None = None
+    config: Config,
+    preserved: dict[str, str],
+    files: Mapping[str, str] | None = None,
+    without: Collection[Profile] = (),
 ) -> str:
     """``.env`` of the box; ``files`` are the fingerprints of the files the gateways read at start
-    (compose.file_digests), which `init` leaves to the first `up`."""
+    (compose.file_digests), which `init` leaves to the first `up`.
+    ``without``: profiles kept off though the configuration names them."""
+    env = config.env_vars()
+    if without:
+        env["COMPOSE_PROFILES"] = ",".join(
+            profile.value for profile in config.compose_profiles() if profile not in without
+        )
     file_lines = (
         [
             "",
@@ -430,7 +450,7 @@ def render_env(
         "# VibeDPN — written by `vibedpn init` from config.yaml."
         " Edit config.yaml, then `vibedpn up`.",
         "",
-        *(f"{key}={value}" for key, value in config.env_vars().items()),
+        *(f"{key}={value}" for key, value in env.items()),
         *file_lines,
         "",
         "# Image tag of ghcr.io/borodatych/vibedpn-{core,wg,ui}; `vibedpn update` moves it."
@@ -685,3 +705,17 @@ def ensure_country_secrets(box_dir: Path, config: Config) -> list[Path]:
         token = secrets_module.token_urlsafe(GENERATED_SECRET_BYTES)
         created.append(write_file(path, token, SECRET_FILE_MODE))
     return created
+
+
+def ensure_torrents_secrets(box_dir: Path, config: Config) -> list[Path]:
+    """Create the RPC password of the torrent client when it has none (`torrents enable`, or a
+    config.yaml edited by hand); an existing one is never replaced. The client reads it at its
+    start (FILE__PASS), and core uses it to talk to the client."""
+    if not config.torrents.enabled:
+        return []
+    path = box_dir / SECRETS_DIR / TRANSMISSION_RPC_PASS_FILE
+    if _present(path):
+        return []
+    path.parent.mkdir(mode=SECRET_DIR_MODE, exist_ok=True)
+    token = secrets_module.token_urlsafe(GENERATED_SECRET_BYTES)
+    return [write_file(path, token, SECRET_FILE_MODE)]

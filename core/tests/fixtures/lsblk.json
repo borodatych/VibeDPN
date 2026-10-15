@@ -1,0 +1,182 @@
+{
+   "blockdevices": [
+      {
+         "name": "nvme0n1",
+         "path": "/dev/nvme0n1",
+         "uuid": null,
+         "label": null,
+         "fstype": null,
+         "size": 512110190592,
+         "type": "disk",
+         "mountpoints": [
+            null
+         ],
+         "children": [
+            {
+               "name": "nvme0n1p1",
+               "path": "/dev/nvme0n1p1",
+               "uuid": "AB12-CD34",
+               "label": "EFI",
+               "fstype": "vfat",
+               "size": 536870912,
+               "type": "part",
+               "mountpoints": [
+                  "/boot/efi"
+               ]
+            },
+            {
+               "name": "nvme0n1p2",
+               "path": "/dev/nvme0n1p2",
+               "uuid": "6f8c1f0e-1b9d-4c53-8a0b-3d5a0f8e2c11",
+               "label": null,
+               "fstype": "ext4",
+               "size": 511571320832,
+               "type": "part",
+               "mountpoints": [
+                  "/"
+               ]
+            }
+         ]
+      },
+      {
+         "name": "sda",
+         "path": "/dev/sda",
+         "uuid": null,
+         "label": null,
+         "fstype": null,
+         "size": 2000398934016,
+         "type": "disk",
+         "mountpoints": [
+            null
+         ],
+         "children": [
+            {
+               "name": "sda1",
+               "path": "/dev/sda1",
+               "uuid": "1234-ABCD",
+               "label": "TORRENTS",
+               "fstype": "exfat",
+               "size": 2000397885440,
+               "type": "part",
+               "mountpoints": [
+                  "/srv/vibedpn/usb"
+               ]
+            }
+         ]
+      },
+      {
+         "name": "sdb",
+         "path": "/dev/sdb",
+         "uuid": null,
+         "label": null,
+         "fstype": null,
+         "size": 1000204886016,
+         "type": "disk",
+         "mountpoints": [
+            null
+         ],
+         "children": [
+            {
+               "name": "sdb1",
+               "path": "/dev/sdb1",
+               "uuid": "01D6A5B3C4D5E6F7",
+               "label": "Windows",
+               "fstype": "ntfs",
+               "size": 1000203837440,
+               "type": "part",
+               "mountpoints": [
+                  null
+               ]
+            }
+         ]
+      },
+      {
+         "name": "sdc",
+         "path": "/dev/sdc",
+         "uuid": null,
+         "label": null,
+         "fstype": null,
+         "size": 64023257088,
+         "type": "disk",
+         "mountpoints": [
+            null
+         ],
+         "children": [
+            {
+               "name": "sdc1",
+               "path": "/dev/sdc1",
+               "uuid": "c0ffee00-1111-4222-8333-444455556666",
+               "label": "backup",
+               "fstype": "ext4",
+               "size": 64022208512,
+               "type": "part",
+               "mountpoints": [
+                  null
+               ]
+            },
+            {
+               "name": "sdc2",
+               "path": "/dev/sdc2",
+               "uuid": "0f0f0f0f-0000-4000-8000-0123456789ab",
+               "label": null,
+               "fstype": "swap",
+               "size": 1048576,
+               "type": "part",
+               "mountpoints": [
+                  null
+               ]
+            }
+         ]
+      },
+      {
+         "name": "sdd",
+         "path": "/dev/sdd",
+         "uuid": null,
+         "label": null,
+         "fstype": null,
+         "size": 16008609792,
+         "type": "disk",
+         "mountpoints": [
+            null
+         ],
+         "children": [
+            {
+               "name": "sdd1",
+               "path": "/dev/sdd1",
+               "uuid": "7A3B-91C2",
+               "label": "CAMERA",
+               "fstype": "vfat",
+               "size": 16007561216,
+               "type": "part",
+               "mountpoints": [
+                  null
+               ]
+            }
+         ]
+      },
+      {
+         "name": "loop0",
+         "path": "/dev/loop0",
+         "uuid": null,
+         "label": null,
+         "fstype": "squashfs",
+         "size": 65011712,
+         "type": "loop",
+         "mountpoints": [
+            "/snap/core/1"
+         ]
+      },
+      {
+         "name": "sde",
+         "path": "/dev/sde",
+         "uuid": null,
+         "label": null,
+         "fstype": null,
+         "size": 8001563222016,
+         "type": "disk",
+         "mountpoints": [
+            null
+         ]
+      }
+   ]
+}

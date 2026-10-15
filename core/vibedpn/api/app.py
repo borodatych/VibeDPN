@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+import httpx
 import segno
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, ValidationError
@@ -87,6 +88,7 @@ from vibedpn.api.smart import SmartLoop
 from vibedpn.api.state import BoxState
 from vibedpn.api.tasks import ask_host, task_view
 from vibedpn.api.telegram import TelegramBot, link_url
+from vibedpn.api.torrents import add_torrents_routes
 from vibedpn.api.traffic import ACCESS_TRAFFIC_DIR
 from vibedpn.api.uplink import UplinkWatchers
 from vibedpn.atomic import write_private
@@ -238,12 +240,14 @@ PEER_ERROR_STATUS: tuple[tuple[type[WgError], int], ...] = (
 class Health(BaseModel):
     """Liveness answer used by the container healthcheck
 
-    The panel builds its menu by the role: a VPS has peers and no LAN
+    The panel builds its menu by the role: a VPS has peers and no LAN, and by ``torrents``: the
+    page of the torrent client is in the menu only while the client is switched on
     """
 
     status: Literal["ok"]
     version: str
     role: str | None = None  # None: core runs without a configuration
+    torrents: bool = False  # torrents.enabled of the configuration
 
 
 def _default_stats() -> ProviderStats:
@@ -1509,6 +1513,7 @@ def create_app(
     hostapd_dir: Path | None = None,
     wifi_reload: WifiReload | None = None,
     backups_dir: Path | None = None,
+    torrents_transport: httpx.BaseTransport | None = None,
 ) -> FastAPI:
     """Build the application. A factory keeps tests free of import-time side effects.
 
@@ -1552,7 +1557,10 @@ def create_app(
     def health() -> Health:
         box = current()
         return Health(
-            status="ok", version=__version__, role=None if box is None else box.role.value
+            status="ok",
+            version=__version__,
+            role=None if box is None else box.role.value,
+            torrents=box is not None and box.torrents.enabled,
         )
 
     @application.get("/provider/stats", response_model=ProviderStats)
@@ -1596,6 +1604,7 @@ def create_app(
     _add_ddns_routes(application, current, state, secrets_dir, data_dir)
     _add_telegram_routes(application, current, state, telegram)
     _add_update_routes(application, data_dir)
+    add_torrents_routes(application, current, state, secrets_dir, data_dir, torrents_transport)
 
     return application
 

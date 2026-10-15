@@ -41,6 +41,7 @@
 | `api` | можно | можно | можно |
 | `access` | можно (`address` обязателен при `enabled: true`) | можно (`address` по умолчанию — `wg_server.endpoint`) | можно (`address` обязателен при `enabled: true`) |
 | `ddns` | можно | можно | можно |
+| `torrents` | можно | **запрещена** | можно |
 | `telegram` | можно | можно | можно |
 
 ## Секции
@@ -352,6 +353,25 @@ nftables-таблица `inet vibedpn`, на вход всё закрыто, к�
 пересоздаёт при `vibedpn up` ядро и сервер; смена `address` — только ядро: сервер и соединения людей
 не трогаются, новые ссылки называют новый адрес, а выданные раньше по-прежнему называют старый.
 
+### `torrents` — торрент-клиент (только `home` и `client`)
+
+Необязательный Transmission: профиль Compose `torrents`, контейнер `transmission`, управляется из панели через ядро.
+RPC и веб-интерфейс слушают только `127.0.0.1`. Загрузки вне каталога коробки, в копию не идут.
+Пошагово — [torrents.md](torrents.md).
+
+| Ключ | Тип | По умолчанию | Смысл |
+|---|---|---|---|
+| `enabled` | bool | `false` | включить клиент; `vibedpn torrents enable` или `init --torrents` |
+| `download_dir` | абсолютный путь | `/srv/vibedpn/downloads` | папка загрузок на хосте (буквы, цифры, `_ . - /`, без `..`); внутри каталога коробки `vibedpn up` не примет. С `storage.uuid` обязана лежать под `/srv/vibedpn/usb`, без него — не под ним |
+| `speed_limit_down`, `speed_limit_up` | кБ/с, ≥ 1, или `null` | `null` | ограничение скорости; панель меняет на лету и записывает сюда |
+| `peer_port` | 1–65535 | `51413` | порт для входящих соединений; проброс на роутере провайдера владелец делает сам, UPnP выключен |
+| `egress` | `direct`, `vps`, `dpn`, `tor`, `xray` или `wg-<имя>` | `direct` | куда выходит трафик клиента независимо от `routing.mode`; не `direct` — только включённый выход коробки |
+| `min_free_gib` | целое ≥ 0 | `5` | меньше свободного места в `download_dir` — ошибка `vibedpn doctor` |
+| `storage.uuid`, `storage.fstype` | UUID файловой системы и `ext4`, `exfat` или `ntfs` | `null` | внешний диск; задаются вместе (`vibedpn torrents storage use`), хост монтирует диск в `/srv/vibedpn/usb` |
+
+Пароль RPC в конфиг не пишется: `secrets/transmission-rpc-pass`. Смена `peer_port`, `download_dir` и диска пересоздаёт клиент при `vibedpn up`,
+`enabled`, `egress`, `download_dir` и `storage` — ещё и ядро; скорости применяются на лету и клиент не перезапускают.
+
 ### `ddns` — имя, которое следует за адресом коробки
 
 | Ключ | Тип | По умолчанию | Смысл |
@@ -578,12 +598,12 @@ ui:
 `vibedpn init` пишет `.env` для `compose.yaml`; всё в нём, кроме `VIBEDPN_TAG`, — производные
 от этого файла (`Config.env_vars()`), руками их не править: `COMPOSE_PROFILES`, `VIBEDPN_API_PORT`,
 `VIBEDPN_LAN_IP` и `VIBEDPN_UI_PORT` (роли с LAN), `VIBEDPN_MYST_UDP_FROM/TO` и
-`VIBEDPN_MYST_TRAVERSAL` (если включён provider).
+`VIBEDPN_MYST_TRAVERSAL` (если включён provider), `VIBEDPN_TORRENTS_DIR` (если включён клиент торрентов).
 
 | Роль | Профили |
 |---|---|
-| `home` | `provider` (если `provider.enabled`), `consumer` (если `upstreams.dpn.enabled`), `router`, `dns` (если `dns.enabled`), `ui` (если `ui.enabled`) |
+| `home` | `provider` (если `provider.enabled`), `consumer` (если `upstreams.dpn.enabled`), `router`, `dns` (если `dns.enabled`), `ui` (если `ui.enabled`), `torrents` (если `torrents.enabled`) |
 | `vps` | `wg-server`; `provider` — только с `provider.enabled`; `access` — с `access.enabled` |
-| `client` | `consumer` (если `upstreams.dpn.enabled`), `wg-client`, `router`, `dns`, `ui` (по включённости) |
+| `client` | `consumer` (если `upstreams.dpn.enabled`), `wg-client`, `router`, `dns`, `ui`, `torrents` (по включённости) |
 
-Порядок в строке всегда канонический: `provider, consumer, wg-server, wg-client, router, dns, ui`.
+Порядок в строке всегда канонический: `provider, consumer, wg-server, wg-client, router, dns, ui`; остальные профили (`tor`, `xray`, `access`, `torrents`) стоят по месту в перечислении `Profile`.

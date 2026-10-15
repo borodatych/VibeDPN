@@ -63,11 +63,13 @@ detect_platform() {
   log "Debian ${VERSION_ID:-?} ($CODENAME), $ARCH"
 }
 
+# exfatprogs and ntfs-3g: the tools (fsck, ntfsfix) for the disks the torrent client can download to,
+# exfat and ntfs; the kernel mounts them itself (docs/knowledge/transmission/storage.md).
 install_base_packages() {
   log "Installing base packages"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y -qq --no-install-recommends ca-certificates curl fail2ban git iproute2 nftables python3 python3-systemd python3-venv unattended-upgrades >/dev/null
+  apt-get install -y -qq --no-install-recommends ca-certificates curl exfatprogs fail2ban git iproute2 nftables ntfs-3g python3 python3-systemd python3-venv unattended-upgrades >/dev/null
 }
 
 # Official apt repository of Docker (https://docs.docker.com/engine/install/debian/); Raspberry Pi

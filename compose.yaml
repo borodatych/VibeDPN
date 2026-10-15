@@ -485,6 +485,56 @@ services:
       retries: 3
       start_period: 30s
 
+  # Torrent client (docs/manuals/torrents.md), roles home and client. Host network and its own uid
+  # (PUID, TRANSMISSION_UID in core/vibedpn/engine/transmission.py): the router steers its outgoing
+  # traffic into the uplink of torrents.egress by that uid, as it does for the access server. The RPC
+  # and the web interface listen on 127.0.0.1 only (settings.json, rendered by `vibedpn up`) and the
+  # whitelist admits that address alone; core is the one that talks to the RPC, with the password
+  # of secrets/transmission-rpc-pass. State in data/transmission, downloads in torrents.download_dir
+  # outside the box directory: a backup does not take them.
+  transmission:
+    image: lscr.io/linuxserver/transmission:${TRANSMISSION_TAG:-4.1.3-r0-ls364}
+    environment:
+      # The config.yaml sections this service's start-time files come from
+      # (Config.config_digests): a change recreates it at `vibedpn up`, and nothing else.
+      VIBEDPN_CONFIG_DIGEST: ${VIBEDPN_DIGEST_TRANSMISSION:-}
+      PUID: "7756"
+      PGID: "7756"
+      USER: vibedpn
+      FILE__PASS: /run/secrets/transmission-rpc-pass
+      WHITELIST: 127.0.0.1
+    profiles:
+      - torrents
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      # The router has steered the uid of the client before it opens its first connection: a client
+      # that started first would reach peers from the ISP address for a moment.
+      core:
+        condition: service_healthy
+    volumes:
+      - ./data/transmission/config:/config
+      # The folder must exist: with a download disk that is not mounted it does not, and the
+      # client then does not start instead of filling the system disk.
+      - type: bind
+        source: ${VIBEDPN_TORRENTS_DIR:-/srv/vibedpn/downloads}
+        target: /downloads
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/transmission-rpc-pass
+        target: /run/secrets/transmission-rpc-pass
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      # The port answers; whether the RPC takes the password is what `vibedpn doctor` asks.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 9091"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
   # AdGuard Home on port 53 of the LAN address. Host network (needed for DHCP later and for real
   # client IPs); core renders AdGuardHome.yaml into ./data/adguard/conf so the setup wizard on
   # port 3000 never appears (Stage 4).

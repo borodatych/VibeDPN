@@ -613,3 +613,37 @@ def test_password_asks_again_until_it_fits_the_policy(
     assert after != before and bcrypt.checkpw(
         b"long-enough-1", after.strip().split(":", 1)[1].encode()
     )
+
+
+def test_init_with_torrents_starts_the_client_with_its_password(tmp_path: Path) -> None:
+    peer = tmp_path / "home.conf"
+    peer.write_text("[Interface]\nPrivateKey = x\n\n[Peer]\nPublicKey = y\n", encoding="utf-8")
+    pw = tmp_path / "pw"
+    pw.write_text("secret123\n", encoding="utf-8")
+    box = tmp_path / "box"
+    result = runner.invoke(
+        cli.app,
+        [
+            "init",
+            "--role",
+            "client",
+            "--peer-config",
+            str(peer),
+            "--password-file",
+            str(pw),
+            "--torrents",
+            "--dir",
+            str(box),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert load_config(box / "config.yaml").torrents.enabled
+    assert (box / "secrets" / "transmission-rpc-pass").is_file()
+    assert "torrents" in (box / ".env").read_text(encoding="utf-8")
+
+
+def test_init_torrents_belongs_to_the_lan_roles(tmp_path: Path) -> None:
+    box, result = bare_vps(tmp_path, "--torrents")
+    assert result.exit_code == 1
+    assert "--torrents is only used with --role home or client" in result.output
+    assert not box.exists()

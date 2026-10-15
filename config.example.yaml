@@ -172,6 +172,28 @@ ui:
   # Язык панели по умолчанию: ru, en или код своего файла data/ui/locales/<код>.json; браузер может выбрать другой.
   language: ru
 
+# Торрент-клиент Transmission (docs/manuals/torrents.md), только на коробке с LAN: `vibedpn torrents enable`.
+# Его веб-интерфейс наружу не открыт: панель говорит с ним через ядро, RPC слушает 127.0.0.1.
+# download_dir — каталог загрузок на диске коробки; с диском по UUID (`vibedpn torrents storage use`)
+#   это папка внутри точки монтирования /srv/vibedpn/usb. Вне data/: резервная копия загрузок не берёт.
+# speed_limit_down / speed_limit_up — кБ/с, null: без ограничения.
+# peer_port — порт для входящих; роутер провайдера пробрасывается вручную, UPnP и NAT-PMP выключены.
+# egress — куда выходит трафик клиента, независимо от routing.mode: direct, vps, dpn, tor, xray или wg-<имя>.
+# min_free_gib — меньше свободного места в download_dir `vibedpn doctor` считает ошибкой.
+torrents:
+  enabled: false
+  download_dir: /srv/vibedpn/downloads
+  speed_limit_down: null
+  speed_limit_up: null
+  peer_port: 51413
+  egress: direct
+  min_free_gib: 5
+  storage:
+    # uuid — UUID файловой системы диска (ext4, exfat, ntfs); null: каталог системного диска
+    uuid: null
+    # fstype — ext4, exfat или ntfs: как диск монтируется; ставится вместе с uuid
+    fstype: null
+
 # API ядра: слушает только 127.0.0.1, на LAN его отдаёт панель ui под /api/core/ только после входа.
 api:
   port: 4480

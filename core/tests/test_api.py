@@ -10,7 +10,7 @@ from vibedpn.api.client import CoreUnreachableError, StatsUnavailableError, fetc
 from vibedpn.config import Config
 from vibedpn.engine.myst import MystError, ProviderStats, SessionTotals
 
-from .conftest import home_config, vps_config
+from .conftest import client_config, home_config, vps_config
 
 
 def stats() -> ProviderStats:
@@ -27,12 +27,24 @@ def stats() -> ProviderStats:
 def test_health() -> None:
     response = TestClient(create_app()).get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": __version__, "role": None}
+    assert response.json() == {
+        "status": "ok",
+        "version": __version__,
+        "role": None,
+        "torrents": False,
+    }
 
 
 def test_health_names_the_role_the_panel_builds_its_menu_by() -> None:
     app = create_app(Config.model_validate(vps_config()))
     assert TestClient(app).get("/health").json()["role"] == "vps"
+
+
+def test_health_says_whether_the_torrent_client_is_on() -> None:
+    off = Config.model_validate(client_config())
+    on = Config.model_validate(client_config() | {"torrents": {"enabled": True}})
+    assert TestClient(create_app(off)).get("/health").json()["torrents"] is False
+    assert TestClient(create_app(on)).get("/health").json()["torrents"] is True
 
 
 def test_provider_stats_returns_what_the_node_said() -> None:

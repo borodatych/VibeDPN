@@ -347,6 +347,7 @@ def test_secrets_probe_is_per_file(tmp_path: Path) -> None:
             "adguard-core-password": None,
             "myst-consumer-passphrase": None,
             "wifi-passphrase": None,
+            "transmission-rpc-pass": None,
             "nodeui-pass": True,
         }
     finally:
@@ -359,6 +360,7 @@ def test_secrets_probe_is_per_file(tmp_path: Path) -> None:
         "adguard-core-password": False,
         "myst-consumer-passphrase": False,
         "wifi-passphrase": False,
+        "transmission-rpc-pass": False,
         "nodeui-pass": True,
     }
 

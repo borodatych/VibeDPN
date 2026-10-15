@@ -7,6 +7,7 @@
 # Device policies from config.yaml win over routing.mode: a device with a MAC is matched by its
 # MAC only, a device without one by its address. The first match decides (return). Where the rest
 # goes is one chain, `steer`, which the LAN and the access server's own traffic both jump to.
+# The torrent client (torrents.egress) is steered by its uid alone, into the sticky slot of its uplink.
 add table inet vibedpn_router
 delete table inet vibedpn_router
 table inet vibedpn_router {
@@ -88,6 +89,17 @@ table inet vibedpn_router {
     jump steer comment "a person outside is steered like a device at home"
   }
 {% endif %}
+{% if torrents_uid %}
+  chain torrents_output {
+    type route hook output priority mangle; policy accept;
+    meta skuid != {{ torrents_uid }} return
+    ct direction reply return comment "answers to peers that dialled in stay on their way"
+    meta nfproto != ipv4 return
+    ip daddr { {{ lan_subnet }}, {{ upstreams_subnet }} } return
+    fib daddr type local return comment "the box itself"
+    meta mark set {{ torrents_mark }} comment "torrents.egress: the client leaves through uplink {{ torrents_uplink }}, held when it is silent"
+  }
+{% endif %}
   chain forward {
     type filter hook forward priority filter; policy accept;
     iifname "{{ lan_interface }}" ip daddr {{ upstreams_subnet }} drop comment "the LAN never reaches gateway containers directly, only through them"
@@ -102,6 +114,9 @@ table inet vibedpn_router {
     oifname "{{ lan_interface }}" icmp type redirect drop comment "one port in and out: never tell a device to bypass the box"
 {% if access_uid %}
     meta skuid {{ access_uid }} meta nfproto ipv6 ct direction original oifname != "lo" drop comment "the uplinks are IPv4: a person's IPv6 never leaves around them"
+{% endif %}
+{% if torrents_uid %}
+    meta skuid {{ torrents_uid }} meta nfproto ipv6 ct direction original oifname != "lo" drop comment "the uplinks are IPv4: the client's IPv6 never leaves around them"
 {% endif %}
 {% if dns_mark %}
     meta skuid {{ adguard_uid }} meta nfproto ipv6 oifname != "lo" drop comment "AdGuard upstreams are IPv4 through the uplink: no IPv6 around it"

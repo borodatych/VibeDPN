@@ -14,6 +14,7 @@ import os
 import re
 import tarfile
 import time
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -91,12 +92,24 @@ def prune_archives(backups_dir: Path, keep: int) -> list[str]:
     return removed
 
 
-def _without_handshake(member: tarfile.TarInfo) -> tarfile.TarInfo | None:
-    return None if member.name in HANDSHAKE_MEMBERS else member
+def _kept(exclude: Collection[str]) -> Callable[[tarfile.TarInfo], tarfile.TarInfo | None]:
+    """The filter of ``tar.add``: no handshake file, nothing at or under an excluded path (a
+    directory that the filter drops is not entered)."""
+
+    def keep(member: tarfile.TarInfo) -> tarfile.TarInfo | None:
+        if member.name in HANDSHAKE_MEMBERS:
+            return None
+        if any(member.name == path or member.name.startswith(f"{path}/") for path in exclude):
+            return None
+        return member
+
+    return keep
 
 
-def create_archive(box_dir: Path, out: Path) -> list[str]:
-    """Write the archive of the box to ``out`` (mode 600); returns the top-level names it holds."""
+def create_archive(box_dir: Path, out: Path, exclude: Collection[str] = ()) -> list[str]:
+    """Write the archive of the box to ``out`` (mode 600); returns the top-level names it holds.
+    ``exclude``: paths relative to the box that stay out of it (the downloads of the torrent
+    client, when the owner put them inside the box)."""
     present = [name for name in BACKUP_MEMBERS if (box_dir / name).exists()]
     if CONFIG_FILE not in present:
         raise BackupError(f"{box_dir / CONFIG_FILE} is missing: nothing to back up")
@@ -113,7 +126,7 @@ def create_archive(box_dir: Path, out: Path) -> list[str]:
             tarfile.open(fileobj=stream, mode="w:gz") as tar,
         ):
             for name in present:
-                tar.add(box_dir / name, arcname=name, filter=_without_handshake)
+                tar.add(box_dir / name, arcname=name, filter=_kept(exclude))
     except OSError as exc:
         out.unlink(missing_ok=True)
         raise BackupError(f"cannot write {out}: {exc.strerror or exc}") from exc

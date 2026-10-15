@@ -21,6 +21,7 @@ from ipaddress import IPv4Address, IPv4Network
 from itertools import takewhile
 
 from vibedpn.config import (
+    TORRENTS_EGRESS_DIRECT,
     WG_KEY_PREFIX,
     Config,
     DevicePolicy,
@@ -39,6 +40,7 @@ from vibedpn.engine.resolver import (
     list_network_sets,
     smart_set_names,
 )
+from vibedpn.engine.transmission import TRANSMISSION_UID
 from vibedpn.templating import template_environment
 
 NFT = "nft"
@@ -468,6 +470,17 @@ def active_uplink(config: Config) -> str | None:
     return config.routing.default_upstream
 
 
+def torrents_uplink(config: Config) -> str | None:
+    """The uplink key the torrent client leaves through, or ``None`` when it is off or goes direct
+    Its traffic is held by the sticky slot of that uplink: a silent exit must not move the client
+    to the ISP address, or to a fallback exit the owner did not choose for it
+    """
+    if config.network is None or not config.torrents.enabled:
+        return None
+    egress = config.torrents.egress
+    return None if egress == TORRENTS_EGRESS_DIRECT else egress
+
+
 def dns_uplink(config: Config) -> str | None:
     """The uplink AdGuard asks its upstreams through (chain dns_uplink), None when it asks directly
     It is the uplink of routing.mode full, on a box that runs AdGuard
@@ -557,6 +570,8 @@ def used_uplinks(config: Config) -> list[str]:
             for device in config.devices
             if device.policy in POLICY_UPLINKS
         )
+    if (torrents := torrents_uplink(config)) is not None:
+        wanted.add(torrents)
     return [key for key in uplink_table(config) if key in wanted]
 
 
@@ -616,18 +631,21 @@ def _channel_mark(item: DomainChannel, table: dict[str, Uplink]) -> str | None:
 
 
 def sticky_uplinks(config: Config) -> dict[str, Uplink]:
-    """Uplink key → the sticky slot its sticky channels leave through, in routing.mode smart:
-    each needs its ip rule and a table that holds its traffic when the uplink is silent."""
+    """Uplink key → the sticky slot its sticky channels leave through, in routing.mode smart, and
+    the one of the torrent client: each needs its ip rule and a table that holds its traffic when
+    the uplink is silent."""
     if config.network is None or config.routing is None:
         return {}
-    if config.routing.mode is not RoutingMode.SMART:
-        return {}
     table = uplink_table(config)
-    keys = {
-        key
-        for item in config.routing.channels()
-        if item.sticky and (key := channel_uplink(item)) is not None
-    }
+    keys: set[str] = set()
+    if config.routing.mode is RoutingMode.SMART:
+        keys.update(
+            key
+            for item in config.routing.channels()
+            if item.sticky and (key := channel_uplink(item)) is not None
+        )
+    if (torrents := torrents_uplink(config)) is not None:
+        keys.add(torrents)
     return {key: sticky_slot(table[key]) for key in table if key in keys}
 
 
@@ -748,6 +766,7 @@ def router_ruleset(config: Config) -> str | None:
         return None
     active = active_uplink(config)
     dns = dns_uplink(config)
+    torrents = torrents_uplink(config)
     return (
         template_environment()
         .get_template(ROUTER_TEMPLATE)
@@ -784,6 +803,10 @@ def router_ruleset(config: Config) -> str | None:
             adguard_uid=ADGUARD_UID,
             # the access server: its people leave the box the way a device at home does
             access_uid=ACCESS_UID if config.access.enabled else "",
+            # the torrent client: its traffic leaves through the sticky slot of torrents.egress
+            torrents_uid=TRANSMISSION_UID if torrents else "",
+            torrents_mark=hex(sticky_slot(uplink_table(config)[torrents]).mark) if torrents else "",
+            torrents_uplink=torrents or "",
             # gateway mode: the box is the router of its LAN, so the direct path is NATed here
             wan_interface=config.network.wan_interface or "",
         )

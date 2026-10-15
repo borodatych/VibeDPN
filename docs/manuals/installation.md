@@ -32,7 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/borodatych/VibeDPN/next/install.sh 
 1. Проверяет ОС, релиз и архитектуру
 2. Ставит `ca-certificates curl git iproute2 nftables python3 python3-venv`, а к ним
    `fail2ban`, `python3-systemd` и `unattended-upgrades` — защиту ssh от перебора и
-   обновления безопасности ОС
+   обновления безопасности ОС, и `exfatprogs` с `ntfs-3g` — инструменты проверки дисков exfat и ntfs
+   для загрузок торрент-клиента (`docs/manuals/torrents.md`)
 3. Ставит Docker Engine и Compose из официального apt-репозитория Docker
    (`/etc/apt/sources.list.d/docker.sources`, ключ `/etc/apt/keyrings/docker.asc`);
    если `docker compose version` уже работает — шаг пропускается

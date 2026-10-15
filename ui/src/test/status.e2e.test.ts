@@ -31,7 +31,8 @@ describe('status page and header', () => {
     await expect(page.locator('h1')).toBeVisible()
     expect(await sideScroll()).toBe(0)
     await page.getByRole('button', { name: /^(Ещё|More)$/ }).click()
-    await page.getByRole('menuitem').nth(3).click() // «Копия»: the fourth page opened now and then
+    // the fifth item with the torrent client on: «Копия», the last page opened now and then
+    await page.getByRole('menuitem').nth(4).click()
     await page.waitForURL(`**${routes.backup()}`)
   })
 

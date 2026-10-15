@@ -666,6 +666,27 @@ jobs:
           VIBEDPN_E2E_PYTHON: /tmp/e2e-venv/bin/python
         run: tests/e2e/home.sh
 
+  e2e-torrents:
+    name: e2e · torrent client — RPC on loopback only, a torrent added through core, doctor, switch-off
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Build the image the box runs
+        run: docker build -q -t ghcr.io/borodatych/vibedpn-core:e2e core
+      - name: The CLI in a venv
+        run: |
+          uv venv /tmp/e2e-venv --python 3.12
+          uv pip install --python /tmp/e2e-venv/bin/python --require-hashes -r core/requirements.txt
+          uv pip install --python /tmp/e2e-venv/bin/python --no-deps ./core
+      - name: Run the stand
+        env:
+          VIBEDPN_TAG: e2e
+          VIBEDPN_E2E_PYTHON: /tmp/e2e-venv/bin/python
+        run: tests/e2e/torrents.sh
+
   e2e-vps:
     name: e2e · bare VPS — AmneziaWG server, a phone through the tunnel, keys on the wire, VLESS/REALITY person
     runs-on: ubuntu-24.04
@@ -737,7 +758,7 @@ jobs:
 
   images:
     name: image · ${{ matrix.image.name }}
-    needs: [python, shell, compose, install, firewall, router, ui, ui-image, adguard, tunnel, e2e, e2e-home, e2e-vps, e2e-gateway, e2e-wifi]
+    needs: [python, shell, compose, install, firewall, router, ui, ui-image, adguard, tunnel, e2e, e2e-home, e2e-torrents, e2e-vps, e2e-gateway, e2e-wifi]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

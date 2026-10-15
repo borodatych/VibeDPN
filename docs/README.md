@@ -19,6 +19,7 @@ docs/
 │   ├── multiVps.md       # несколько VPS: второй подхватывает, когда первый молчит — цепочка routing.fallback
 │   ├── torUplink.md      # бесплатный выход через Tor: включить, отправить сайты и Telegram, ограничения
 │   ├── xrayUplink.md     # выход по ссылке vless://: маскирующий транспорт там, где WireGuard не проходит
+│   ├── torrents.md       # торрент-клиент: включить, выход трафика, диск для загрузок, порт, проверка
 │   ├── accessServer.md   # доступ по ссылке: свой сервер VLESS/REALITY для своих людей, проброс порта, DDNS
 │   ├── telegramBot.md    # Telegram-бот коробки: тревоги и недельный отчёт, привязка чата, настройки
 │   ├── backupRestore.md  # копия коробки: сделать, скачать, восстановить из списка или файла, сколько хранится
@@ -29,7 +30,7 @@ docs/
 │   └── osImages.md       # готовые образы ОС: какие есть, доступ через cloud-init, первый вход, сборка
 └── knowledge/            # база знаний: грабли и проверенные факты с URL
     ├── README.md         # индекс — запись без строки здесь не существует
-    ├── myst/  adguard/  compose/  docker/  wireguard/  tor/  xray/  ddns/  telegram/  platform/  linux/  security/  ci/  frontend/
+    ├── myst/  adguard/  transmission/  compose/  docker/  wireguard/  tor/  xray/  ddns/  telegram/  platform/  linux/  security/  ci/  frontend/
     ├── python/
     └── process/
 ```

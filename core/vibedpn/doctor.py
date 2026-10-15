@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import socket
+import stat
 import subprocess
 import urllib.request
 from dataclasses import asdict, dataclass, field
@@ -37,6 +38,7 @@ from vibedpn.compose import (
     preflight,
 )
 from vibedpn.config import (
+    TORRENTS_EGRESS_DIRECT,
     WG_KEY_PREFIX,
     Config,
     NetworkMode,
@@ -100,9 +102,17 @@ from vibedpn.engine.router import (
     used_uplinks,
 )
 from vibedpn.engine.sockdiag import SockDiagError, can_close
+from vibedpn.engine.storage import StorageError, list_devices, storage_mounted
 from vibedpn.engine.telegram import SECRETS_FILE as TELEGRAM_SECRETS_FILE
 from vibedpn.engine.telegram import TelegramSecrets
 from vibedpn.engine.telegram import load_secrets as load_telegram_secrets
+from vibedpn.engine.transmission import (
+    COMPLETE_DIR,
+    TRANSMISSION_UID,
+    RpcClient,
+    TransmissionError,
+    read_rpc_password,
+)
 from vibedpn.engine.wg import SERVER_CONF_FILE, SERVER_KEY_FILE, server_address
 from vibedpn.engine.wg import SERVER_DIR as WG_SERVER_DIR
 
@@ -118,6 +128,8 @@ SS_ARGV = ["ss", "-H", "-lntup"]
 API_HOST = "127.0.0.1"
 DNS_PORT = 53
 DNS_UPLINK_CHAIN = "dns_uplink"  # templates/lan-router.nft.j2
+TORRENTS_CHAIN = "torrents_output"  # templates/lan-router.nft.j2
+GIB = 1024**3
 ACCESS_CHAIN = "access_output"  # templates/lan-router.nft.j2
 DHCP_SERVER_PORT = 67
 CORE_PROCESS_NAMES = frozenset({"vibedpn-core"})  # comm of the console script in `ss -p`
@@ -219,6 +231,19 @@ class TelegramFacts:
 
 
 @dataclass(frozen=True)
+class TorrentsFacts:
+    """The torrent client, when it is on."""
+
+    rpc: str | None = None  # "": the RPC answered; else why not; None: not asked
+    writable: bool | None = (
+        None  # the client's user can write in download_dir; None: no such folder
+    )
+    free_bytes: int | None = None
+    mounted: bool | None = None  # torrents.storage: the disk is mounted; None: no disk or not asked
+    chain: bool | None = None  # torrents_output in the router (egress is not direct)
+
+
+@dataclass(frozen=True)
 class DoctorFacts:
     config: Config | None
     config_error: str
@@ -270,6 +295,7 @@ class DoctorFacts:
     dpn_connection: str = ""
     access: AccessFacts = field(default_factory=AccessFacts)
     telegram: TelegramFacts = field(default_factory=TelegramFacts)
+    torrents: TorrentsFacts = field(default_factory=TorrentsFacts)
     # The commit of the checkout, and the commit each image of ours on the host was built from
     # (the label CI sets); "" when the box is not a git checkout
     image_facts: ImageFacts = field(default_factory=lambda: ImageFacts("", {}))
@@ -760,6 +786,8 @@ def _lan_results(config: Config, facts: DoctorFacts) -> list[CheckResult]:
         variant = _ui_variant_result(config, facts.memory_bytes)
         if variant is not None:
             results.append(variant)
+    if config.torrents.enabled:
+        results.extend(_torrents_results(config, facts.torrents))
     if facts.exits is not None:
         results.extend(_exit_results(config, facts.exits, facts.dns_uplink, facts.dpn_connection))
     return results
@@ -1237,6 +1265,7 @@ def gather(box_dir: Path, *, network: bool = False) -> DoctorFacts:
         lan_wireless=_lan_wireless(config),
         access=_access_facts(box_dir, config, router_table, network=network),
         telegram=_telegram_facts(box_dir, config),
+        torrents=_torrents_facts(box_dir, config, router_table),
         image_facts=_image_facts(box_dir, config, docker_error),
     )
 
@@ -1592,7 +1621,18 @@ def _env_matches(env_path: Path, config: Config) -> bool:
         key, sep, value = line.partition("=")
         if sep:
             current[key.strip()] = value.strip()
-    return all(current.get(key) == value for key, value in config.env_vars().items())
+    wanted = config.env_vars()
+    # a download disk that is not there keeps the client's profile off (cli._prepare_torrents)
+    held = config.torrents.storage.uuid is not None and Profile.TORRENTS.value not in current.get(
+        "COMPOSE_PROFILES", ""
+    ).split(",")
+    if held:
+        wanted["COMPOSE_PROFILES"] = ",".join(
+            profile.value
+            for profile in config.compose_profiles()
+            if profile is not Profile.TORRENTS
+        )
+    return all(current.get(key) == value for key, value in wanted.items())
 
 
 def _read_ip_forward() -> bool | None:
@@ -1712,6 +1752,137 @@ def _nat_result(config: Config, facts: DoctorFacts) -> CheckResult | None:
             forward,
         )
     return CheckResult("nat", Verdict.WARN, f"unknown NAT type {facts.nat!r} from the node")
+
+
+def dir_writable_by_client(path: Path) -> bool | None:
+    """Whether the user of the torrent client can write in ``path``, by the owner and the mode of
+    the folder (root's own access says nothing); ``None`` when the folder is not there."""
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    if info.st_uid == TRANSMISSION_UID:
+        return bool(info.st_mode & stat.S_IWUSR)
+    return bool(info.st_mode & stat.S_IWOTH)
+
+
+def _torrents_facts(
+    box_dir: Path, config: Config | None, router_table: bool | None
+) -> TorrentsFacts:
+    if config is None or not config.torrents.enabled:
+        return TorrentsFacts()
+    torrents = config.torrents
+    folder = Path(torrents.download_dir)
+    mounted: bool | None = None
+    if torrents.storage.uuid is not None:
+        try:
+            mounted = storage_mounted(config, list_devices())
+        except StorageError:
+            mounted = None
+    rpc: str | None = None
+    try:
+        RpcClient(read_rpc_password(box_dir / SECRETS_DIR)).session()
+        rpc = ""
+    except TransmissionError as exc:
+        rpc = str(exc)
+    free: int | None = None
+    try:
+        free = shutil.disk_usage(folder).free
+    except OSError:
+        free = None
+    chain = None
+    if torrents.egress != TORRENTS_EGRESS_DIRECT and router_table:
+        chain = _chain_present(ROUTER_TABLE, TORRENTS_CHAIN)
+    return TorrentsFacts(
+        rpc=rpc,
+        writable=dir_writable_by_client(folder / COMPLETE_DIR),
+        free_bytes=free,
+        mounted=mounted,
+        chain=chain,
+    )
+
+
+def _torrents_results(config: Config, facts: TorrentsFacts) -> list[CheckResult]:
+    torrents = config.torrents
+    results: list[CheckResult] = []
+    if torrents.storage.uuid is not None:
+        if facts.mounted is False:
+            results.append(
+                CheckResult(
+                    "torrents disk",
+                    Verdict.FAIL,
+                    f"the disk {torrents.storage.uuid} is not mounted: the client does not run",
+                    "connect the disk, then `vibedpn up`",
+                )
+            )
+        elif facts.mounted is None:
+            results.append(
+                CheckResult(
+                    "torrents disk",
+                    Verdict.WARN,
+                    f"cannot tell whether {torrents.storage.uuid} is mounted",
+                    "vibedpn torrents storage list",
+                )
+            )
+        else:
+            results.append(
+                CheckResult("torrents disk", Verdict.OK, f"{torrents.storage.uuid} is mounted")
+            )
+    if facts.rpc is None:
+        pass
+    elif facts.rpc:
+        results.append(
+            CheckResult("torrents rpc", Verdict.FAIL, facts.rpc, "vibedpn logs transmission")
+        )
+    else:
+        results.append(CheckResult("torrents rpc", Verdict.OK, "Transmission answers on 127.0.0.1"))
+    if facts.writable is False:
+        results.append(
+            CheckResult(
+                "torrents folder",
+                Verdict.FAIL,
+                f"the client cannot write in {torrents.download_dir}/complete",
+                f"chown {TRANSMISSION_UID} the folder, or `vibedpn up`",
+            )
+        )
+    elif facts.writable is True:
+        results.append(
+            CheckResult("torrents folder", Verdict.OK, f"{torrents.download_dir} is writable")
+        )
+    if facts.free_bytes is not None:
+        free_gib = facts.free_bytes / GIB
+        enough = facts.free_bytes >= torrents.min_free_gib * GIB
+        results.append(
+            CheckResult(
+                "torrents space",
+                Verdict.OK if enough else Verdict.FAIL,
+                f"{free_gib:.1f} GiB free in {torrents.download_dir}"
+                + ("" if enough else f", under torrents.min_free_gib {torrents.min_free_gib}"),
+                "" if enough else "free some space or choose a bigger disk",
+            )
+        )
+    if torrents.egress != TORRENTS_EGRESS_DIRECT:
+        results.append(_torrents_egress_result(torrents.egress, facts.chain))
+    return results
+
+
+def _torrents_egress_result(egress: str, chain: bool | None) -> CheckResult:
+    if chain is False:
+        return CheckResult(
+            "torrents egress",
+            Verdict.FAIL,
+            f"the router has no chain for the client: its traffic would leave directly,"
+            f" not through {egress}",
+            "vibedpn restart",
+        )
+    if egress == Upstream.TOR.value:
+        return CheckResult(
+            "torrents egress",
+            Verdict.WARN,
+            "through tor: TCP only, so DHT and uTP do not work, and torrents are slow there",
+            "vibedpn torrents egress <another exit>",
+        )
+    return CheckResult("torrents egress", Verdict.OK, f"the client leaves through {egress}")
 
 
 def _lan_address_set(config: Config | None) -> bool | None:

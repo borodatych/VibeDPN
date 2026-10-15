@@ -68,6 +68,17 @@ describe('rules, access, network, backup, devices and journal', () => {
     await expect(tiles.nth(2)).toContainText('14')
   })
 
+  test('the torrents page is in the menu «More», lists the torrent and pauses it', async () => {
+    await page.goto(routes.home.abs())
+    await page.getByRole('button', { name: /^(Ещё|More)$/ }).click()
+    await page.getByRole('menuitem', { name: /^(Торренты|Torrents)$/ }).click()
+    await page.waitForURL('**/torrents')
+    await expect(page.getByRole('button', { name: 'probe.bin' })).toBeVisible()
+    await page.getByRole('button', { name: /^(Приостановить|Pause)$/ }).click()
+    await expect(page.getByRole('button', { name: /^(Запустить|Start)$/ })).toBeVisible()
+    await expect(page.getByText(/^(Свободно|Free) /)).toBeVisible()
+  })
+
   test('signed out, the header shows no pages: the form is all there is to do', async () => {
     const stranger = await (await panelContext(browser, { viewport: { width: 1320, height: 900 } })).newPage()
     await stranger.goto(routes.signIn.abs())
@@ -89,7 +100,15 @@ describe('rules, access, network, backup, devices and journal', () => {
       expect(rows.length).toBeGreaterThan(1)
       expect(rows.every(([display, border]) => display === 'grid' && border === '1px')).toBe(true)
     }
-    for (const route of [routes.rules, routes.access, routes.network, routes.backup, routes.devices, routes.journal]) {
+    for (const route of [
+      routes.rules,
+      routes.access,
+      routes.network,
+      routes.backup,
+      routes.devices,
+      routes.journal,
+      routes.torrents,
+    ]) {
       await page.goto(route.abs())
       await expect(page.locator('h1')).toBeVisible()
       expect(await sideScroll()).toBe(0)

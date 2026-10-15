@@ -332,6 +332,28 @@ ui:
   variant: {{ config.ui.variant.value }}
   # Язык панели по умолчанию: ru, en или код своего файла data/ui/locales/<код>.json; браузер может выбрать другой.
   language: {{ config.ui.language }}
+
+# Торрент-клиент Transmission (docs/manuals/torrents.md), только на коробке с LAN: `vibedpn torrents enable`.
+# Его веб-интерфейс наружу не открыт: панель говорит с ним через ядро, RPC слушает 127.0.0.1.
+# download_dir — каталог загрузок на диске коробки; с диском по UUID (`vibedpn torrents storage use`)
+#   это папка внутри точки монтирования /srv/vibedpn/usb. Вне data/: резервная копия загрузок не берёт.
+# speed_limit_down / speed_limit_up — кБ/с, null: без ограничения.
+# peer_port — порт для входящих; роутер провайдера пробрасывается вручную, UPnP и NAT-PMP выключены.
+# egress — куда выходит трафик клиента, независимо от routing.mode: direct, vps, dpn, tor, xray или wg-<имя>.
+# min_free_gib — меньше свободного места в download_dir `vibedpn doctor` считает ошибкой.
+torrents:
+  enabled: {{ config.torrents.enabled | tojson }}
+  download_dir: {{ config.torrents.download_dir }}
+  speed_limit_down: {{ config.torrents.speed_limit_down | tojson }}
+  speed_limit_up: {{ config.torrents.speed_limit_up | tojson }}
+  peer_port: {{ config.torrents.peer_port }}
+  egress: {{ config.torrents.egress }}
+  min_free_gib: {{ config.torrents.min_free_gib }}
+  storage:
+    # uuid — UUID файловой системы диска (ext4, exfat, ntfs); null: каталог системного диска
+    uuid: {{ config.torrents.storage.uuid | tojson }}
+    # fstype — ext4, exfat или ntfs: как диск монтируется; ставится вместе с uuid
+    fstype: {{ config.torrents.storage.fstype | tojson }}
 {% endif %}
 
 # API ядра: слушает только 127.0.0.1, на LAN его отдаёт панель ui под /api/core/ только после входа.

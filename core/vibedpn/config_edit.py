@@ -327,6 +327,56 @@ def _section(data: CommentedMap, name: str, path: Path) -> CommentedMap:
     return section
 
 
+def set_torrents(path: Path, enabled: bool) -> tuple[Config, bool]:
+    """Turn the torrent client on or off (``torrents.enabled``); its other keys stay."""
+
+    def mutate(data: CommentedMap) -> None:
+        _section(data, "torrents", path)["enabled"] = enabled
+
+    return _edit(path, mutate)
+
+
+def set_torrents_storage(
+    path: Path, *, uuid: str | None, fstype: str | None, download_dir: str
+) -> tuple[Config, bool]:
+    """Put the downloads on the disk with this filesystem UUID (and the folder on it), or back on
+    the system disk (``uuid`` and ``fstype`` ``None``): the three keys always change together."""
+
+    def mutate(data: CommentedMap) -> None:
+        section = _section(data, "torrents", path)
+        storage = _section(section, "storage", path)
+        storage["uuid"] = uuid
+        storage["fstype"] = fstype
+        section["download_dir"] = download_dir
+
+    return _edit(path, mutate)
+
+
+def set_torrents_egress(path: Path, channel: str) -> tuple[Config, bool]:
+    """Where the torrent client's traffic leaves: ``direct`` or an uplink key."""
+
+    def mutate(data: CommentedMap) -> None:
+        _section(data, "torrents", path)["egress"] = channel
+
+    return _edit(path, mutate)
+
+
+def set_torrents_limits(
+    path: Path, *, down: int | None, up: int | None, change_down: bool, change_up: bool
+) -> tuple[Config, bool]:
+    """Set the speed limits in kB/s (``None``: no limit); a limit with its ``change`` flag unset
+    stays as it is."""
+
+    def mutate(data: CommentedMap) -> None:
+        section = _section(data, "torrents", path)
+        if change_down:
+            section["speed_limit_down"] = down
+        if change_up:
+            section["speed_limit_up"] = up
+
+    return _edit(path, mutate)
+
+
 class WgUplinkNotFoundError(ConfigEditError):
     """``config.yaml`` has no named WireGuard exit by this name."""
 
