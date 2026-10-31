@@ -306,7 +306,7 @@ ui:
 | Ключ | Тип | По умолчанию | Смысл |
 |---|---|---|---|
 | `enabled` | bool | `true` | DNS и адблок на порту 53 LAN-интерфейса |
-| `upstreams` | список URL `https://…` | `[https://dns.cloudflare.com/dns-query]` | апстримы DNS-over-HTTPS; минимум один |
+| `upstreams` | список URL `https://…` | Cloudflare, Google, Quad9 (`https://…/dns-query`) | апстримы DNS-over-HTTPS по порядку: не ответил первый — спрашивается следующий; минимум один |
 | `web_port` | 1–65535 | `3000` | веб-панель AdGuard на LAN-интерфейсе |
 
 ### `ui` — веб-интерфейс коробки
@@ -468,6 +468,8 @@ dns:
   enabled: true
   upstreams:
     - https://dns.cloudflare.com/dns-query
+    - https://dns.google/dns-query
+    - https://dns.quad9.net/dns-query
   web_port: 3000
 ui:
   enabled: true

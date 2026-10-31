@@ -899,11 +899,21 @@ class WgServerConfig(StrictModel):
         return value
 
 
+# Three operators, asked in order: one that stops answering leaves the LAN with the next, not with
+# SERVFAIL. Endpoints: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/,
+# https://developers.google.com/speed/public-dns/docs/doh, https://www.quad9.net/service/service-addresses-and-features
+DEFAULT_DOH_UPSTREAMS = (
+    "https://dns.cloudflare.com/dns-query",
+    "https://dns.google/dns-query",
+    "https://dns.quad9.net/dns-query",
+)
+
+
 class DnsConfig(StrictModel):
     """AdGuard Home on port 53 of the LAN interface with DNS-over-HTTPS upstreams."""
 
     enabled: bool = True
-    upstreams: list[str] = Field(default_factory=lambda: ["https://dns.cloudflare.com/dns-query"])
+    upstreams: list[str] = Field(default_factory=lambda: list(DEFAULT_DOH_UPSTREAMS))
     web_port: Port = 3000
 
     @field_validator("upstreams")

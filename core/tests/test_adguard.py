@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from vibedpn.config import Config, parse_yaml
+from vibedpn.config import DEFAULT_DOH_UPSTREAMS, Config, parse_yaml
 from vibedpn.engine.adguard import (
     CONF_FILE,
     HOST_NAME_STATE_FILE,
@@ -42,7 +42,7 @@ def test_a_new_file_carries_exactly_our_keys() -> None:
     assert data["users"] == [{"name": "admin", "password": HASH}]
     assert data["dns"]["bind_hosts"] == ["192.168.1.50"]
     assert data["dns"]["port"] == 53
-    assert data["dns"]["upstream_dns"] == ["https://dns.cloudflare.com/dns-query"]
+    assert data["dns"]["upstream_dns"] == list(DEFAULT_DOH_UPSTREAMS)
     assert data["dns"]["aaaa_disabled"] is True
     assert as_data(adguard_text(None, lan_box("off"), HASH))["dns"]["aaaa_disabled"] is False
 
@@ -64,6 +64,8 @@ def test_the_file_adguard_rewrote_keeps_everything_but_our_keys() -> None:
             "+    - 192.168.1.50",
             "-  port: 5354",
             "+  port: 53",
+            "+    - https://dns.google/dns-query",
+            "+    - https://dns.quad9.net/dns-query",
             "-  aaaa_disabled: false",
             "+  aaaa_disabled: true",
             "-  rewrites: []",

@@ -159,6 +159,8 @@ dns:
   enabled: true
   upstreams:
     - https://dns.cloudflare.com/dns-query
+    - https://dns.google/dns-query
+    - https://dns.quad9.net/dns-query
   web_port: 3000
 
 # Веб-интерфейс коробки, только на LAN-адресе.

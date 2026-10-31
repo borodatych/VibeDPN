@@ -320,7 +320,7 @@
 - [x] **AmneziaWG 3.1 вместо WireGuard ядра во всех туннелях** — ✅ (2026-10-15, `next`, 2ecc12e) образ `vibedpn-wg` собирает `amneziawg-go` и `awg` из исходников по коммитам, туннель в userspace на `/dev/net/tun`; обычный WireGuard-файл работает как раньше; doctor и init проверяют `/dev/net/tun` вместо модуля; `tunnel.sh` — plain, awg2, awg3. Разбор — `knowledge/wireguard/amnezia.md`
 - [x] **Роль `vps` без ноды, маскировка AWG в конфиге, доступ при init** — ✅ (2026-10-15, `next`) `init --role vps` по умолчанию без ноды, флаги `--provider/--no-provider` и `--access`; блок `wg_server.awg` генерируется при init, `HeaderProtectionKey` — в `secrets/`; `vibedpn awg enable|disable`; без ноды нет порта 4449 и пароля панели; стенд `tests/e2e/vps.sh` (офлайн и онлайн в colima) и job `e2e-vps`; мануал `manuals/bareVps.md`
 - [ ] **Живой прогон на VPS брата** — установка по `bareVps.md`, телефон из России: AWG и REALITY через мобильного и домашнего провайдера; файл 3.1 в приложениях Amnezia (QR и импорт)
-- [ ] **CI на GitHub зелёный** — `/dev/net/tun` на раннере, job `e2e-vps` и `tunnel` ни разу не гонялись на Actions
+- [x] **CI на GitHub зелёный** — ✅ (2026-10-31, `next`) прогон 41195685000 на 0c31ed7: все 32 job зелёные, среди них `tunnel` (рукопожатие AmneziaWG, plain WireGuard, kill switch) и `e2e-vps` (сервер AWG, телефон через туннель, VLESS/REALITY) — `/dev/net/tun` на раннере есть
 
 ## Stage 15 — Торренты на коробке (2026-10-15)
 
@@ -335,8 +335,10 @@
 
 - [x] **Выход закреплён за соединением** — ✅ (2026-10-31, `next`) `prerouting` восстанавливает метку выхода установленного соединения из `ct mark` (бит `STEERED_CT_BIT`) и сохраняет выбор после `steer`, direct тоже; длинное скачивание через Tor (S3 с TTL 5 с) больше не переезжает напрямую посреди потока. ⚠ перепроверить на коробке скачиванием дольше минуты
 - [x] **Выученные CDN не перебивают явные правила** — ✅ (2026-10-31, `next`) `RuleIndex` помнит имена из `config.yaml`; `learn`, `reload` и цели CNAME их не трогают, `unlearn` (`vibedpn rule forget`) не стирает явное правило
-- [x] **Коробка: Tor через брокер Snowflake напрямую** — ✅ (2026-10-31, на коробке) фронт CDN77 перестал отвечать, брокер `snowflake-broker.torproject.net` открыт; мосты заменены `vibedpn tor bridges set`, `Bootstrapped 100%` за 2.5 мин. Встроенные мосты в `config.py` по-прежнему с фронтом CDN77
-- [x] **Коробка: запасные DoH-апстримы** — ✅ (2026-10-31, на коробке) Cloudflare отвечал 4 из 5 и давал SERVFAIL всей LAN; добавлены `dns.google` и `dns.quad9.net`. Шаблон конфига по-прежнему с одним апстримом
+- [x] **Коробка: Tor через брокер Snowflake напрямую** — ✅ (2026-10-31, на коробке) фронт CDN77 перестал отвечать, брокер `snowflake-broker.torproject.net` открыт; мосты заменены `vibedpn tor bridges set`, `Bootstrapped 100%` за 2.5 мин. Встроенные мосты в `config.py` оставлены как в Tor Browser (решение 43)
+- [x] **Коробка: запасные DoH-апстримы** — ✅ (2026-10-31, на коробке) Cloudflare отвечал 4 из 5 и давал SERVFAIL всей LAN; добавлены `dns.google` и `dns.quad9.net`. Умолчание кода и шаблон — следующим пунктом
+
+- [x] **Три DoH-апстрима по умолчанию** — ✅ (2026-10-31, `next`) `DEFAULT_DOH_UPSTREAMS`: Cloudflare, Google, Quad9 по порядку — в модели, `config.example.yaml` и спеке; молчащий апстрим уводит на следующий, а не в SERVFAIL всей LAN (решение 43)
 
 ## Предложения (не выполнять без команды оператора)
 
