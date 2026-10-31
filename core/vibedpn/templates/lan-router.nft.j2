@@ -54,7 +54,9 @@ table inet vibedpn_router {
     ether saddr @devices_{{ policy.name }}_mac meta mark set {{ policy.mark }} return comment "policy {{ policy.name }}: through uplink {{ policy.name }}"
     ip saddr @devices_{{ policy.name }}_ip meta mark set {{ policy.mark }} return comment "policy {{ policy.name }}: through uplink {{ policy.name }}"
 {% endfor %}
+    ct state established,related ct mark and {{ steered_ct_bit }} == {{ steered_ct_bit }} meta mark set ct mark and {{ steered_ct_mask }} return comment "an established connection keeps the exit chosen at its start"
     jump steer
+    ct mark set meta mark or {{ steered_ct_bit }} comment "remember the exit of the connection, direct included"
   }
   chain steer {
 {% for net in smart_networks %}

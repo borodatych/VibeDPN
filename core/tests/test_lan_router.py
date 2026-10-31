@@ -13,6 +13,7 @@ from vibedpn.engine import router
 from vibedpn.engine.router import (
     EGRESS_COMMENT,
     ROUTER_COMMENT,
+    STEERED_CT_BIT,
     UPLINKS,
     UPSTREAMS_BRIDGE,
     UPSTREAMS_SUBNET,
@@ -289,6 +290,26 @@ def test_device_policies_win_over_the_mode_in_order() -> None:
     dpn = text.index("ether saddr @devices_dpn_mac meta mark set 0x20 return")
     assert bypass < block < vps < dpn < text.index(MODE_RULE)
     assert 'iifname "eth0" meta mark 0x30 drop' in text
+
+
+def test_an_established_connection_keeps_the_exit_of_its_first_packet() -> None:
+    text = router_ruleset(lan_box(devices=[PHONE, TV, LAPTOP], also=("dpn",))) or ""
+    restore = (
+        "ct state established,related ct mark and 0x80000000 == 0x80000000"
+        " meta mark set ct mark and 0x7fffffff return"
+        ' comment "an established connection keeps the exit chosen at its start"'
+    )
+    remember = (
+        "ct mark set meta mark or 0x80000000"
+        ' comment "remember the exit of the connection, direct included"'
+    )
+    assert restore in text and remember in text
+    # политики устройств проверяются на каждом пакете, поэтому восстановление стоит после них
+    steer = text.index("jump steer")
+    last_policy = text[:steer].rindex('comment "policy ')
+    assert last_policy < text.index(restore) < steer < text.index(remember)
+    mask = int(restore.split("meta mark set ct mark and ")[1].split(" ", maxsplit=1)[0], 16)
+    assert mask == 0x7FFFFFFF and mask & STEERED_CT_BIT == 0
 
 
 def test_uplinks_in_use_come_from_the_mode_and_the_policies() -> None:

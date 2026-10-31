@@ -381,6 +381,10 @@ WG_SLOTS = [
 # its own: the fallback chain moves the table of the uplink, never this one
 STICKY_MARK_BIT = 0x100
 STICKY_TABLE_OFFSET = 100
+# Соединение помнит выход, выбранный на первом пакете: conntrack хранит выбор своей меткой,
+# бит говорит, что выбор сделан (0 значит direct, поэтому сам бит не может быть меткой)
+STEERED_CT_BIT = 0x80000000
+STEERED_CT_MASK = 0xFFFFFFFF ^ STEERED_CT_BIT
 
 
 def sticky_slot(uplink: Uplink) -> Uplink:
@@ -786,6 +790,9 @@ def router_ruleset(config: Config) -> str | None:
             list_network_sets=list_network_sets(config),
             smart_list_networks=smart_list_networks(config),
             block_mark=hex(BLOCK_MARK),
+            # выход закрепляется за соединением на своём первом пакете
+            steered_ct_bit=hex(STEERED_CT_BIT),
+            steered_ct_mask=hex(STEERED_CT_MASK),
             uplink_policies=[
                 UplinkPolicy(policy.value, hex(UPLINKS[upstream].mark))
                 for policy, upstream in POLICY_UPLINKS.items()

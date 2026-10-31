@@ -209,6 +209,41 @@ def test_aaaa_of_a_tunnel_rule_is_empty_and_the_upstream_is_not_asked() -> None:
     assert direct.answer and upstream.asked == ["bank.example."]
 
 
+def explicit_box() -> Config:
+    raw = client_config()
+    raw["upstreams"]["tor"] = {"enabled": True}
+    raw["routing"]["domains"] = [
+        {"domain": "cdn.example", "via": "tor"},
+        {"domain": "play.date", "via": "direct"},
+    ]
+    return Config.model_validate(raw)
+
+
+def test_reload_keeps_an_explicit_rule_over_what_was_learned() -> None:
+    config = explicit_box()
+    resolver = Resolver(RuleIndex.from_config(config), Upstream(), Nft())
+    assert resolver.index.match("cdn.example") == "smart_tor"
+    # так выглядит запись, оставленная прежним механизмом learned
+    resolver.learned["cdn.example"] = "play.date"
+    resolver.reload(config)
+    assert resolver.index.match("cdn.example") == "smart_tor"
+
+
+def test_learn_refuses_a_name_with_an_explicit_rule() -> None:
+    resolver = Resolver(RuleIndex.from_config(explicit_box()), Upstream(), Nft())
+    assert resolver.learn("cdn.example", "play.date") is False
+    assert resolver.index.match("cdn.example") == "smart_tor"
+    assert resolver.learned == {}
+
+
+def test_unlearn_keeps_an_explicit_rule() -> None:
+    resolver = Resolver(RuleIndex.from_config(explicit_box()), Upstream(), Nft())
+    resolver.learned["cdn.example"] = "play.date"
+    resolver.unlearn("cdn.example")
+    assert resolver.index.match("cdn.example") == "smart_tor"
+    assert resolver.learned == {}
+
+
 def test_reload_keeps_what_was_learned_for_sites_still_under_a_rule() -> None:
     config = smart_box()
     resolver = Resolver(RuleIndex.from_config(config), Upstream(), Nft())

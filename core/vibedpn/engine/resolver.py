@@ -108,6 +108,8 @@ class RuleIndex:
 
     def __init__(self, entries: Iterable[tuple[str, str]] = ()) -> None:
         self._sets: dict[str, str] = {}
+        # имена из config.yaml: выученное их не перебивает
+        self._explicit: set[str] = set()
         for name, set_name in entries:
             self.add(name, set_name)
 
@@ -121,17 +123,30 @@ class RuleIndex:
         for item in config.routing.lists:
             set_name = channel_set(item)
             for name in fetched.get(item.url, ()):
-                index.add(name, set_name)
+                index.add_explicit(name, set_name)
         for rule in config.routing.domains:
             for name in rule.names():
-                index.add(name, channel_set(rule))
+                index.add_explicit(name, channel_set(rule))
         return index
 
+    @staticmethod
+    def _key(name: str) -> str:
+        return name.lower().rstrip(".")
+
     def add(self, name: str, set_name: str) -> None:
-        self._sets[name.lower().rstrip(".")] = set_name
+        self._sets[self._key(name)] = set_name
+
+    def add_explicit(self, name: str, set_name: str) -> None:
+        """Add a name of config.yaml and remember it: learned never overrides an explicit name."""
+        self.add(name, set_name)
+        self._explicit.add(self._key(name))
+
+    def explicit(self, name: str) -> bool:
+        """Whether config.yaml itself named this name, not learning or a CNAME target."""
+        return self._key(name) in self._explicit
 
     def remove(self, name: str) -> None:
-        self._sets.pop(name.lower().rstrip("."), None)
+        self._sets.pop(self._key(name), None)
 
     def match(self, qname: str) -> str | None:
         labels = qname.lower().rstrip(".").split(".")
@@ -272,7 +287,7 @@ class Resolver:
             return response
         # a CDN behind a CNAME follows the site exactly: its name joins the rule of the site
         for target in facts.cname_targets:
-            if self.index.match(target) is None:
+            if self.index.match(target) is None and not self.index.explicit(target):
                 self.index.add(target, set_name)
                 self.cnames[target] = qname
         ttl = cap_ttl(response)
@@ -290,7 +305,10 @@ class Resolver:
 
     def learn(self, name: str, parent: str) -> bool:
         """A CDN follows ``parent``: route it like the parent, and fill the set from what the
-        resolver saw for it lately. ``False`` when the parent is under no rule."""
+        resolver saw for it lately. ``False`` when the parent is under no rule or the name has an
+        explicit rule of its own: config.yaml always wins over what was learned."""
+        if self.index.explicit(name):
+            return False
         set_name = self.index.match(parent)
         if set_name is None:
             return False
@@ -301,8 +319,9 @@ class Resolver:
 
     def unlearn(self, name: str) -> None:
         """A learned name is generic after all (or the owner removed it): it goes direct again.
-        Its addresses leave the channel set when their timeout runs out."""
-        if self.learned.pop(name, None) is not None:
+        Its addresses leave the channel set when their timeout runs out. An explicit rule of
+        config.yaml is never removed."""
+        if self.learned.pop(name, None) is not None and not self.index.explicit(name):
             self.index.remove(name)
 
     def set_lists(
@@ -354,13 +373,13 @@ class Resolver:
         self.index = RuleIndex.from_config(config, self.lists)
         for target, site in self.cnames.items():
             set_name = self.index.match(site)
-            if set_name is not None:
+            if set_name is not None and not self.index.explicit(target):
                 self.index.add(target, set_name)
         for name, parent in list(self.learned.items()):
             set_name = self.index.match(parent)
             if set_name is None:
                 del self.learned[name]
-            else:
+            elif not self.index.explicit(name):
                 self.index.add(name, set_name)
         self.replay()
         self._fill_list_networks(config)
